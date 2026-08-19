@@ -208,8 +208,70 @@ expected complete set:
 
 ## 6. Operator metadata schema
 
-Emitted by `tools/opsmeta`, one JSON document per `.ops` module. Sketch; fixed exactly in
-phase 2.
+Emitted by `wz4port/tools/opsmeta`, one JSON document per `.ops` module, into `build/meta/`.
+**Fixed in phase 2 stage 2.3 at `schemaVersion: 1`.** The derivation, the corpus census behind
+it and the traps it avoids are in `04-phase-headless-core.md` §2.3; this section is the
+contract.
+
+### 6.1 Guarantees
+
+- **Sufficient to build a parameter panel with no per-operator code.** Every widget kind of
+  §5.2 in `01-existing-model.md`, with ranges, steps, defaults, choice bit layouts, array
+  descriptors and conditional-visibility expressions.
+- **Addressing is unambiguous.** A parameter says which of the three offset spaces it lives in
+  (`words`, `strings`, `links`), what its offset is, and how many words it consumes. The
+  reader never re-derives a size or an offset — including for `char[n]`, which occupies
+  `(n+1)/2` words rather than `n`, and for `continue flags`, whose offset is resolved to the
+  variable it shares.
+- **Nothing needs re-parsing.** Choice strings arrive decomposed into widgets with shift, mask
+  and per-choice values. The raw `options` string travels too, for presentation details the
+  decomposition drops, but no reader has to interpret it.
+- **Conditionals arrive as a tree**, already lowered: `Flags.choicename` is desugared to
+  `(symbol & mask) == value` and nested `if` blocks are ANDed flat, both by the upstream
+  parser. Each `symbol` node carries the referenced parameter's offset, space and kind.
+- **Palette placement needs no inference.** `column` is the effective value; the upstream
+  parser applies its signature-based default before an explicit `column = N;` can override it.
+- **Stable and diffable.** Source order, fixed key order, two-space indent, pure ASCII
+  (anything outside 0x20–0x7e is `\uXXXX`), no timestamps, no absolute paths. Floats print at
+  the shortest precision that round-trips to the same float32.
+- **A reader must reject an unknown `schemaVersion`** rather than guess.
+
+### 6.2 Shape
+
+Per module: `schemaVersion`, `module`, `priority`, `types[]`, `classes[]`.
+
+Per type: `symbol`, `label`, `parent`, `virtual`, `color`, `flags[]`, `gui[]`,
+`columnHeaders[]` (each `{column, label}` — the array is sparse, so the index travels with the
+text).
+
+Per class: `name`, `label`, `outputType`, `tabType`, `outputClass`, `column`, `shortcut`,
+`gridColumns`, `extract`, `flagBits`, `flags[]`, `hasCode`, `paraWords`, `paraStrings`,
+`arrayWords`, `fileInMask`, `fileOutMask`, `fileInFilter`, `inputs[]`, `actionIds[]`,
+`parameters[]`, `array{}`, `ties[]`.
+
+Per input: `type`, `optional`, `weak`, `varargs`, `method`, `linkSymbol`, `defaultOpType`,
+`defaultOpName`.
+
+Per parameter: `kind`, `symbol`, `label`, `space`, `offset`, `words`, `layout`
+(`scalar`/`vector`/`array`), `count`, `ctype`, `continues`, `rebuildOnChange`, `modifiers[]`,
+`condition{}`, plus per-kind fields — `min`/`max`/`step`/`rstep`/`logStep`/`defaults` for
+numbers, `format` for hex ints, `channels` for colours, `options`/`widgets[]` for choice
+kinds, `capacity` for `char`, `lines` for text, `method` for links, `actionId` for actions.
+
+An emitted module is the authoritative example; `build/meta/wz4frlib/wz3_bitmap_ops.json` is
+the one to read.
+
+### 6.3 What is represented but untested
+
+`bitmask`, `custom` and `tie` are emitted because the DSL supports them, but **no `.ops` file
+in the tree uses any of them** — see the census in `04` §2.3. They are untested by
+construction, and the first real use should be treated as new code rather than as coverage.
+
+### 6.4 The original sketch
+
+Kept for comparison. The three things it got wrong were a single `offset` (there are three
+spaces), no word count (so `char[n]` would be misread), and no `layout` (so a vector and a
+2-element array were indistinguishable).
 
 ```json
 {
@@ -242,17 +304,6 @@ phase 2.
   }]
 }
 ```
-
-Requirements on the schema:
-
-- **Sufficient to build the panel with no per-operator code** — every widget kind of §5.2 in
-  `01-existing-model.md`, with ranges, steps, defaults, tied groups and array descriptors.
-- **Carries parameter conditionals**, so panels change shape with values as they do today.
-  This is the one genuinely awkward part: the original compiles conditionals to C++. We emit
-  them as a small expression tree and evaluate it at runtime in the editor.
-- **Carries palette placement** — column, column header, tab, shortcut, hidden flag — so the
-  add menu needs no hardcoding.
-- **Stable and diffable**, so schema changes are reviewable.
 
 ---
 

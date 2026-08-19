@@ -238,7 +238,7 @@ Three operator capabilities, all revisitable when the new editor exists:
 
 Script bindings are absent pending the 2.4 decision on `script.cpp`.
 
-### 2.3 — Metadata emission
+### 2.3 — Metadata emission — **done**
 
 Build `wz4port/tools/opsmeta`: our `main.cpp` plus a JSON emitter, linking **only**
 `tools/wz4ops/parse.cpp` and `tools/wz4ops/doc.cpp`. Verified in 2.2 that those two contain
@@ -248,20 +248,186 @@ public by patch 05 so the parse tree can be read without the emitter.
 Emit the JSON schema sketched in `02-target-model.md` §6, and **fix it exactly** in this
 stage — the editor's entire UI is downstream of it.
 
-Must carry, per class: name, output type, tab, column, shortcut, flags, input list with types
-and optional/vararg/weak markers, parameter word and string counts, and the full parameter
-list. Per parameter: kind, name, storage offset, ranges, steps, defaults, choice strings with
-their bit layouts, tie groups, array descriptors, and conditional-visibility expressions.
+#### What the corpus actually contains
 
-Conditionals are the one genuinely awkward item. The original compiles `if(expr)` to C++
-inside `MakeGui`. We emit the expression as a small tree and evaluate it at runtime. The
-grammar to support is documented in `01-existing-model.md` §5.3: comparison and boolean
-operators, integer literals, parameter symbols, `input[n]`, and `Flags.choicename`.
+Counted from the emitted metadata — i.e. from the parser itself — over all 33 `.ops` files.
+(A first pass counted keywords in the raw text and got this wrong; it included commented-out
+operators and missed modifiers written in non-canonical order. Don't grep the DSL when a
+parser is available.)
 
-Per type: symbol, label, parent, colour, flags, gui modes, column headers.
+| Widget | Corpus |
+|---|---:|
+| `float` | 1220 |
+| `flags` | 1181 |
+| `int` | 358 |
+| `group` | 264 |
+| `color` | 142 |
+| `string` | 121 |
+| `link` | 36 |
+| `action` | 30 |
+| `label` | 16 |
+| `fileout` | 12 |
+| `filein` | 9 |
+| `radio` | 2 |
+| `strobe` | 1 |
+| `char` | 1 |
+| **`bitmask`** | **0** |
+| **`custom`** | **0** |
+| **`tie`** | **0** |
 
-**Gate:** metadata JSON for `basic` and `wz3_bitmap` reviewed by hand against the `.ops`
-sources. Every parameter of every texture operator is represented and correct.
+`float` covers `float`, `float2`, `float30`, `float31` and `float4`: they share `TYPE_FLOAT`
+and are distinguished by `layout: "vector"` plus `ctype`, not by kind. `padding` never appears
+because it produces no parameter at all — it only advances the offset counter
+(`parse.cpp:462-475`), so it shows up as a gap.
+
+Two consequences:
+
+1. **`bitmask`, `custom` and `tie` are dead syntax.** They are documented in
+   `01-existing-model.md` §5.2 because the DSL and the GUI implement them, but **no `.ops`
+   file in the tree uses any of them.** The schema will represent them — it is cheap and the
+   DSL supports them — but they are *untested by construction*, and that must be said out
+   loud rather than counted as coverage. Note that `float2`/`float30`/`float31`/`float4`
+   already give tied groups by another route (`XYZW`), which is presumably why `tie` died.
+2. **Conditionals are not an edge case.** 82 `if(...)` in the two gate modules alone. Getting
+   them wrong means panels of the wrong shape everywhere, not in one corner. They also nest
+   deeply enough to break a fixed-depth JSON writer — see below.
+
+#### Three traps the §6 sketch does not show
+
+Found by reading the parser, and each one silently corrupts the editor if missed:
+
+**a. There are three separate offset spaces, not one.** The sketch has a bare `"offset"`.
+In fact `parse.cpp:651-694` allocates:
+
+| Kinds | Space | Addressed by |
+|---|---|---|
+| everything with a `CType` | 32-bit words | the `Para` struct / `wOp::EditData` |
+| `string`, `filein`, `fileout` | string slots | `wOp::EditString[n]` |
+| `link` | link slots | `wOp::Links[n]` |
+
+The three counters run independently, so word offset 0, string offset 0 and link offset 0
+all exist in the same operator. The schema names the space explicitly.
+
+**b. `char X[n]` consumes `(n+1)/2` words, not `n`.** `parse.cpp:684-685`. Every other kind
+consumes `count`. The schema emits the *actual* word consumption per parameter so the editor
+never re-derives it.
+
+**c. `count` means two different things.** For `float2/30/31/4` it is a vector addressed
+`.x .y .z .w` and occupies one struct field (`XYZW=1`); for `float X[n]`/`int X[n]` it is a
+C array. Same field in the parse tree, different layout. The schema carries an explicit
+`layout: scalar | vector | array`.
+
+#### Conditionals are less awkward than expected
+
+The plan called these the one genuinely awkward item. Reading `parse.cpp:1016-1029` shows
+why they are not:
+
+**`Flags.choicename` is already desugared at parse time** into
+`(Symbol & mask) == value` — `sFindFlag` resolves the choice against that parameter's option
+string while parsing, and the tree that survives contains only `EOP_BITAND`, `EOP_EQ` and
+integer literals. `EOP_SYMBOL` therefore only ever names a bare parameter, and nothing
+downstream needs to know about choice names.
+
+Nested `if` blocks are also already flattened: `parse.cpp:920-921` ANDs an enclosing
+condition into the inner one, so each parameter carries one complete condition and there is
+no nesting to represent.
+
+That leaves a five-node grammar to emit: binary op, unary op, integer literal, parameter
+symbol, `input[n]`. `opsmeta` resolves each `EOP_SYMBOL` to the referenced parameter at emit
+time and emits its offset alongside the name, so the editor evaluates without a name lookup.
+An unresolvable symbol is an **error**, not a warning — it means a typo that would otherwise
+silently disable a parameter's visibility rule.
+
+#### One thing that comes for free
+
+Palette column inference — 0 inputs → 0, 1 → 1, more → 2, and 3 if any input type differs
+from the output type — happens in the **parser** (`parse.cpp:334-341`), before an explicit
+`column = N;` can override it. So `Op::Column` is always the effective value and the editor
+needs no inference of its own.
+
+#### Schema shape
+
+Per module: `schemaVersion`, module name, priority. Per type: symbol, label, parent, colour,
+flags, gui modes, column headers. Per class: name, label, output type, tab type, column,
+shortcut, flags, extract prefix, grid columns, para word/string/link/array counts, helper
+words, file in/out masks and filter, inputs (type, optional/weak/varargs, link method,
+default op), action ids, and the parameter list. Per parameter: kind, name, label, symbol,
+offset **and space**, words consumed, layout, count, min/max/step/rstep, log-step flag, hex
+format, defaults, choice widgets with shift/mask/choices, channel string, line count,
+modifier flags, and the condition tree.
+
+`schemaVersion` exists so the editor can reject a mismatch instead of misreading. Output is
+deterministic — source order, fixed key order, no timestamps, no absolute paths — so a schema
+or `.ops` change is reviewable as a diff.
+
+#### What was built
+
+`wz4port/tools/opsmeta/` — `main.cpp`, `emit.cpp`, `json.cpp` — plus `opsmeta_gate` in CMake.
+`schemaVersion` is **1**; the contract is frozen in `02-target-model.md` §6.
+
+Two things went beyond the plan, both because they paid for themselves immediately:
+
+**1. The gate runs over the whole corpus, not the two named modules.** `opsmeta_gate` emits
+metadata for all 33 `.ops` files, because `opsmeta` validates as it goes and the extra 31
+modules cost milliseconds. That turns ~450 parameters of coverage into 2,728:
+
+```
+33 modules · 40 types · 370 classes · 2728 parameters
+2729 choice values cross-checked against sFindFlag
+```
+
+It found a crash on its first run that the two gate modules never triggered: the JSON writer
+had a fixed 16-level depth stack, and condition trees nest as deeply as the source nests
+`if(...)`, two levels per expression node. The depth stack is now dynamic.
+
+**2. `opsmeta` validates rather than just emitting**, and refuses to write a file it cannot
+stand behind:
+
+- **Offset overlap and range.** `wz4ops` checks this in `OutputParaStruct` — inside the C++
+  emitter, which `opsmeta` deliberately does not link. Without its own check, the JSON could
+  describe a layout the generated struct would have rejected, and the editor writes straight
+  into `wOp::EditData` at whatever offset the metadata gives it. Verified by a deliberately
+  broken `.ops` with two parameters pinned to word 0: it reports the overlap, exits non-zero
+  and writes nothing.
+- **Choice decomposition against `sFindFlag`.** The `options` parse is a re-implementation of
+  Altona's, and 1,181 `flags` parameters depend on it. So every unique choice label is fed
+  back through `sFindFlag` itself and the mask and shifted value must agree. Labels appearing
+  in more than one widget of the same string are skipped — `sFindFlag` returns the first
+  match, so there is nothing to compare (the common case is `-` as a blank entry, as in
+  `"-|abs:*1-|sin"`).
+- **Unresolvable symbols.** A conditional or `continue` naming a parameter that does not exist
+  is an error, not a warning.
+
+#### Corrections the work forced
+
+- **The text-based widget census was wrong.** It counted commented-out operators (both `char`
+  uses in `basic_ops.ops` are inside a `/* */` block) and its regex missed modifiers in
+  non-canonical order, badly undercounting `string`. The census in this document is now taken
+  from the emitted metadata, which is the parser's own answer. Corpus-wide: `float` 1220,
+  `flags` 1181, `int` 358, `group` 264, `color` 142, `string` 121, `link` 36, `action` 30,
+  `label` 16, `fileout` 12, `filein` 9, `radio` 2, `strobe` 1, `char` 1. `bitmask`, `custom`
+  and `tie` remain at zero, and all 383 `ties` arrays emit empty.
+- **Altona's float formatter is not correctly rounded.** Asked for nine decimals it renders
+  `4.0f` as `4.00000023` and `0.125f` as `0.125000007`, both exactly representable. In a file
+  whose purpose is hand review and diffing, that is worse than useless. `json.cpp` goes
+  through libc `snprintf`/`strtof` instead, printing at the shortest precision that
+  round-trips.
+- **A leading space in an option string is load bearing.** The corpus writes `" 1| 2| 4"`
+  rather than `"1|2|4"` because a leading digit is consumed as an *explicit value*, leaving an
+  empty label. `" 1D| 2D| 3D"` works for the same reason. Faithfully reproduced, and now
+  commented where it matters.
+
+**Gate — passed.** Metadata emitted for `basic` and `wz3_bitmap`, hand-checked against source
+(`Perlin`: 10 parameters, offsets 0–9, `paraWords: 10`, `0x0808` default decoding to 256×256,
+both `Mode` widgets at shift 0 and 1 — all matching), plus the machine checks above over the
+full corpus. Clean build, 0 errors, `ctest` green.
+
+#### Deferred deliberately
+
+**No golden-file test of the schema yet.** §6 asks for the metadata to be diffable so schema
+changes are reviewable, and it is — but nothing yet fails a build when the shape changes
+unintentionally, because `build/meta/` is gitignored. Phase 4 already plans golden outputs and
+a runner; the schema golden belongs there rather than as a bespoke mechanism now.
 
 ### 2.4 — `libwz4core`
 

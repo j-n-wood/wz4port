@@ -96,6 +96,9 @@ Enforced by the build — breaking these fails compilation and names the file:
 | `-headless` is inert when absent | `wz4ops_gate` regenerates the un-flagged tree |
 | SSE2 → NEON translation is bit-exact | `simd_parity` (70,184 checks, via `ctest`) |
 | `doc_core.hpp` declarations stay complete | `static_assert`s in `tests/headless_core.cpp` |
+| Metadata offsets do not overlap or exceed their space | `opsmeta` validation, all 33 modules |
+| The choice decomposition agrees with Altona | `opsmeta` cross-check against `sFindFlag`, 2,729 values |
+| Every conditional symbol resolves | `opsmeta` errors rather than emitting `offset: -1` |
 
 Enforced only by discipline — nothing catches a regression:
 
@@ -431,12 +434,99 @@ text added to the `.ops` files (which are verbatim, so the guards appear in the
 output). **No emitted code changed.** Delete the target and that guarantee goes
 with it.
 
-### A16 · Whether `wExecutive` needs `script.cpp` — provisional, open
+### A16 · Metadata is validated at emit time, not trusted — standing
+
+*Phase 2.3.* `opsmeta` does not just serialise the parse tree; it refuses to write a file it
+cannot stand behind. Three checks, all always-on:
+
+| Check | Why it has to live here |
+|---|---|
+| Parameter offsets do not overlap and fit the declared count | `wz4ops` checks this in `OutputParaStruct` — **inside the C++ emitter, which `opsmeta` deliberately does not link** (A11). Without its own check the JSON could describe a layout the generated struct would have rejected, and the editor writes straight into `wOp::EditData` at whatever offset the metadata gives it |
+| Every unique choice label round-trips through `sFindFlag` | The `options` decomposition is a re-implementation of Altona's parse, and 1,181 `flags` parameters depend on it |
+| Conditional and `continue` symbols resolve | A typo would otherwise silently disable a visibility rule, or leave a widget editing offset −1 |
+
+The `sFindFlag` cross-check is the notable one: this project has **no reference oracle**
+(Part 5), so wherever a piece of upstream behaviour can be re-executed and compared against,
+it should be. 2,729 choice values are checked on every build.
+
+Labels appearing in more than one widget of the same option string are skipped, because
+`sFindFlag` returns the first match and there is nothing to compare against. That is genuine
+ambiguity in the format, not a gap in the check — the common case is `-` as a blank entry, as
+in `"-|abs:*1-|sin"`.
+
+### A17 · The metadata gate covers the whole corpus, not the two named modules — standing
+
+*Phase 2.3.* `opsmeta_gate` emits metadata for all 33 `.ops` files, including the ~25 that
+belong to out-of-scope subsystems and that nothing will ever read. It costs milliseconds and
+raises coverage from ~450 parameters to 2,728.
+
+**It found a crash on its first run** that the two gate modules never triggered: the JSON
+writer had a fixed 16-level depth stack, and condition trees nest as deeply as the source
+nests `if(...)` — two levels per expression node. The depth stack is now dynamic, on the
+grounds that there is no defensible constant.
+
+Generalisable: in a project with no oracle, *breadth of input* is one of the few substitutes,
+and it is usually cheaper than it looks.
+
+### A18 · Floats in the metadata go through libc, not Altona — standing
+
+*Phase 2.3.* `sTextBuffer::PrintF(L"%.9f",...)` renders `4.0f` as `4.00000023` and `0.125f`
+as `0.125000007`. Both are exactly representable; Altona's `sFloatInfo` formatter simply is
+not correctly rounded past a few digits.
+
+The metadata's stated purpose is to be reviewed by hand and diffed, so `json.cpp` uses
+`snprintf`/`strtof` and prints at the shortest precision (6 to 9 significant digits) that
+round-trips to the same float32. Output is `4`, `0.125`, `0.001`.
+
+This is the first place the port has had to route *around* an Altona facility rather than
+through it. Worth remembering when the editor needs to display numbers.
+
+### A19 · Whether `wExecutive` needs `script.cpp` — provisional, open
 
 *Deferred to phase 2.4.* `script.cpp` is 4,355 lines with zero GUI-touching
 lines, so it is not a *platform* problem — only a size and scope one.
 `-headless` already stops generated code referencing `ScriptContext`, so the
 question is whether the executive itself requires it.
+
+### A20 · Parameters live in three separate offset spaces — standing
+
+*Phase 2.3.* Not a decision so much as a discovered constraint the schema had to expose.
+`parse.cpp:651-694` runs **three independent offset counters**:
+
+| Kinds | Space | Addressed by |
+|---|---|---|
+| anything with a `CType` | 32-bit words | the `Para` struct / `wOp::EditData` |
+| `string`, `filein`, `fileout` | string slots | `wOp::EditString[n]` |
+| `link` | link slots | `wOp::Links[n]` |
+
+So word 0, string 0 and link 0 all exist in the same operator. The metadata sketch in
+`02-target-model.md` §6 had a single bare `offset`, which would have had the editor writing
+text into a float. Every parameter now names its space.
+
+Two adjacent traps, same origin:
+
+- **`char X[n]` consumes `(n+1)/2` words, not `n`** (`parse.cpp:684`). The schema emits the
+  actual word count so no reader re-derives it.
+- **`continue flags` carries `Offset == -1`**, because the parser skips allocation for it
+  (`parse.cpp:678-679`). It still edits a real word — the earlier declaration of the same
+  symbol — so `opsmeta` resolves it and emits `words: 0` alongside. Emitting −1 would have
+  left the editor with a widget and nowhere to put the value.
+
+### A21 · Conditionals turned out already lowered — standing
+
+*Phase 2.3.* The phase plan called parameter conditionals "the one genuinely awkward item",
+on the assumption that `Flags.choicename` and nested `if` blocks would have to be resolved
+downstream. Reading the parser closed both:
+
+- `parse.cpp:1016-1029` desugars `Flags.choicename` into `(Symbol & mask) == value` **while
+  parsing**, resolving the choice against that parameter's option string via `sFindFlag`. The
+  surviving tree contains only `EOP_BITAND`, `EOP_EQ` and integer literals.
+- `parse.cpp:920-921` ANDs an enclosing `if` condition into the inner one, so each parameter
+  carries one complete condition and there is no nesting to represent.
+
+What was left was a five-node grammar — binary, unary, int, symbol, `input[n]`. The awkward
+part was never the grammar; it was the 82 conditionals in the two gate modules alone, which
+is why getting the five nodes right matters.
 
 ---
 
@@ -457,6 +547,9 @@ adopted because of this list.
 | One `.ops` guard will be enough | Four, including a dead local and an unused include (A12) |
 | Dropping all painting externs is safe | Would have dropped `GenBitmap::Init()` and both `Hit`s — 3 of the 15 are keepers (A13) |
 | A green build proves the GUI seam holds | `gui/gui.hpp` parses fine on macOS. Only poisoning proves anything (A10) |
+| Conditionals will be the awkward part of the metadata | Already lowered by the parser. The awkward parts were three offset spaces and a float formatter (A20, A18, A21) |
+| Grepping the `.ops` files gives a widget census | It counted commented-out operators and missed modifiers in non-canonical order. The parser's own answer differs substantially (A17) |
+| Altona's `%f` can be trusted for a data file | Renders `4.0f` as `4.00000023` (A18) |
 
 ---
 
@@ -503,10 +596,18 @@ make that cheap.
 exercises `sse2neon`. It must also run on x86-64 Linux, where it exercises
 native SSE2. The two must agree.
 
-**Metadata schema not yet frozen.** Stage 2.3 fixes the JSON that the entire
-editor UI is downstream of. Mitigation: fix it against the *complete* widget
-inventory in `01-existing-model.md` §5.2, not against what phase 4 happens to
-need.
+**Metadata schema frozen at version 1, but not yet golden-tested.** Stage 2.3
+fixed the JSON the entire editor UI is downstream of, against the complete
+widget inventory in `01-existing-model.md` §5.2 rather than against what phase 4
+happens to need. It is deterministic and diffable — but `build/meta/` is
+gitignored, so nothing yet *fails* when the shape changes unintentionally.
+Phase 4 already plans golden outputs and a runner; the schema golden belongs
+there.
+
+**Three widget kinds are represented but unexercised.** `bitmask`, `custom` and
+`tie` are in the schema because the DSL supports them, but no `.ops` file in the
+tree uses any of them — all 383 emitted `ties` arrays are empty. The first real
+use should be treated as new code, not as covered ground.
 
 **Upstream footprint is 48 files and will keep growing.** Two categories are
 inert (30 encoding-only, 2 genuine language errors); the other 16 are structural

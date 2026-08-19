@@ -20,16 +20,18 @@ ninja -C build
 
 Requires clang (or gcc), CMake ≥ 3.20 and Ninja. No external libraries yet.
 
-## Current state — phase 1 complete, phase 2 through stage 2.2
+## Current state — phase 1 complete, phase 2 through stage 2.3
 
 | Target | What it is |
 |---|---|
 | `altona_base` | Altona's shell subset: types, math, serialisation, system, blank renderer |
 | `altona_util` | The scanner slice the host tools need |
 | `wz4ops` | Upstream's `.ops` code generator, built natively, with `-headless` |
+| `opsmeta` | **Ours.** `.ops` → metadata JSON, using wz4ops' parser but not its emitter |
 | `wz4ops_gate` | Regenerates `basic_ops` and `wz3_bitmap_ops` into `build/generated/` |
 | `headless_core_gate` | Compiles `wz4lib/doc_core.hpp` alone, with the GUI poisoned |
 | `headless_ops_gate` | Generates and compiles both op modules `-headless`, GUI poisoned |
+| `opsmeta_gate` | Emits and validates metadata for all 33 `.ops` modules into `build/meta/` |
 | `simd_parity` | Verifies all 43 SSE2 intrinsics against scalar models (`ctest`) |
 
 Not yet built: the operator runtime itself, the texture library, the CLI, the
@@ -116,6 +118,11 @@ it and that guarantee goes with it. See `patches/05`.
 compat/          altona_config.hpp, POSIX shim, stub headers
   include/       on the include path; see note 1 above
 patches/         every change made to altona_wz4/, with rationale
+tools/opsmeta/   .ops -> metadata JSON
 tests/           simd_parity, headless_core + gui_poison
-build/           generated + compiled output (gitignored)
+build/           compiled output (gitignored)
+  generated/     wz4ops output, non-headless — the inertness proof, note 5
+  generated-headless/  wz4ops -headless output, compiled by headless_ops_gate
+  meta/          opsmeta output; wz4lib/ and wz4frlib/ are the gate modules,
+                 corpus/ is the other 31 (coverage, nothing consumes it)
 ```

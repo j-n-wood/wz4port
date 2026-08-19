@@ -136,6 +136,30 @@ target_include_directories(wz4ops PRIVATE "${ALTONA_TOOLS}")
 target_link_libraries(wz4ops PRIVATE altona_util)
 
 #############################################################################
+##  opsmeta — .ops -> metadata JSON (host tool, ours)                      ##
+#############################################################################
+
+# Links wz4ops' PARSER only — parse.cpp and doc.cpp, which contain no
+# references into output.cpp or wikitext.cpp. The C++ emitter is deliberately
+# absent: anything that determines memory layout stays on wz4ops' single code
+# path, and the JSON is our format to evolve. See docs/architecture.md A11.
+
+add_executable(opsmeta
+  "${CMAKE_CURRENT_SOURCE_DIR}/tools/opsmeta/main.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/tools/opsmeta/emit.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/tools/opsmeta/json.cpp"
+  "${ALTONA_TOOLS}/wz4ops/doc.cpp"
+  "${ALTONA_TOOLS}/wz4ops/parse.cpp"
+)
+# tools/wz4ops so that #include "doc.hpp" finds the parse tree, and our own
+# directory for opsmeta.hpp / json.hpp.
+target_include_directories(opsmeta PRIVATE
+  "${ALTONA_TOOLS}/wz4ops"
+  "${CMAKE_CURRENT_SOURCE_DIR}/tools/opsmeta"
+)
+target_link_libraries(opsmeta PRIVATE altona_util)
+
+#############################################################################
 ##  .ops code generation                                                   ##
 #############################################################################
 
@@ -207,6 +231,72 @@ wz4_add_ops(GEN_BITMAP wz4frlib "${WZ4_DIR}/wz4frlib/wz3_bitmap_ops.ops")
 # output because it is what proves -headless is inert when it is off: the two
 # generated trees must differ only in what the flag suppresses.
 add_custom_target(wz4ops_gate ALL DEPENDS ${GEN_BASIC} ${GEN_BITMAP})
+
+#############################################################################
+##  opsmeta_gate — phase 2 stage 2.3                                       ##
+#############################################################################
+
+set(WZ4_META_DIR "${CMAKE_BINARY_DIR}/meta")
+
+# wz4_add_meta(<out_var> <subdir> <path/to/name.ops>)
+#
+# opsmeta shares wz4ops' SetNames(), so it has the same requirement: run it
+# from the file's own directory with a bare filename. See wz4_add_ops above.
+
+function(wz4_add_meta out_var subdir ops_path)
+  get_filename_component(_stem "${ops_path}" NAME_WE)
+  set(_dir "${WZ4_META_DIR}/${subdir}")
+  set(_json "${_dir}/${_stem}.json")
+
+  add_custom_command(
+    OUTPUT  "${_json}"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${_dir}"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${ops_path}" "${_dir}/${_stem}.ops"
+    COMMAND opsmeta "${_stem}.ops"
+    WORKING_DIRECTORY "${_dir}"
+    DEPENDS opsmeta "${ops_path}"
+    COMMENT "opsmeta ${subdir}/${_stem}.ops"
+    VERBATIM
+  )
+
+  set(${out_var} "${_json}" PARENT_SCOPE)
+endfunction()
+
+wz4_add_meta(META_BASIC  wz4lib   "${ALTONA_MAIN}/wz4lib/basic_ops.ops")
+wz4_add_meta(META_BITMAP wz4frlib "${WZ4_DIR}/wz4frlib/wz3_bitmap_ops.ops")
+
+# The whole corpus, not just the two gate modules.
+#
+# This is coverage, not a deliverable: most of these modules are out of scope
+# (materials, sequencer, audio) and nothing consumes their metadata. It earns
+# its place because opsmeta validates offsets and resolves every conditional
+# symbol as it goes, so running it over all 33 modules checks roughly 3,400
+# parameters instead of the ~450 in the two gate files. It found a crash on its
+# first run that the gate modules never triggered — condition trees nest deeper
+# than a fixed-depth JSON writer allowed.
+#
+# GLOB is normally the wrong tool because CMake will not reconfigure when a new
+# file appears. Here upstream is a frozen 2014 dump, so the file list cannot
+# change without someone editing this project on purpose.
+
+file(GLOB WZ4_ALL_OPS
+  "${ALTONA_MAIN}/wz4lib/*.ops"
+  "${WZ4_DIR}/wz4frlib/*.ops"
+)
+
+set(META_ALL "")
+foreach(_ops ${WZ4_ALL_OPS})
+  get_filename_component(_stem "${_ops}" NAME_WE)
+  if(NOT _stem STREQUAL "basic_ops" AND NOT _stem STREQUAL "wz3_bitmap_ops")
+    wz4_add_meta(_meta corpus "${_ops}")
+    list(APPEND META_ALL "${_meta}")
+  endif()
+endforeach()
+
+list(LENGTH WZ4_ALL_OPS _opscount)
+message(STATUS "opsmeta corpus: ${_opscount} .ops modules")
+
+add_custom_target(opsmeta_gate ALL DEPENDS ${META_BASIC} ${META_BITMAP} ${META_ALL})
 
 #############################################################################
 ##  headless_ops_gate — phase 2 stage 2.2                                  ##

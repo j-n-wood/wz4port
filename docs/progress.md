@@ -4,10 +4,10 @@ Read this first when picking the project up cold. It records where things
 stand, what has been decided and why, and what would otherwise have to be
 rediscovered the hard way.
 
-**Last updated:** end of phase 2 stage 2.2.
+**Last updated:** end of phase 2 stage 2.3.
 **Status:** Phase 1 complete and verified. Phase 2 stages 2.1 (the `doc.hpp`
-split) and 2.2 (headless operator generation) complete, both gates passed.
-Stage 2.3 (metadata JSON) not started.
+split), 2.2 (headless operator generation) and 2.3 (metadata JSON) complete, all
+gates passed. Stage 2.4 (`libwz4core`) — the phase gate — not started.
 
 ---
 
@@ -48,7 +48,7 @@ about the build.
 |---|---|
 | 0 — Documentation (`docs/00`–`02`) | **Done**, reviewed and approved |
 | 1 — Toolchain and portable base | **Done**, gate passed |
-| 2 — Headless op runtime + metadata | **In progress.** 2.1 and 2.2 done, gates passed. 2.3 next |
+| 2 — Headless op runtime + metadata | **In progress.** 2.1, 2.2, 2.3 done, gates passed. 2.4 next |
 | 3 — Text graph format + CLI | Not started |
 | 4 — Texture library + tests | Not started |
 | 5 — Texture GUI | Not started |
@@ -74,12 +74,17 @@ Clean build from scratch: **0 errors**. Warnings are expected and benign
 | `altona_base` | Altona shell subset — types, math, serialize, system, blank renderer |
 | `altona_util` | `scanner` + `scanconfig`, the slice the host tools need |
 | `wz4ops` | Upstream's `.ops` code generator, native arm64, now with `-headless` |
+| `opsmeta` | Ours: `.ops` → metadata JSON, using wz4ops' parser but not its emitter |
 | `wz4ops_gate` | Regenerates `basic_ops` + `wz3_bitmap_ops` into `build/generated/` |
 | `headless_core_gate` | Compiles `wz4lib/doc_core.hpp` alone, with the GUI poisoned |
 | `headless_ops_gate` | Generates and compiles both op modules `-headless`, GUI poisoned |
+| `opsmeta_gate` | Emits + validates metadata for all 33 `.ops` modules into `build/meta/` |
 | `simd_parity` | Verifies all 43 SSE2 intrinsics against scalar models |
 
 `simd_parity`: **70,184 checks, 0 failures** on arm64 via sse2neon.
+
+`opsmeta_gate`: **33 modules, 40 types, 370 classes, 2,728 parameters, 2,729
+choice values cross-checked against `sFindFlag`**, 0 failures.
 
 ### Files created so far
 
@@ -101,6 +106,9 @@ wz4port/
     03-latin1-to-utf8.md
     04-doc-headless-split.md   phase 2 stage 2.1
     05-wz4ops-headless.md      phase 2 stage 2.2
+  tools/opsmeta/               phase 2 stage 2.3 — .ops -> metadata JSON
+    main.cpp  emit.cpp  json.cpp
+    opsmeta.hpp  json.hpp
   tests/
     simd_parity.cpp
     headless_core.cpp          phase 2 stage 2.1 gate
@@ -380,14 +388,47 @@ outside `doc_core.hpp`. Every skip is printed.
 
 **Gate passed**, and it runs on every build: `headless_ops_gate`.
 
-### Next: 2.3 — metadata emission
+### Done: 2.3 — metadata emission
 
-Build `wz4port/tools/opsmeta`, linking only `tools/wz4ops/{parse,doc}.cpp`.
-Then 2.4 (`libwz4core`).
+`wz4port/tools/opsmeta` (`main.cpp`, `emit.cpp`, `json.cpp`), linking only
+`tools/wz4ops/{parse,doc}.cpp`. **Schema frozen at `schemaVersion: 1`**; the
+contract is `02-target-model.md` §6, the derivation `04` §2.3. No upstream
+change was needed — patch 05 had already made `Document::Types`/`Ops` public.
 
-**Phase gate:** headless core links; metadata JSON emitted for `basic` and
-`wz3_bitmap`; a test program constructs a document, connects two operators by
-geometry alone, and prints the derived input lists.
+Two things went beyond the plan, both because they paid for themselves at once:
+
+- **The gate covers all 33 `.ops` modules**, not the two named ones. `opsmeta`
+  validates as it goes, so the extra 31 cost milliseconds and lift coverage from
+  ~450 parameters to 2,728. It found a crash on its first run that the gate
+  modules never hit: the JSON writer had a fixed 16-level depth stack, and
+  condition trees nest two levels per expression node. Now dynamic.
+- **`opsmeta` validates rather than just emitting**, and writes nothing if a
+  check fails. Offsets must not overlap (`wz4ops` checks this only inside the C++
+  emitter, which we do not link); every unique choice label must round-trip
+  through Altona's own `sFindFlag`; every conditional symbol must resolve.
+  Verified with a deliberately broken `.ops`.
+
+Three corrections it forced, all in `docs/architecture.md` A18/A20/A21:
+
+- **The text-based widget census was wrong** — it counted commented-out
+  operators and missed modifiers in non-canonical order. Don't grep a DSL when
+  its parser is sitting right there.
+- **Altona's float formatter is not correctly rounded**: `%.9f` renders `4.0f` as
+  `4.00000023`. The emitter uses libc `snprintf`/`strtof` instead.
+- **Conditionals were not the awkward part.** The parser already desugars
+  `Flags.choicename` and flattens nested `if`. The awkward part was that
+  parameters live in **three independent offset spaces**, which the original
+  schema sketch collapsed into one.
+
+### Next: 2.4 — `libwz4core`, and the phase gate
+
+Build `wz4lib/{doc,build,basic}.cpp` plus the generated headless `basic_ops` as
+a GUI-free static library, and promote `headless_core_gate` from a compile-only
+`OBJECT` library to a linked test.
+
+**Phase gate:** headless core links; ~~metadata JSON emitted for `basic` and
+`wz3_bitmap`~~ (done in 2.3); a test program constructs a document, connects two
+operators by geometry alone, and prints the derived input lists.
 
 ### Still to decide
 
