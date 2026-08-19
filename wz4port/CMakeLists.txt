@@ -139,9 +139,14 @@ target_link_libraries(wz4ops PRIVATE altona_util)
 ##  .ops code generation                                                   ##
 #############################################################################
 
-set(WZ4_GEN_DIR "${CMAKE_BINARY_DIR}/generated")
+set(WZ4_GEN_DIR    "${CMAKE_BINARY_DIR}/generated")
+set(WZ4_GENHL_DIR  "${CMAKE_BINARY_DIR}/generated-headless")
 
-# wz4_add_ops(<out_var> <subdir> <path/to/name.ops>)
+# wz4_add_ops(<out_var> <subdir> <path/to/name.ops> [HEADLESS])
+#
+# HEADLESS passes -headless, which omits everything needing the gui or the
+# scripting engine and generates into WZ4_GENHL_DIR instead. See
+# wz4port/patches/05-wz4ops-headless.md.
 #
 # Two things to know about wz4ops:
 #
@@ -159,7 +164,20 @@ set(WZ4_GEN_DIR "${CMAKE_BINARY_DIR}/generated")
 
 function(wz4_add_ops out_var subdir ops_path)
   get_filename_component(_stem "${ops_path}" NAME_WE)
-  set(_dir "${WZ4_GEN_DIR}/${subdir}")
+
+  if("HEADLESS" IN_LIST ARGN)
+    set(_dir "${WZ4_GENHL_DIR}/${subdir}")
+    # The switch must follow the filename: Altona's shell parser treats the
+    # token after a -switch as that switch's first parameter, so
+    # "wz4ops -headless x.ops" leaves sGetShellParameter(0,0) empty.
+    set(_args "${_stem}.ops" -headless)
+    set(_what "wz4ops -headless")
+  else()
+    set(_dir "${WZ4_GEN_DIR}/${subdir}")
+    set(_args "${_stem}.ops")
+    set(_what "wz4ops")
+  endif()
+
   set(_cpp "${_dir}/${_stem}.cpp")
   set(_hpp "${_dir}/${_stem}.hpp")
 
@@ -167,10 +185,10 @@ function(wz4_add_ops out_var subdir ops_path)
     OUTPUT  "${_cpp}" "${_hpp}"
     COMMAND "${CMAKE_COMMAND}" -E make_directory "${_dir}"
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${ops_path}" "${_dir}/${_stem}.ops"
-    COMMAND wz4ops "${_stem}.ops"
+    COMMAND wz4ops ${_args}
     WORKING_DIRECTORY "${_dir}"
     DEPENDS wz4ops "${ops_path}"
-    COMMENT "wz4ops ${subdir}/${_stem}.ops"
+    COMMENT "${_what} ${subdir}/${_stem}.ops"
     VERBATIM
   )
 
@@ -185,9 +203,43 @@ wz4_add_ops(GEN_BASIC  wz4lib   "${ALTONA_MAIN}/wz4lib/basic_ops.ops")
 wz4_add_ops(GEN_BITMAP wz4frlib "${WZ4_DIR}/wz4frlib/wz3_bitmap_ops.ops")
 
 # Phase 1 gate: proves the generator runs natively and produces the
-# registration entry points the runtime expects. The generated sources are
-# not compiled until phase 2, when the headless op runtime exists.
+# registration entry points the runtime expects. Kept alongside the headless
+# output because it is what proves -headless is inert when it is off: the two
+# generated trees must differ only in what the flag suppresses.
 add_custom_target(wz4ops_gate ALL DEPENDS ${GEN_BASIC} ${GEN_BITMAP})
+
+#############################################################################
+##  headless_ops_gate — phase 2 stage 2.2                                  ##
+#############################################################################
+
+wz4_add_ops(GENHL_BASIC  wz4lib   "${ALTONA_MAIN}/wz4lib/basic_ops.ops"      HEADLESS)
+wz4_add_ops(GENHL_BITMAP wz4frlib "${WZ4_DIR}/wz4frlib/wz3_bitmap_ops.ops"   HEADLESS)
+
+# Compiles both headless operator modules with the GUI poisoned. This is the
+# stage 2.2 gate, and it is the only thing that proves -headless produces code
+# that actually builds without a window system.
+#
+# OBJECT, not a library to link: the operator bodies reference the wz4frlib
+# implementation classes, which arrive in phase 4. Compile-only until then.
+
+add_library(headless_ops_gate OBJECT
+  "${GENHL_BASIC}"
+  "${GENHL_BITMAP}"
+)
+target_link_libraries(headless_ops_gate PRIVATE altona_flags)
+
+# WZ4_GENHL_DIR must precede altona_flags' WZ4_GEN_DIR so that
+# "wz4lib/basic_ops.hpp" resolves to the headless one. Target-level
+# directories are emitted before those inherited from linked libraries, so
+# this is the right order — and if it ever were not, the poison header below
+# would catch it, because the non-headless basic_ops.hpp includes doc.hpp.
+target_include_directories(headless_ops_gate PRIVATE
+  "${WZ4_GENHL_DIR}"
+  "${WZ4_DIR}"
+)
+target_compile_options(headless_ops_gate PRIVATE
+  "SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/tests/gui_poison.h"
+)
 
 #############################################################################
 ##  headless_core_gate — phase 2 stage 2.1                                 ##

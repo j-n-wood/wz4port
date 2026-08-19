@@ -10,7 +10,7 @@
 
 #include "base/types.hpp"
 #include "wz4lib/basic.hpp"
-#include "wz4lib/doc.hpp"
+#include "wz4lib/doc_core.hpp"    // nothing here needs the gui half of doc.hpp
 
 /****************************************************************************/
 

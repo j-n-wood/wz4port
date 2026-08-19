@@ -13,6 +13,7 @@ Document *Doc;
 
 Document::Document()
 {
+  Headless = 0;
 }
 
 Document::~Document()

@@ -10,9 +10,10 @@ code dump. All new work lives in `wz4port/`.
 ## Read first
 
 **`docs/progress.md`** — current state, what's done, what's next, and the
-gotchas. Then `docs/00-overview.md`, `docs/01-existing-model.md` (how
-Werkkzeug4 works — the reference document), `docs/02-target-model.md`.
-Per-phase plans are `docs/03`–`docs/09`.
+gotchas. Then `docs/architecture.md` (**why the structure is shaped like this**,
+and what was tried and rejected), `docs/00-overview.md`,
+`docs/01-existing-model.md` (how Werkkzeug4 works — the reference document),
+`docs/02-target-model.md`. Per-phase plans are `docs/03`–`docs/09`.
 
 ## Working process
 
@@ -24,6 +25,10 @@ Per-phase plans are `docs/03`–`docs/09`.
 - Phase plans are written to `docs/` **before** the code for that phase.
 - When implementation contradicts a plan, update the plan document — the
   docs are the plan of record, not a historical record.
+- **`docs/architecture.md` is the exception: it accumulates.** Add an entry
+  whenever a structural decision is taken, an alternative is rejected, or a
+  structural assumption turns out wrong. Mark superseded entries rather than
+  deleting them.
 
 ## Rules
 
@@ -56,10 +61,12 @@ Clean build must be 0 errors. Warnings from Altona are expected.
   in ten `.asc` files, registered at `shadercomp/asc_doc.cpp:305`, tokenised
   as `case 0xb0:` in `wz4lib/script.cpp:2993`. Do not "clean up" non-ASCII
   characters in this tree.
-- **`wz4ops` must be run with a bare filename from the file's own directory.**
-  It derives generated *function names* from the input path, so
-  `wz4ops a/b/x_ops.ops` emits `AddTypes_a/b/x_ops`, which will not compile.
-  Handled by `wz4_add_ops()` in `wz4port/CMakeLists.txt`.
+- **`wz4ops` must be run with a bare filename from the file's own directory,
+  and switches go after it.** It derives generated *function names* from the
+  input path, so `wz4ops a/b/x_ops.ops` emits `AddTypes_a/b/x_ops`, which will
+  not compile. And Altona's shell parser eats the token after a `-switch`, so
+  `wz4ops -headless x.ops` prints the usage text — write `x.ops -headless`.
+  Both handled by `wz4_add_ops()` in `wz4port/CMakeLists.txt`.
 - **`altona_config.hpp` lives in `wz4port/compat/`**, found via an include-path
   trick so it never enters `altona_wz4/`. `compat/include/.keep` is
   load-bearing. See `wz4port/README.md`.

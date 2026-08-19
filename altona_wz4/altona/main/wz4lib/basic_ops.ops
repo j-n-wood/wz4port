@@ -12,7 +12,9 @@ priority = 1;
 code
 {
 #include "base/graphics.hpp"
-#include "wz4lib/gui.hpp"
+#ifndef WZ4_HEADLESS                    // wz4ops -headless defines this
+#include "wz4lib/gui.hpp"               // the editor's windows; not built headless
+#endif
 }
 header
 {
@@ -618,8 +620,10 @@ type Scene
     {
       SceneInstances *inst;
       SceneMatrices sm; sm.Seed();
+#ifndef WZ4_HEADLESS                    // unused local; wPaintInfo is gui-only
       wPaintInfo pi;
       sClear(pi);
+#endif
 
       ((Scene*)obj)->Recurse(&sm);
 
@@ -1161,6 +1165,12 @@ operator UnitTest UnitTestScene(Scene)
   }
   code
   {
+#ifdef WZ4_HEADLESS
+    // Screenshot renders the viewport to a texture and compares it against a
+    // reference image. It is an editor test facility and needs the whole 3d
+    // display path, so the headless build does not carry it.
+    cmd->SetError(L"Screenshot is not available in the headless build");
+#else
     sInt xs = 1<<para->SizeX;
     sInt ys = 1<<para->SizeY;
 
@@ -1215,6 +1225,7 @@ operator UnitTest UnitTestScene(Scene)
     delete db;
 
     return out->Test(img,cmd->Strings[0],para->Flags);
+#endif
   }
 }
 

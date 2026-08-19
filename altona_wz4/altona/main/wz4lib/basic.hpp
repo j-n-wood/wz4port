@@ -17,7 +17,7 @@
 #include "base/types2.hpp"
 #include "base/math.hpp"
 #include "util/image.hpp"
-#include "doc.hpp"
+#include "doc_core.hpp"           // nothing here needs the gui half of doc.hpp
 
 
 /****************************************************************************/

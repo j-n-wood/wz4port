@@ -7,7 +7,9 @@ see [patches/](patches/) for the complete list of changes made to it.
 
 Planning and reference documentation is in [`../docs/`](../docs/) —
 start with `00-overview.md`, then `01-existing-model.md` (how Werkkzeug4
-works) and `02-target-model.md` (what we are building).
+works) and `02-target-model.md` (what we are building). The five notes below
+are the build mechanics; `../docs/architecture.md` is the full decision record
+behind them, including the alternatives that were rejected.
 
 ## Build
 
@@ -18,21 +20,22 @@ ninja -C build
 
 Requires clang (or gcc), CMake ≥ 3.20 and Ninja. No external libraries yet.
 
-## Current state — phase 1 complete, phase 2 stage 2.1 done
+## Current state — phase 1 complete, phase 2 through stage 2.2
 
 | Target | What it is |
 |---|---|
 | `altona_base` | Altona's shell subset: types, math, serialisation, system, blank renderer |
 | `altona_util` | The scanner slice the host tools need |
-| `wz4ops` | Upstream's `.ops` code generator, built natively |
+| `wz4ops` | Upstream's `.ops` code generator, built natively, with `-headless` |
 | `wz4ops_gate` | Regenerates `basic_ops` and `wz3_bitmap_ops` into `build/generated/` |
 | `headless_core_gate` | Compiles `wz4lib/doc_core.hpp` alone, with the GUI poisoned |
+| `headless_ops_gate` | Generates and compiles both op modules `-headless`, GUI poisoned |
 | `simd_parity` | Verifies all 43 SSE2 intrinsics against scalar models (`ctest`) |
 
 Not yet built: the operator runtime itself, the texture library, the CLI, the
 editor.
 
-## Four things that are not obvious
+## Five things that are not obvious
 
 ### 1. `altona_config.hpp` lives here, not in `altona_wz4/`
 
@@ -65,12 +68,17 @@ joypad scan simply finds nothing.
 
 Only four lines could not be handled this way; see `patches/01`.
 
-### 3. `wz4ops` must be run with a bare filename
+### 3. `wz4ops` must be run with a bare filename, and switches go last
 
 `wz4ops` derives *both* its output paths *and* its generated function names
 from the input path with the extension stripped. Invoking it as
 `wz4ops a/b/basic_ops.ops` emits `void AddTypes_a/b/basic_ops(...)`, which
 does not compile.
+
+Separately: Altona's shell parser treats the token after a `-switch` as that
+switch's first parameter, so `wz4ops -headless x.ops` leaves
+`sGetShellParameter(0,0)` empty and prints the usage text. Write
+`wz4ops x.ops -headless`.
 
 The CMake `wz4_add_ops()` function therefore copies each `.ops` into
 `build/generated/<subdir>/` and runs the tool there with just the filename,
@@ -85,14 +93,22 @@ GUI) and `doc_gui.hpp` — see `patches/04`. Nothing about the include path
 keeps `doc_core.hpp` GUI-free afterwards: the real `gui/` headers are still on
 it and, on macOS, they parse cleanly. A green build would prove nothing.
 
-So `tests/gui_poison.h` is force-included into the `headless_core_gate` target
-and nowhere else. It `#pragma GCC poison`s `sWindow`, `sGui_` and
-`sSimpleMaterial` — three tokens that between them cover every header in
-`gui/` and the generated `util/shaders.hpp`. Reintroduce a GUI dependency and
-the build fails naming the file.
+So `tests/gui_poison.h` is force-included into the `headless_core_gate` and
+`headless_ops_gate` targets and nowhere else. It `#pragma GCC poison`s
+`sWindow`, `sGui_` and `sSimpleMaterial` — three tokens that between them
+cover every header in `gui/` and the generated `util/shaders.hpp`. Reintroduce
+a GUI dependency and the build fails naming the file.
 
 `gui/theme.hpp` and `gui/treeinfo.hpp` are the two pure-data extractions
 `doc_core.hpp` is allowed to use; they include nothing but `base/`.
+
+### 5. `wz4ops_gate` looks redundant next to `headless_ops_gate`. It is not.
+
+`wz4ops_gate` regenerates the operator modules *without* `-headless` into
+`build/generated/`, and nothing compiles them. It exists to prove the flag is
+inert when it is off: the two generated trees must differ only in what
+`-headless` suppresses, and the pre-patch output was diffed against it. Delete
+it and that guarantee goes with it. See `patches/05`.
 
 ## Layout
 

@@ -17,7 +17,7 @@
 #include "base/types.hpp"
 #include "base/graphics.hpp"
 #include "util/image.hpp"
-#include "doc.hpp"
+#include "doc_core.hpp"           // Wireframe() below only declares wPaintInfo &
 #include "basic.hpp"
 
 /****************************************************************************/

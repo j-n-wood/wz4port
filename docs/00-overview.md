@@ -84,6 +84,7 @@ fr_public/
 |---|---|
 | `progress.md` | **Current state — read first when picking the project up.** |
 | `00-overview.md` | This document. |
+| `architecture.md` | The structure as it stands, and the decision record behind it — including the roads not taken. |
 | `01-existing-model.md` | How Werkkzeug4 actually works, with citations. |
 | `02-target-model.md` | What we are building, and every deliberate divergence. |
 | `03-phase-toolchain.md` | Phase 1 — portable base and host tools. |
@@ -95,6 +96,13 @@ fr_public/
 | `09-phase-animation.md` | Phase 7 — animated geometry. |
 
 `01` and `02` are the load-bearing ones. Everything else is downstream of them.
+
+Two of these accumulate rather than describing a plan: `progress.md` is
+rewritten each stage to say where things stand, and `architecture.md` is
+appended to whenever a structural decision is taken or a structural assumption
+turns out to be wrong. Superseded entries in `architecture.md` are marked, not
+deleted — a decision that was reversed is more useful than one silently
+replaced.
 
 ## Why this is tractable
 

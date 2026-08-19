@@ -8,7 +8,9 @@
 code
 {
   #include "wz4frlib/wz3_bitmap_code.hpp"
-  #include "wz4lib/poc_ops.hpp"
+#ifndef WZ4_HEADLESS                    // wz4ops -headless defines this
+  #include "wz4lib/poc_ops.hpp"         // unused here, and poc needs util/shaders.hpp
+#endif
   void xInitPerlin();
 }
 header

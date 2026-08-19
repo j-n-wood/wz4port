@@ -21,13 +21,17 @@ void sMain()
   if(!name)
   {
     sPrintF(L"wz4ops %s %s\n",VERSION,REVISION);
-    sPrint(L"usage: wz4ops name.ops\n");
+    sPrint(L"usage: wz4ops [-headless] name.ops\n");
     sPrint(L"this will read name.ops and write name.hpp and name.cpp\n");
+    sPrint(L"-headless omits everything that needs the gui or the scripting\n");
+    sPrint(L"          engine: MakeGui, handles, drag, custom editors, the\n");
+    sPrint(L"          script bindings and the wiki text.\n");
     sSetErrorCode();
     return;
   }
 
   Doc = new Document;
+  Doc->Headless = sGetShellSwitch(L"headless");
   Doc->SetNames(name);
 
   if(!Doc->Parse(Doc->InputFileName))

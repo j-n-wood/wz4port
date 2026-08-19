@@ -4,9 +4,10 @@ Read this first when picking the project up cold. It records where things
 stand, what has been decided and why, and what would otherwise have to be
 rediscovered the hard way.
 
-**Last updated:** end of phase 2 stage 2.1.
-**Status:** Phase 1 complete and verified. Phase 2 stage 2.1 (the `doc.hpp`
-split) complete, gate passed. Stage 2.2 not started.
+**Last updated:** end of phase 2 stage 2.2.
+**Status:** Phase 1 complete and verified. Phase 2 stages 2.1 (the `doc.hpp`
+split) and 2.2 (headless operator generation) complete, both gates passed.
+Stage 2.3 (metadata JSON) not started.
 
 ---
 
@@ -25,11 +26,18 @@ Read next, in order:
 | Doc | Why |
 |---|---|
 | `00-overview.md` | Goals, non-goals, tree layout, working conventions |
+| `architecture.md` | **Why the structure is shaped like this**, and what was tried and rejected. The decision record |
 | `01-existing-model.md` | **How Werkkzeug4 actually works.** The reference document; fully cited |
 | `02-target-model.md` | What we are building and every deliberate divergence |
 | `03-phase-toolchain.md` … `09-phase-animation.md` | Per-phase plans |
 
-`wz4port/README.md` covers build mechanics and the three non-obvious things
+The gotchas below are the ones that cost time *this* session.
+`architecture.md` is the durable record: every structural decision, the
+measurement behind it, and the alternatives closed off. **Append to it whenever
+a structural decision is taken or a structural assumption turns out wrong** —
+that is what keeps this file short.
+
+`wz4port/README.md` covers build mechanics and the five non-obvious things
 about the build.
 
 ---
@@ -40,7 +48,7 @@ about the build.
 |---|---|
 | 0 — Documentation (`docs/00`–`02`) | **Done**, reviewed and approved |
 | 1 — Toolchain and portable base | **Done**, gate passed |
-| 2 — Headless op runtime + metadata | **In progress.** 2.1 done, gate passed. 2.2 next |
+| 2 — Headless op runtime + metadata | **In progress.** 2.1 and 2.2 done, gates passed. 2.3 next |
 | 3 — Text graph format + CLI | Not started |
 | 4 — Texture library + tests | Not started |
 | 5 — Texture GUI | Not started |
@@ -65,9 +73,10 @@ Clean build from scratch: **0 errors**. Warnings are expected and benign
 |---|---|
 | `altona_base` | Altona shell subset — types, math, serialize, system, blank renderer |
 | `altona_util` | `scanner` + `scanconfig`, the slice the host tools need |
-| `wz4ops` | Upstream's `.ops` code generator, native arm64 |
+| `wz4ops` | Upstream's `.ops` code generator, native arm64, now with `-headless` |
 | `wz4ops_gate` | Regenerates `basic_ops` + `wz3_bitmap_ops` into `build/generated/` |
 | `headless_core_gate` | Compiles `wz4lib/doc_core.hpp` alone, with the GUI poisoned |
+| `headless_ops_gate` | Generates and compiles both op modules `-headless`, GUI poisoned |
 | `simd_parity` | Verifies all 43 SSE2 intrinsics against scalar models |
 
 `simd_parity`: **70,184 checks, 0 failures** on arm64 via sse2neon.
@@ -91,10 +100,11 @@ wz4port/
     02-friend-default-argument.md
     03-latin1-to-utf8.md
     04-doc-headless-split.md   phase 2 stage 2.1
+    05-wz4ops-headless.md      phase 2 stage 2.2
   tests/
     simd_parity.cpp
     headless_core.cpp          phase 2 stage 2.1 gate
-    gui_poison.h               tripwire, force-included into that gate only
+    gui_poison.h               tripwire, force-included into the two gates
   third_party/sse2neon.h       pinned v1.9.1, MIT, 11,222 lines
 .gitignore                     new, repo root
 .claude/settings.local.json    gitignored tool allowlist
@@ -104,10 +114,12 @@ wz4port/
 
 ## Upstream footprint
 
-**36 files.** The isolation invariant is that `git status` on `altona_wz4/`
-must never show anything not listed in `wz4port/patches/`.
+**48 files** (`git diff --name-only 8c8f82c -- altona_wz4`). The isolation
+invariant is that `git status` on `altona_wz4/` must never show anything not
+listed in `wz4port/patches/`.
 
-Three categories, worth keeping distinct:
+Four categories, worth keeping distinct. Only the last two — 16 files — are
+structural; the other 32 are inert.
 
 **Code changes — 2 files, 5 lines.** Both genuine C++ errors under clang, not
 portability preferences.
@@ -129,6 +141,19 @@ needs the widget toolkit; see stage 2.1 below.
  A gui/treeinfo.hpp         ... to here
  M gui/manager.hpp        sGuiTheme moved out
  A gui/theme.hpp            ... to here
+```
+
+**Headless operator generation — 9 files.** `patches/05`. `wz4ops` gained a
+`-headless` flag; four `.ops`/header sites needed guards or a redirected
+include so the generated code stops reaching for the editor.
+
+```
+ M tools/wz4ops/{doc.hpp,doc.cpp,main.cpp,output.cpp}   the flag
+ M wz4lib/basic.hpp             ) these three are reached from .ops
+ M wz4lib/poc.hpp               ) header/code blocks and now include
+ M wz4frlib/wz3_bitmap_code.hpp ) doc_core.hpp instead of doc.hpp
+ M wz4lib/basic_ops.ops         3 x #ifndef WZ4_HEADLESS
+ M wz4frlib/wz3_bitmap_ops.ops  1 x #ifndef WZ4_HEADLESS (an unused include)
 ```
 
 **Encoding only — 30 files, 72 characters.** Latin-1 → UTF-8, verified
@@ -222,12 +247,12 @@ dependency. Nothing about the include path prevents that — the real GUI
 headers are still on it, and on macOS they even parse cleanly, so a build that
 merely succeeds proves nothing.
 
-The `headless_core_gate` target compiles `wz4port/tests/headless_core.cpp`,
-which includes only `doc_core.hpp`, with `wz4port/tests/gui_poison.h`
-force-included. That header `#pragma GCC poison`s `sWindow`, `sGui_` and
-`sSimpleMaterial`. Every header in `gui/` reaches `gui/window.hpp`, so those
-three tokens cover the lot. Break the invariant and the build fails naming the
-offending file.
+Two targets compile with `wz4port/tests/gui_poison.h` force-included:
+`headless_core_gate` (a TU including only `doc_core.hpp`) and
+`headless_ops_gate` (both `-headless` operator modules). That header
+`#pragma GCC poison`s `sWindow`, `sGui_` and `sSimpleMaterial`. Every header
+in `gui/` reaches `gui/window.hpp`, so those three tokens cover the lot. Break
+the invariant and the build fails naming the offending file.
 
 Two things to know if it ever fires:
 
@@ -238,7 +263,20 @@ Two things to know if it ever fires:
   header we legitimately need. The tripwire caught exactly this on its first
   run.
 
-### 8. CMake deduplicates bare `-include` flags
+### 8. Altona's shell parser: the switch goes *after* the filename
+
+`sGetShellParameter(0,0)` returns the first parameter not attached to a
+switch, and a token following `-switch` counts as that switch's parameter. So
+
+```sh
+wz4ops -headless basic_ops.ops    # WRONG — prints the usage text
+wz4ops basic_ops.ops -headless    # right
+```
+
+`wz4_add_ops()` in CMakeLists.txt builds the argument list in that order and
+says why.
+
+### 9. CMake deduplicates bare `-include` flags
 
 `altona_flags` force-includes `wz4port_posix_compat.h`. Adding a second
 `-include` on a target produces two bare `-include` tokens, CMake removes the
@@ -317,9 +355,35 @@ which needed the two verbatim extractions listed under the upstream footprint.
 **Gate passed**, and it now runs on every build: `headless_core_gate`. See
 gotcha 7.
 
-### Next: 2.2 — headless operator generation
+### Done: 2.2 — headless operator generation
 
-Then 2.3 (metadata JSON) and 2.4 (`libwz4core`).
+`wz4ops` gained `-headless`. It turned out that ~70% of the generated code is
+GUI, wiki text and script bindings: `basic_ops.cpp` goes 6,230 → 1,850 lines,
+`wz3_bitmap_ops.cpp` 8,884 → 2,166.
+
+**Open question 1 answered: both.** The plan preferred a separate tool that
+reused `wz4ops`' parser, specifically to avoid patching `wz4ops`. Measuring
+killed that preference — `Document::Types`/`Ops` are private, so a separate
+tool needs a patch anyway, and reimplementing the non-GUI half of
+`output.cpp` would duplicate ~600 lines of offset-sensitive emission whose
+failure mode is silently misaligned parameter data. So the headless `.cpp`
+comes from `wz4ops -headless` (one code path for anything layout-determining)
+and the metadata JSON will come from `wz4port/tools/opsmeta` reading the
+now-public parse tree.
+
+**Open question 3 answered: a signature rule.** `type` externals are skipped
+only when the signature names `wPaintInfo`, `wGridFrameHelper` or
+`wCustomEditor` — 12 of the 15 across the two files. A blanket skip would have
+dropped `GenBitmap::Init()` (a `wType` virtual the headless build needs) and
+both `Hit(wObject *,const sRay &,wHitInfo &)` overrides, which name nothing
+outside `doc_core.hpp`. Every skip is printed.
+
+**Gate passed**, and it runs on every build: `headless_ops_gate`.
+
+### Next: 2.3 — metadata emission
+
+Build `wz4port/tools/opsmeta`, linking only `tools/wz4ops/{parse,doc}.cpp`.
+Then 2.4 (`libwz4core`).
 
 **Phase gate:** headless core links; metadata JSON emitted for `basic` and
 `wz3_bitmap`; a test program constructs a document, connects two operators by
@@ -327,15 +391,22 @@ geometry alone, and prints the derived input lists.
 
 ### Still to decide
 
-1. Can `wz4ops`' parser be reused cleanly by a separate `opsmeta` tool
-   (preferred — keeps the metadata path entirely in `wz4port/`), or is
-   patching `wz4ops` the pragmatic choice? Read `tools/wz4ops/doc.hpp` and
-   assess how separable the parse tree is from the emitter. **This is the
-   first thing to settle in 2.2.**
-2. Does `wExecutive` require `script.cpp`, or can the scripting path be
-   excluded entirely?
-3. How best to exclude `type` blocks' `Show`/`Paint` externs — a generation
-   mode, or a compile-time guard in the emitted code?
+Only one open question is left from the phase's original three:
+
+- **Does `wExecutive` require `script.cpp`, or can the scripting path be
+  excluded entirely?** Settle in 2.4. `-headless` already stops the generated
+  code referencing `ScriptContext`.
+
+### Deliberately absent from the headless build
+
+Revisit when the new editor exists; all are recorded in `patches/05`:
+
+- parameter-panel `actions` — one of them calls `sSetClipboard`, which lives
+  in `base/windows.hpp` and is implemented in `windows_xlib.cpp`, a file
+  phase 1 excluded;
+- the `Screenshot` operator — renders the viewport and compares it against a
+  reference image. Headless sets `cmd->SetError(...)` instead;
+- the 12 `type` externals that paint.
 
 Still-unmeasured GUI coupling, from the phase-2 survey — this is the .cpp
 side, which 2.4 has to deal with:

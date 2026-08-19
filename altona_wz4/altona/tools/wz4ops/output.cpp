@@ -31,7 +31,10 @@ sBool Document::Output()
   HPP.PrintF(L"#ifndef HEADER_WZ4OPS_%s\n",ProjectName);
   HPP.PrintF(L"#define HEADER_WZ4OPS_%s\n",ProjectName);
   HPP.Print(L"\n");
-  HPP.Print(L"#include \"wz4lib/doc.hpp\"\n");
+  if(Headless)
+    HPP.Print(L"#include \"wz4lib/doc_core.hpp\"\n");
+  else
+    HPP.Print(L"#include \"wz4lib/doc.hpp\"\n");
 
   CPP.Print(L"/****************************************************************************/\n");
   CPP.Print(L"/***                                                                      ***/\n");
@@ -41,9 +44,18 @@ sBool Document::Output()
   CPP.Print(L"\n");
   CPP.Print(L"#define sPEDANTIC_OBSOLETE 1\n");
   CPP.Print(L"#define sPEDANTIC_WARN 1\n");
-  CPP.Print(L"#include \"gui/gui.hpp\"\n");
-  CPP.Print(L"#include \"gui/textwindow.hpp\"\n");
-  CPP.Print(L"#include \"wz4lib/script.hpp\"\n");
+  if(Headless)
+  {
+    // user code blocks in the .ops test this, so that a block which pulls an
+    // editor header can opt out without changing the non-headless output.
+    CPP.Print(L"#define WZ4_HEADLESS 1\n");
+  }
+  else
+  {
+    CPP.Print(L"#include \"gui/gui.hpp\"\n");
+    CPP.Print(L"#include \"gui/textwindow.hpp\"\n");
+    CPP.Print(L"#include \"wz4lib/script.hpp\"\n");
+  }
   CPP.PrintF(L"#include \"%s.hpp\"\n",ProjectName);
   CPP.Print(L"\n");
   CPP.Print(L"#pragma warning(disable:4189) // unused variables - happens in generated code\n");
@@ -56,7 +68,8 @@ sBool Document::Output()
   OutputCodeblocks();
   OutputTypes2();
   OutputOps();
-  OutputAnim();
+  if(!Headless)                   // the Anim structs are all ScriptContext
+    OutputAnim();
   OutputMain();
 
   CodeBlock *cb;
@@ -144,8 +157,42 @@ void Document::OutputExpr(ExprNode *node)
   if(node->Right) CPP.Print(L")"); 
 }
 
+// A type's "externals" are hand-written C++ pasted into the generated file,
+// so under -headless we can only keep the ones that compile without the gui.
+// A blanket skip would be wrong: wz3_bitmap's GenBitmap::Init() is a wType
+// virtual the headless build needs, and MeshBase::Hit(wObject *,const sRay &,
+// wHitInfo &) names nothing outside doc_core.hpp. So the test is on the
+// signature, against the types declared in wz4lib/doc_gui.hpp.
+
+sBool Document::ExternIsGuiOnly(External *ext)
+{
+  // wHandle is deliberately absent: it only ever appears inside wPaintInfo,
+  // and as a substring it would also match the core type wHandleSelectTag.
+  // wPaintInfo3D is a typedef of wPaintInfo and matches as a substring, which
+  // is what we want.
+
+  static const sChar *guitypes[] =
+  {
+    L"wPaintInfo",
+    L"wGridFrameHelper",
+    L"wCustomEditor",
+  };
+
+  for(sInt i=0;i<sCOUNTOF(guitypes);i++)
+    if(sFindString(ext->Type,guitypes[i])>=0 || sFindString(ext->Para,guitypes[i])>=0)
+      return 1;
+
+  return 0;
+}
+
 void Document::OutputExt(External *ext,const sChar *classname)
 {
+  if(Headless && ExternIsGuiOnly(ext))
+  {
+    sPrintF(L"wz4ops -headless: skipping %s::%s (gui type in signature)\n",classname,ext->Name);
+    return;
+  }
+
   HPPLine(ext->Line);
   HPP.PrintF(L"  %s %s(%s);\n",ext->Type,ext->Name,ext->Para);
 
@@ -598,7 +645,7 @@ void Document::OutputOps()
 
     // handles
 
-    if(op->Handles)
+    if(op->Handles && !Headless)
     {
       CPP.PrintF(L"void %sHnd%s(wPaintInfo &pi,wOp *op)\n",op->OutputType,op->Name);
       CPP.PrintF(L"{\n");
@@ -702,7 +749,7 @@ void Document::OutputOps()
 
     // custom editor
 
-    if(!op->CustomEd.IsEmpty())
+    if(!op->CustomEd.IsEmpty() && !Headless)
     {
       CPP.PrintF(L"wCustomEditor *%sCed%s(wOp *op)\n",op->OutputType,op->Name);
       CPP.PrintF(L"{\n");
@@ -713,7 +760,11 @@ void Document::OutputOps()
 
     // actions
 
-    if(op->Actions)
+    // "actions" are buttons in the parameter panel — editor-only by
+    // definition, and in practice they reach for things like sSetClipboard
+    // that only exist in the window-system layer.
+
+    if(op->Actions && !Headless)
     {
       CPP.PrintF(L"sInt %sAct%s(wOp *op,sInt code,sInt pos)\n",op->OutputType,op->Name);
       CPP.PrintF(L"{\n");
@@ -725,7 +776,7 @@ void Document::OutputOps()
 
     // ...
 
-    if(op->SpecialDrag)
+    if(op->SpecialDrag && !Headless)
     {
       CPP.PrintF(L"void %sDrag%s(const sWindowDrag &dd,sDInt mode,wOp *op,const sViewport &view,wPaintInfo &pi)\n",op->OutputType,op->Name);
       CPP.PrintF(L"{\n");
@@ -746,7 +797,10 @@ void Document::OutputOps()
     }
 
     // gui
+    // (guarded without reindenting the body, to keep the patch small)
 
+    if(!Headless)
+    {
     CPP.PrintF(L"void %sGui%s(wGridFrameHelper &gh,wOp *op)\n",op->OutputType,op->Name);
     CPP.Print (L"{\n");
     CPP.PrintF(L"  %sPara%s sUNUSED *para = (%sPara%s *)(op->EditData); para;\n",op->OutputType,op->Name,op->OutputType,op->Name);
@@ -877,6 +931,7 @@ void Document::OutputOps()
     }
     CPP.Print (L"}\n");
     CPP.Print (L"\n");
+    }   // if(!Headless) — the gui block
 
     // default
 
@@ -959,7 +1014,15 @@ void Document::OutputOps()
     CPP.Print (L"}\n");
     CPP.Print (L"\n");
 
-    // bindings
+    // bindings and wiki text
+    //
+    // Skipped with a "continue" rather than a brace, to keep the patch small.
+    // NOTE: that means everything from here to the end of the loop body is
+    // headless-excluded. Anything new that should survive -headless has to go
+    // ABOVE this line.
+
+    if(Headless)
+      continue;
 
     CPP.PrintF(L"void %sBind%s(wCommand *cmd,ScriptContext *ctx)\n",op->OutputType,op->Name);
     CPP.Print (L"{\n");
@@ -1288,19 +1351,23 @@ void Document::OutputMain()
     CPP.PrintF(L"  cl->TabType = %sType;\n",op->TabType.IsEmpty() ? op->OutputType : op->TabType);
     if(op->Code)
       CPP.PrintF(L"  cl->Command = %sCmd%s;\n",op->OutputType,op->Name);
-    CPP.PrintF(L"  cl->MakeGui = %sGui%s;\n",op->OutputType,op->Name);
+    if(!Headless)
+      CPP.PrintF(L"  cl->MakeGui = %sGui%s;\n",op->OutputType,op->Name);
     CPP.PrintF(L"  cl->SetDefaults = %sDef%s;\n",op->OutputType,op->Name);
-    CPP.PrintF(L"  cl->BindPara = %sBind%s;\n",op->OutputType,op->Name);
-    CPP.PrintF(L"  cl->Bind2Para = %sBind2%s;\n",op->OutputType,op->Name);
-    CPP.PrintF(L"  cl->Bind3Para = %sBind3%s;\n",op->OutputType,op->Name);
-    CPP.PrintF(L"  cl->WikiText = %sWiki%s;\n",op->OutputType,op->Name);
-    if(op->Handles)
+    if(!Headless)
+    {
+      CPP.PrintF(L"  cl->BindPara = %sBind%s;\n",op->OutputType,op->Name);
+      CPP.PrintF(L"  cl->Bind2Para = %sBind2%s;\n",op->OutputType,op->Name);
+      CPP.PrintF(L"  cl->Bind3Para = %sBind3%s;\n",op->OutputType,op->Name);
+      CPP.PrintF(L"  cl->WikiText = %sWiki%s;\n",op->OutputType,op->Name);
+    }
+    if(op->Handles && !Headless)
       CPP.PrintF(L"  cl->Handles = %sHnd%s;\n",op->OutputType,op->Name);
     if(op->SetDefaultsArray || op->ArrayParam.GetCount())
       CPP.PrintF(L"  cl->SetDefaultsArray = %sArr%s;\n",op->OutputType,op->Name);
-    if(op->Actions)
+    if(op->Actions && !Headless)
       CPP.PrintF(L"  cl->Actions = %sAct%s;\n",op->OutputType,op->Name);
-    if(op->SpecialDrag)
+    if(op->SpecialDrag && !Headless)
       CPP.PrintF(L"  cl->SpecialDrag = %sDrag%s;\n",op->OutputType,op->Name);
     if(op->Description)
       CPP.PrintF(L"  cl->GetDescription = %sDescription%s;\n",op->OutputType,op->Name);
@@ -1327,7 +1394,7 @@ void Document::OutputMain()
     CPP.PrintF(L"  cl->Flags = 0x%04x;\n",op->Flags);
     if(!op->Extract.IsEmpty())
       CPP.PrintF(L"  cl->Extract = L\"%s\";\n",op->Extract);
-    if(!op->CustomEd.IsEmpty())
+    if(!op->CustomEd.IsEmpty() && !Headless)
       CPP.PrintF(L"  cl->CustomEd = %sCed%s;\n",op->OutputType,op->Name);
     if(op->Inputs.GetCount()>0)
       CPP.PrintF(L"  in = cl->Inputs.AddMany(%d);\n",op->Inputs.GetCount());

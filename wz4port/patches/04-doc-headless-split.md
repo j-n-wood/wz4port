@@ -3,6 +3,7 @@
 **Files:** 5 (3 new, 2 edited) plus `wz4lib/doc.hpp` reduced to a shim
 **Phase:** 2 (headless op runtime), stage 2.1
 **Status:** applied
+**Wider context:** `docs/architecture.md` entries A8, A9, A10
 
 ## Why
 

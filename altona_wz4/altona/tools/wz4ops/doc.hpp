@@ -328,9 +328,9 @@ class Document
   sArray<CodeBlock *> HCodes;
   sArray<CodeBlock *> HEndCodes;
   sArray<CodeBlock *> CCodes;
-  sArray<Type *> Types;
-  sArray<Op *> Ops;
   Op *CurrentOp;
+
+  sBool ExternIsGuiOnly(External *ext);
 
 public:
   Document();
@@ -341,6 +341,17 @@ public:
   sBool Output();
   sTextBuffer CPP;
   sTextBuffer HPP;
+
+  // the parse tree. public so that a tool can read it without linking the
+  // emitter — see wz4port/tools/opsmeta.
+
+  sArray<Type *> Types;
+  sArray<Op *> Ops;
+
+  // -headless: emit only what compiles without the gui and without the
+  // scripting engine. See wz4port/patches/05-wz4ops-headless.md.
+
+  sBool Headless;
 
   sInt Priority;
 
