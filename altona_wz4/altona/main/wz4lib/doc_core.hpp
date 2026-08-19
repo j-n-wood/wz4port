@@ -867,6 +867,16 @@ void NXNCheckout(const sChar* filename);
 
 extern void (*ProgressPaintFunc)(sInt count, sInt max);
 
+// Change notification, installed by whoever is displaying the document.
+//
+// doc.cpp used to call sGui->Notify() directly from Connect() and ChangeR(),
+// which meant the document model could not be compiled without the widget
+// toolkit. The editor sets this to something that forwards to sGui->Notify;
+// a headless build leaves it null and nothing notifies. Arguments match
+// sGui->Notify(const void *,sDInt): the memory range that changed.
+
+extern void (*wNotifyHook)(const void *ptr,sDInt bytes);
+
 /****************************************************************************/
 
 #endif // FILE_WERKKZEUG4_DOC_CORE_HPP

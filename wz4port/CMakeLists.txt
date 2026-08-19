@@ -332,6 +332,47 @@ target_compile_options(headless_ops_gate PRIVATE
 )
 
 #############################################################################
+##  libwz4core — phase 2 stage 2.4                                         ##
+#############################################################################
+
+# The Werkkzeug operator runtime, GUI-free: documents, pages, operators, the
+# type system, the connection builder and the executive.
+#
+# sCONFIG_OPTION_SHELL (already set for every target here) makes
+# base/types.hpp:605 define sCOMMANDLINE, which is what compiles out the
+# painting half of doc.cpp and basic.cpp. See wz4port/patches/06.
+#
+# script.cpp is NOT optional. wExecutive::Execute drives ScriptContext directly
+# (doc.cpp:4050-4200) — that was the phase's last open question, and the answer
+# is that the scripting path is part of the executive. It costs nothing
+# platform-wise: script.cpp has no GUI or graphics dependency at all.
+#
+# gui/theme.cpp and gui/palette.cpp are upstream files carrying document data
+# that used to be stranded in the gui library; the extractions are patches
+# 04 and 06. Neither pulls a window system.
+
+add_library(wz4core STATIC
+  "${ALTONA_MAIN}/wz4lib/doc.cpp"
+  "${ALTONA_MAIN}/wz4lib/build.cpp"
+  "${ALTONA_MAIN}/wz4lib/basic.cpp"
+  "${ALTONA_MAIN}/wz4lib/script.cpp"
+  "${ALTONA_MAIN}/gui/theme.cpp"
+  "${ALTONA_MAIN}/gui/palette.cpp"
+  "${ALTONA_MAIN}/util/image.cpp"
+  "${ALTONA_MAIN}/util/stb_image.c"
+  "${COMPAT_DIR}/altona_missing.cpp"
+  "${GENHL_BASIC}"
+)
+target_include_directories(wz4core PUBLIC "${WZ4_GENHL_DIR}")
+target_link_libraries(wz4core PUBLIC altona_util)
+
+# The same tripwire the compile-only gates use. libwz4core is the thing that
+# most needs it: it is the layer everything above will link against.
+target_compile_options(wz4core PRIVATE
+  "SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/tests/gui_poison.h"
+)
+
+#############################################################################
 ##  headless_core_gate — phase 2 stage 2.1                                 ##
 #############################################################################
 
@@ -355,6 +396,22 @@ target_link_libraries(headless_core_gate PRIVATE altona_flags)
 target_compile_options(headless_core_gate PRIVATE
   "SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/tests/gui_poison.h"
 )
+
+#############################################################################
+##  core_connect — the phase 2 gate                                        ##
+#############################################################################
+
+# Links libwz4core, registers the basic module, builds a document and lets
+# Connect() derive the graph from block geometry. This is the first target that
+# LINKS the runtime rather than just compiling it, so it is what proves the
+# headless story end to end.
+
+add_executable(core_connect "${CMAKE_CURRENT_SOURCE_DIR}/tests/core_connect.cpp")
+target_link_libraries(core_connect PRIVATE wz4core)
+target_compile_options(core_connect PRIVATE
+  "SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/tests/gui_poison.h"
+)
+add_test(NAME core_connect COMMAND core_connect)
 
 #############################################################################
 ##  SIMD parity test                                                       ##

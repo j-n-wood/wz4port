@@ -6,47 +6,12 @@
 
 #include "gui/color.hpp"
 #include "gui/frames.hpp"
+#include "gui/palette.hpp"
 #include "util/image.hpp"
 #include "base/serialize.hpp"
 
-sF32 sColorPickerWindow::PaletteColors[32][4] = 
-{
-  { 0.0f,0.0f,0.0f,1.0f },
-  { 1.0f,0.0f,0.0f,1.0f },
-  { 0.0f,1.0f,0.0f,1.0f },
-  { 1.0f,1.0f,0.0f,1.0f },
-  { 0.0f,0.0f,1.0f,1.0f },
-  { 1.0f,0.0f,1.0f,1.0f },
-  { 0.0f,1.0f,1.0f,1.0f },
-  { 1.0f,1.0f,1.0f,1.0f },
-
-  { 0.0f,0.0f,0.0f,1.0f },
-  { 0.5f,0.0f,0.0f,1.0f },
-  { 0.0f,0.5f,0.0f,1.0f },
-  { 0.5f,0.5f,0.0f,1.0f },
-  { 0.0f,0.0f,0.5f,1.0f },
-  { 0.5f,0.0f,0.5f,1.0f },
-  { 0.0f,0.5f,0.5f,1.0f },
-  { 0.5f,0.5f,0.5f,1.0f },
-
-  { 0.0f,0.0f,0.0f,1.0f },
-  { 0.0f,0.0f,0.0f,1.0f },
-  { 0.0f,0.0f,0.0f,1.0f },
-  { 0.0f,0.0f,0.0f,1.0f },
-  { 0.0f,0.0f,0.0f,1.0f },
-  { 0.0f,0.0f,0.0f,1.0f },
-  { 0.0f,0.0f,0.0f,1.0f },
-  { 0.0f,0.0f,0.0f,1.0f },
-
-  { 0.0f,0.0f,0.0f,1.0f },
-  { 0.0f,0.0f,0.0f,1.0f },
-  { 0.0f,0.0f,0.0f,1.0f },
-  { 0.0f,0.0f,0.0f,1.0f },
-  { 0.0f,0.0f,0.0f,1.0f },
-  { 0.0f,0.0f,0.0f,1.0f },
-  { 0.0f,0.0f,0.0f,1.0f },
-  { 0.0f,0.0f,0.0f,1.0f },
-};
+// Storage moved to gui/palette.cpp; this binds the class member to it.
+sF32 (&sColorPickerWindow::PaletteColors)[32][4] = sGuiPaletteColors;
 
 /****************************************************************************/
 /***                                                                      ***/

@@ -20,24 +20,30 @@ ninja -C build
 
 Requires clang (or gcc), CMake ≥ 3.20 and Ninja. No external libraries yet.
 
-## Current state — phase 1 complete, phase 2 through stage 2.3
+## Current state — phases 1 and 2 complete
+
+**The Werkkzeug operator runtime builds and runs with no GUI, no graphics API
+and no window system.** `core_connect` proves it end to end: it constructs a
+document programmatically and lets the runtime derive the graph from block
+geometry alone.
 
 | Target | What it is |
 |---|---|
 | `altona_base` | Altona's shell subset: types, math, serialisation, system, blank renderer |
 | `altona_util` | The scanner slice the host tools need |
+| **`wz4core`** | **The operator runtime: doc, build, basic, script, generated `basic_ops`** |
 | `wz4ops` | Upstream's `.ops` code generator, built natively, with `-headless` |
 | `opsmeta` | **Ours.** `.ops` → metadata JSON, using wz4ops' parser but not its emitter |
 | `wz4ops_gate` | Regenerates `basic_ops` and `wz3_bitmap_ops` into `build/generated/` |
 | `headless_core_gate` | Compiles `wz4lib/doc_core.hpp` alone, with the GUI poisoned |
 | `headless_ops_gate` | Generates and compiles both op modules `-headless`, GUI poisoned |
 | `opsmeta_gate` | Emits and validates metadata for all 33 `.ops` modules into `build/meta/` |
+| `core_connect` | Phase 2 gate: links `wz4core`, derives a graph from geometry (`ctest`) |
 | `simd_parity` | Verifies all 43 SSE2 intrinsics against scalar models (`ctest`) |
 
-Not yet built: the operator runtime itself, the texture library, the CLI, the
-editor.
+Not yet built: the texture library, the `.wz4t` text format, the CLI, the editor.
 
-## Five things that are not obvious
+## Six things that are not obvious
 
 ### 1. `altona_config.hpp` lives here, not in `altona_wz4/`
 
@@ -104,7 +110,17 @@ a GUI dependency and the build fails naming the file.
 `gui/theme.hpp` and `gui/treeinfo.hpp` are the two pure-data extractions
 `doc_core.hpp` is allowed to use; they include nothing but `base/`.
 
-### 5. `wz4ops_gate` looks redundant next to `headless_ops_gate`. It is not.
+### 5. `sCOMMANDLINE` is already defined here, and already does a lot of work
+
+`base/types.hpp:605` defines `sCOMMANDLINE` as `sCONFIG_OPTION_SHELL`, which
+`altona_flags` sets. Altona and `wz4lib` already guard window-dependent code
+with `#if !sCOMMANDLINE` — including the painting half of `wz4lib/doc.cpp` and
+three function bodies in `basic.cpp`, which is how `wz4core` is GUI-free without
+those files being split. See `patches/06`.
+
+Check for this before adding a mechanism to strip display code.
+
+### 6. `wz4ops_gate` looks redundant next to `headless_ops_gate`. It is not.
 
 `wz4ops_gate` regenerates the operator modules *without* `-headless` into
 `build/generated/`, and nothing compiles them. It exists to prove the flag is
@@ -117,9 +133,10 @@ it and that guarantee goes with it. See `patches/05`.
 ```
 compat/          altona_config.hpp, POSIX shim, stub headers
   include/       on the include path; see note 1 above
+  altona_missing.cpp   sCheckBreakKey — declared everywhere, defined only for Windows
 patches/         every change made to altona_wz4/, with rationale
 tools/opsmeta/   .ops -> metadata JSON
-tests/           simd_parity, headless_core + gui_poison
+tests/           simd_parity, headless_core, core_connect + gui_poison
 build/           compiled output (gitignored)
   generated/     wz4ops output, non-headless — the inertness proof, note 5
   generated-headless/  wz4ops -headless output, compiled by headless_ops_gate

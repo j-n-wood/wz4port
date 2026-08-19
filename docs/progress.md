@@ -4,10 +4,11 @@ Read this first when picking the project up cold. It records where things
 stand, what has been decided and why, and what would otherwise have to be
 rediscovered the hard way.
 
-**Last updated:** end of phase 2 stage 2.3.
-**Status:** Phase 1 complete and verified. Phase 2 stages 2.1 (the `doc.hpp`
-split), 2.2 (headless operator generation) and 2.3 (metadata JSON) complete, all
-gates passed. Stage 2.4 (`libwz4core`) — the phase gate — not started.
+**Last updated:** end of phase 2.
+**Status:** Phases 1 and 2 complete and verified. **The operator runtime now
+links and runs headless** — `core_connect` builds a document and derives the
+graph from block geometry with no GUI, no graphics API and no window system.
+Phase 3 (the `.wz4t` text format and CLI) not started.
 
 ---
 
@@ -48,8 +49,8 @@ about the build.
 |---|---|
 | 0 — Documentation (`docs/00`–`02`) | **Done**, reviewed and approved |
 | 1 — Toolchain and portable base | **Done**, gate passed |
-| 2 — Headless op runtime + metadata | **In progress.** 2.1, 2.2, 2.3 done, gates passed. 2.4 next |
-| 3 — Text graph format + CLI | Not started |
+| 2 — Headless op runtime + metadata | **Done**, phase gate passed |
+| 3 — Text graph format + CLI | **Next** |
 | 4 — Texture library + tests | Not started |
 | 5 — Texture GUI | Not started |
 | 6 — Geometry | Not started |
@@ -79,12 +80,17 @@ Clean build from scratch: **0 errors**. Warnings are expected and benign
 | `headless_core_gate` | Compiles `wz4lib/doc_core.hpp` alone, with the GUI poisoned |
 | `headless_ops_gate` | Generates and compiles both op modules `-headless`, GUI poisoned |
 | `opsmeta_gate` | Emits + validates metadata for all 33 `.ops` modules into `build/meta/` |
+| **`wz4core`** | **The operator runtime, GUI-free: doc, build, basic, script, generated basic_ops** |
+| `core_connect` | Phase 2 gate: links `wz4core`, derives a graph from geometry (`ctest`) |
 | `simd_parity` | Verifies all 43 SSE2 intrinsics against scalar models |
 
 `simd_parity`: **70,184 checks, 0 failures** on arm64 via sse2neon.
 
 `opsmeta_gate`: **33 modules, 40 types, 370 classes, 2,728 parameters, 2,729
 choice values cross-checked against `sFindFlag`**, 0 failures.
+
+`core_connect`: **11 types, 38 classes registered from `basic`; 14 checks,
+0 failures.**
 
 ### Files created so far
 
@@ -106,13 +112,16 @@ wz4port/
     03-latin1-to-utf8.md
     04-doc-headless-split.md   phase 2 stage 2.1
     05-wz4ops-headless.md      phase 2 stage 2.2
+    06-doc-cpp-headless.md     phase 2 stage 2.4
+  compat/altona_missing.cpp    sCheckBreakKey — an upstream POSIX gap
   tools/opsmeta/               phase 2 stage 2.3 — .ops -> metadata JSON
     main.cpp  emit.cpp  json.cpp
     opsmeta.hpp  json.hpp
   tests/
     simd_parity.cpp
     headless_core.cpp          phase 2 stage 2.1 gate
-    gui_poison.h               tripwire, force-included into the two gates
+    core_connect.cpp           phase 2 gate — links wz4core, derives a graph
+    gui_poison.h               tripwire, force-included into every headless target
   third_party/sse2neon.h       pinned v1.9.1, MIT, 11,222 lines
 .gitignore                     new, repo root
 .claude/settings.local.json    gitignored tool allowlist
@@ -122,12 +131,12 @@ wz4port/
 
 ## Upstream footprint
 
-**48 files** (`git diff --name-only 8c8f82c -- altona_wz4`). The isolation
+**56 files** (`git diff --name-only 8c8f82c -- altona_wz4`). The isolation
 invariant is that `git status` on `altona_wz4/` must never show anything not
 listed in `wz4port/patches/`.
 
-Four categories, worth keeping distinct. Only the last two — 16 files — are
-structural; the other 32 are inert.
+Five categories, worth keeping distinct. Only the last three — 24 files — are
+structural; the other 32 are inert (30 encoding-only, 2 genuine clang errors).
 
 **Code changes — 2 files, 5 lines.** Both genuine C++ errors under clang, not
 portability preferences.
@@ -162,6 +171,25 @@ include so the generated code stops reaching for the editor.
  M wz4frlib/wz3_bitmap_code.hpp ) doc_core.hpp instead of doc.hpp
  M wz4lib/basic_ops.ops         3 x #ifndef WZ4_HEADLESS
  M wz4frlib/wz3_bitmap_ops.ops  1 x #ifndef WZ4_HEADLESS (an unused include)
+```
+
+**Headless runtime — 8 files.** `patches/06`. The painting half of the runtime
+is bracketed with upstream's own `#if !sCOMMANDLINE`; three data definitions
+were extracted out of the gui library; two genuine clang errors fixed.
+
+```
+ M wz4lib/doc.cpp        6 guarded regions, 2 notify calls, palette retarget
+ M wz4lib/build.cpp      1 notify call; gui/gui.hpp include removed
+ M wz4lib/basic.cpp      3 guarded bodies, 1 guarded + 1 normalised include
+ M wz4lib/build.hpp      doc.hpp -> doc_core.hpp
+ M wz4lib/doc_core.hpp   declares wNotifyHook
+ M wz4lib/script.hpp     extra qualification on a member (clang error)
+ M gui/manager.cpp       theme definitions moved out
+ A gui/theme.cpp           ... to here
+ M gui/color.hpp         PaletteColors becomes a reference to array
+ M gui/color.cpp         storage moved out, member bound to it
+ A gui/palette.hpp       ) the extracted swatch storage —
+ A gui/palette.cpp       ) document data, not gui state
 ```
 
 **Encoding only — 30 files, 72 characters.** Latin-1 → UTF-8, verified
@@ -271,7 +299,18 @@ Two things to know if it ever fires:
   header we legitimately need. The tripwire caught exactly this on its first
   run.
 
-### 8. Altona's shell parser: the switch goes *after* the filename
+### 8. `sCOMMANDLINE` already exists, and this port already sets it
+
+`base/types.hpp:605` defines `sCOMMANDLINE` as `sCONFIG_OPTION_SHELL`, which
+`altona_flags` has set since phase 1. Altona and `wz4lib` are already sprinkled
+with `#if !sCOMMANDLINE` around anything that needs a window — including three
+blocks in `doc.cpp` itself.
+
+**Check for it before inventing a mechanism to strip display code.** Stage 2.4
+used it for the whole painting half of `doc.cpp` and `basic.cpp` rather than
+splitting the files.
+
+### 9. Altona's shell parser: the switch goes *after* the filename
 
 `sGetShellParameter(0,0)` returns the first parameter not attached to a
 switch, and a token following `-switch` counts as that switch's parameter. So
@@ -284,7 +323,7 @@ wz4ops basic_ops.ops -headless    # right
 `wz4_add_ops()` in CMakeLists.txt builds the argument list in that order and
 says why.
 
-### 9. CMake deduplicates bare `-include` flags
+### 10. CMake deduplicates bare `-include` flags
 
 `altona_flags` force-includes `wz4port_posix_compat.h`. Adding a second
 `-include` on a target produces two bare `-include` tokens, CMake removes the
@@ -420,44 +459,65 @@ Three corrections it forced, all in `docs/architecture.md` A18/A20/A21:
   parameters live in **three independent offset spaces**, which the original
   schema sketch collapsed into one.
 
-### Next: 2.4 — `libwz4core`, and the phase gate
+### Done: 2.4 — `wz4core`, and the phase gate
 
-Build `wz4lib/{doc,build,basic}.cpp` plus the generated headless `basic_ops` as
-a GUI-free static library, and promote `headless_core_gate` from a compile-only
-`OBJECT` library to a linked test.
+`patches/06`. The runtime — `doc.cpp`, `build.cpp`, `basic.cpp`, `script.cpp`,
+plus `util/image.cpp`, the two extracted `gui/` data files and the generated
+headless `basic_ops` — builds as a GUI-free static library, compiled with the
+poison header.
 
-**Phase gate:** headless core links; ~~metadata JSON emitted for `basic` and
-`wz3_bitmap`~~ (done in 2.3); a test program constructs a document, connects two
-operators by geometry alone, and prints the derived input lists.
+**The survey's line count was misleading again.** "`doc.cpp` has 16
+GUI-touching lines" counted `sGui->` references and missed that the file
+contains *all ~840 lines of the `wPaintInfo` implementation*. One line of it
+mattered out of proportion: `new AlphaMtrl` at `doc.cpp:109` is the only use of
+the asc-generated `wz4lib/wz4shaders.hpp`.
 
-### Still to decide
+**Upstream had already built the switch we needed.** `doc.cpp` already carried
+three `#if !sCOMMANDLINE` blocks, and `sCOMMANDLINE` is `sCONFIG_OPTION_SHELL`
+— which this port has defined since phase 1. The painting half is bracketed
+with the same guard rather than moved out; a `.cpp` has no consumers, so the
+argument that forced the header split in 2.1 does not apply. **Look for
+`sCOMMANDLINE` before inventing a mechanism.**
 
-Only one open question is left from the phase's original three:
+**Open question 2 answered: `script.cpp` is required.** `wExecutive::Execute`
+drives `ScriptContext` directly at `doc.cpp:4050-4200`. It costs nothing
+platform-wise and compiled headless first time.
 
-- **Does `wExecutive` require `script.cpp`, or can the scripting path be
-  excluded entirely?** Settle in 2.4. `-headless` already stops the generated
-  code referencing `ScriptContext`.
+**Extracting a declaration was not enough to link.** 2.1 moved `sGuiTheme`'s
+declaration out of `gui/manager.hpp`; the definitions were still in
+`gui/manager.cpp`. Two more extractions, of definitions this time:
+`gui/theme.cpp` and `gui/palette.{hpp,cpp}`. The palette holds document-format
+data that lived as a static member of `sColorPickerWindow`; making that member a
+**reference to array** relocated the storage without touching any of its eight
+uses. See `architecture.md` A23.
+
+**Phase gate passed.** `core_connect` links `wz4core`, registers `basic`
+(11 types, 38 classes), builds a document programmatically and lets `Connect()`
+derive the graph from geometry alone — checking the §2.2 rules rather than just
+printing them. 14 checks, 0 failures.
+
+`headless_core_gate` was **not** promoted to a linked test as the plan said, on
+purpose: its value is compiling a TU that includes *only* `doc_core.hpp`, and
+linking `wz4core` would weaken exactly that.
 
 ### Deliberately absent from the headless build
 
-Revisit when the new editor exists; all are recorded in `patches/05`:
+Revisit when the new editor exists; recorded in `patches/05` and `patches/06`:
 
-- parameter-panel `actions` — one of them calls `sSetClipboard`, which lives
-  in `base/windows.hpp` and is implemented in `windows_xlib.cpp`, a file
-  phase 1 excluded;
-- the `Screenshot` operator — renders the viewport and compares it against a
+- parameter-panel `actions` — one calls `sSetClipboard`, which lives in
+  `base/windows.hpp` and is implemented in `windows_xlib.cpp`, a file phase 1
+  excluded;
+- the `Screenshot` operator — renders the viewport and compares against a
   reference image. Headless sets `cmd->SetError(...)` instead;
-- the 12 `type` externals that paint.
+- the 12 `type` externals that paint;
+- viewport painting, handle manipulation, theme application, the progress bar,
+  and the editor's golden-image comparison (`UnitTest::Test`, which needs
+  `App->UnitTestPath`).
 
-Still-unmeasured GUI coupling, from the phase-2 survey — this is the .cpp
-side, which 2.4 has to deal with:
-
-| File | LOC | GUI-touching lines |
-|---|---:|---:|
-| `wz4lib/doc.cpp` | 4,469 | 16 |
-| `wz4lib/build.cpp` | 998 | 1 |
-| `wz4lib/basic.cpp` | 980 | 7 |
-| `wz4lib/script.cpp` | 4,355 | 0 |
+`sCheckBreakKey()` is an **upstream POSIX gap**, not something we broke: declared
+for every platform, defined only in `system_win.cpp`. Filled by
+`wz4port/compat/altona_missing.cpp` returning 0. When `wz4gen` exists, a SIGINT
+handler reporting through it is how Ctrl+C should interrupt a long generation.
 
 ---
 
@@ -475,3 +535,30 @@ side, which 2.4 has to deal with:
   two must agree.
 - **`Text` / `Text3D` / `Path3D` operators** need FreeType (and a tessellator
   for the 3D ones). Deferred; 3 operators out of 84.
+- **The runtime has never executed an operator.** Phase 2 proved the runtime
+  *links* and that the graph is derived correctly, but `core_connect` never calls
+  `wDocument::CalcOp`, so no operator body has run and no `wObject` has been
+  produced. The `basic` module's operators are almost all structural (`Nop`,
+  `Group`, `Store`, `Load`), so the first real execution comes with the texture
+  library in phase 4 — that is where `wExecutive::Execute` gets exercised.
+- **`.wz4` document loading is untested.** `wDocument::Load` compiles and
+  `Serialize_` is intact, including the palette and theme fields that stages 2.1
+  and 2.4 had to work to preserve. Nothing has yet opened a real `.wz4` file.
+  Worth doing early in phase 3: it is the cheapest available check that the
+  serialisation surgery preserved the format, and there are `.wz4` files in the
+  tree to try.
+
+---
+
+## Starting phase 3
+
+Full plan in `docs/05-phase-text-format.md`; target model in
+`02-target-model.md` §4. Two things from phase 2 feed straight into it:
+
+- **The metadata is the parameter vocabulary.** `.wz4t` needs to name parameters
+  and values; `build/meta/*.json` already carries every symbol, kind, choice
+  label and default. Read it rather than re-deriving.
+- **`sCheckBreakKey` wants a SIGINT handler.** `wz4port/compat/altona_missing.cpp`
+  returns 0 today. Making it report a `SIGINT` flag is how Ctrl+C should
+  interrupt a long generation from the CLI, and the executive already polls it
+  per command.

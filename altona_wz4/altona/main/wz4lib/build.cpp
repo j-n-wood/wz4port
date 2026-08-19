@@ -8,7 +8,8 @@
 /**************************************************************************+*/
 
 #include "build.hpp"
-#include "gui/gui.hpp"      // for notify
+// gui/gui.hpp used to be included here "for notify"; the one sGui->Notify call
+// is now wNotifyHook, declared in doc_core.hpp.
 #include "wz4lib/basic_ops.hpp"
 #include "wz4lib/script.hpp"
 
@@ -626,7 +627,8 @@ wCommand *wBuilder::MakeCommand(wExecutive &exe,wOp *op,wCommand **inputs,sInt i
   if(op && (op->Class->Flags & wCF_PASSINPUT) && 1)
     cmd->PassInput = 0;
   if(op && op->Strobe)
-    sGui->Notify(op->Strobe);
+    if(wNotifyHook)
+      wNotifyHook(&op->Strobe,sizeof(op->Strobe));
   if(scriptop && scriptop->ScriptSourceValid)
   {
     sTextBuffer tb;

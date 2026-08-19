@@ -8,8 +8,11 @@
 /**************************************************************************+*/
 
 #include "basic.hpp"
-#include "basic_ops.hpp"
-#include "wz4lib/gui.hpp"
+#include "wz4lib/basic_ops.hpp"   // spelled like doc.cpp/build.cpp, so that a
+                                  // generated tree on the include path is found
+#if !sCOMMANDLINE
+#include "wz4lib/gui.hpp"         // the editor's windows; the Show() bodies use them
+#endif
 
 #include "serials.hpp"
 #include "wz4lib/videoencoder.hpp"
@@ -129,6 +132,7 @@ wObject *ScreenshotProxy::Copy()
 
 void ScreenshotProxyType_::Show(wObject *obj,wPaintInfo &pi)
 {
+#if !sCOMMANDLINE
   ScreenshotProxy *proxy = (ScreenshotProxy*) obj;
   if(proxy->Root)
   {
@@ -335,6 +339,7 @@ void ScreenshotProxyType_::Show(wObject *obj,wPaintInfo &pi)
     delete rt;
     delete db;
   }
+#endif
 }
 
 /****************************************************************************/
@@ -827,6 +832,7 @@ wObject *UnitTest::Copy()
 
 void UnitTestType_::Show(wObject *obj,wPaintInfo &pi)
 {
+#if !sCOMMANDLINE
   UnitTest *ut = (UnitTest *) obj;
   sInt x0 = pi.Client.x0+10;
   sInt y0 = pi.Client.y0+10;
@@ -893,12 +899,21 @@ void UnitTestType_::Show(wObject *obj,wPaintInfo &pi)
   sGui->FixedFont->Print(0,x0,y0,b);
 
   sClipPop();
+#endif
 }
 
 /****************************************************************************/
 
+// The editor's golden-image test: compares a rendered frame against a reference
+// .pic under App->UnitTestPath. Reachable only from the Screenshot operator,
+// which the headless build already omits (wz4port/patches/05), and App is the
+// editor application object.
+
 sInt UnitTest::Test(sImage &img,const sChar *filename,sInt flags)
 {
+#if sCOMMANDLINE
+  return 0;
+#else
   if(sGetStringLen(filename)==0)
     return 0;
   sBool mayfail = 0;
@@ -974,6 +989,7 @@ sInt UnitTest::Test(sImage &img,const sChar *filename,sInt flags)
   }
 
   return result;
+#endif
 }
 
 /****************************************************************************/

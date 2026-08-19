@@ -7,7 +7,20 @@
 /***                                                                      ***/
 /**************************************************************************+*/
 
-#include "doc.hpp"
+// The viewport painting half of this file — all of wPaintInfo, wType::Show,
+// wDocument::Show and wDocument::ChargeCaches — is bracketed by
+// "#if !sCOMMANDLINE", the same switch this file already used for its logging
+// overlay. sCOMMANDLINE is sCONFIG_OPTION_SHELL (base/types.hpp:605), so a
+// console build compiles the document model and nothing that paints.
+//
+// Guarded rather than moved to a separate file on purpose: a .cpp has no
+// consumers to protect, so a brace costs one line where a move costs 900 and a
+// transcription risk. See wz4port/patches/06.
+
+#include "doc_core.hpp"
+#if !sCOMMANDLINE
+#include "doc_gui.hpp"            // wPaintInfo, implemented below
+#endif
 //#include "gui.hpp"
 #include "build.hpp"
 #include "base/system.hpp"
@@ -16,10 +29,20 @@
 #include "wz4lib/serials.hpp"
 #include "wz4lib/script.hpp"
 #include "wz4lib/basic_ops.hpp"
-#include "wz4lib/wz4shaders.hpp"
+#include "gui/palette.hpp"        // sGuiPaletteColors, part of the doc format
+#if !sCOMMANDLINE
+#include "wz4lib/wz4shaders.hpp"  // AlphaMtrl, used only by wPaintInfo
 #include "gui/color.hpp"
+#endif
 
 class wDocument *Doc;
+
+// Change notification. The editor installs this so the parameter panel and the
+// canvas can react; the headless build leaves it null. It replaces direct
+// sGui->Notify() calls, which would have dragged the widget toolkit into the
+// document model for two lines of benefit.
+
+void (*wNotifyHook)(const void *ptr,sDInt bytes) = 0;
 
 #define LOGIT 0 //!sRELEASE
 
@@ -28,6 +51,8 @@ class wDocument *Doc;
 /***   painting                                                           ***/
 /***                                                                      ***/
 /****************************************************************************/
+
+#if !sCOMMANDLINE
 
 wPaintInfo::wPaintInfo()
 {
@@ -839,6 +864,7 @@ void wPaintInfo::PaintMtrl()
   delete Geo;
 }
 
+#endif // !sCOMMANDLINE — end of the wPaintInfo implementation
 
 /****************************************************************************/
 /***                                                                      ***/
@@ -890,11 +916,13 @@ sBool wType::IsTypeOrConversion(wType *type)
 
 void wType::Show(wObject *obj,wPaintInfo &pi)
 {
-  if(pi.Enable3D) 
+#if !sCOMMANDLINE
+  if(pi.Enable3D)
     sSetTarget(sTargetPara(sST_CLEARALL,pi.BackColor,pi.Spec));
   else
     sRect2D(pi.Client,sGC_BACK);
   pi.PaintHandles();
+#endif
 }
 
 /****************************************************************************/
@@ -2275,6 +2303,7 @@ void wEditOptions::Serialize(sReader &stream) { Serialize_(stream); }
 
 void wEditOptions::ApplyTheme()
 {
+#if !sCOMMANDLINE
   const sGuiTheme *gt=0;
   switch (Theme)
   {
@@ -2284,6 +2313,7 @@ void wEditOptions::ApplyTheme()
   }
   sVERIFY(gt);
   sGui->SetTheme(*gt);
+#endif
 }
 
 
@@ -2327,7 +2357,10 @@ void wDocOptions::UpdateTiming()
 template <class streamer> void wDocOptions::Serialize_(streamer &s)
 {
   sInt version = s.Header(sSerId::Wz4DocOptions,16);
-  sVERIFY(sCOUNTOF(sColorPickerWindow::PaletteColors)==32);
+  // The colour picker's swatches are part of the document format. Their storage
+  // moved to gui/palette.cpp so this does not need the gui; the bytes are
+  // unchanged.
+  sVERIFY(sCOUNTOF(sGuiPaletteColors)==32);
   if(version)
   {
     s | ProjectPath;
@@ -2345,10 +2378,10 @@ template <class streamer> void wDocOptions::Serialize_(streamer &s)
     {
       for(sInt i=0;i<32;i++)
       {
-        s | sColorPickerWindow::PaletteColors[i][0];
-        s | sColorPickerWindow::PaletteColors[i][1];
-        s | sColorPickerWindow::PaletteColors[i][2];
-        s | sColorPickerWindow::PaletteColors[i][3];
+        s | sGuiPaletteColors[i][0];
+        s | sGuiPaletteColors[i][1];
+        s | sGuiPaletteColors[i][2];
+        s | sGuiPaletteColors[i][3];
       }
     }
 
@@ -2768,8 +2801,8 @@ void wDocument::Connect()
 
   // notify
 
-  if(sGui)
-    sGui->Notify(*this);
+  if(wNotifyHook)
+    wNotifyHook(this,sizeof(*this));
 
   // who is connected to root?
 
@@ -2961,8 +2994,8 @@ void wDocument::ChangeR(wOp *op,sBool ignoreweak,sBool dontnotify,wOp *from)
       BlockedChanges = 1;
       return;
     }
-    if(sGui && !dontnotify)
-      sGui->Notify(*op);
+    if(wNotifyHook && !dontnotify)
+      wNotifyHook(op,sizeof(*op));
     op->CycleCheck++;
 
     op->Temp = 0;
@@ -3012,8 +3045,12 @@ void wDocument::FlushCaches()
   Connect();
 }
 
+// Cache warm-up: renders every beat so the player has everything resident.
+// Display-only, and the demo player is out of scope for this port.
+
 void wDocument::ChargeCaches()
 {
+#if !sCOMMANDLINE
   wOp *rootop = FindStore(L"root");
 
   if(rootop)
@@ -3051,6 +3088,7 @@ void wDocument::ChargeCaches()
 
     root->Release();
   }
+#endif
 }
 
 void wDocument::UnblockChange()
@@ -3401,6 +3439,7 @@ void wDocument::ClearSlowFlags()
 
 void wDocument::Show(wObject *obj,wPaintInfo &pi)
 {
+#if !sCOMMANDLINE
   pi.DeleteHandlesList.Clear();
 
   wType *type;
@@ -3429,6 +3468,7 @@ void wDocument::Show(wObject *obj,wPaintInfo &pi)
       Connect();
     }
   }
+#endif
 }
 
 sInt wDocument::SecondsToBeats(sF32 t)
@@ -3937,6 +3977,7 @@ wExecutive::~wExecutive()
 
 void ProgressPaint(sInt count,sInt max)
 {
+#if !sCOMMANDLINE
   static sInt lasttick = 0;
   sInt tick = sGetTime();
   if(tick<lasttick+500)
@@ -3972,6 +4013,7 @@ void ProgressPaint(sInt count,sInt max)
   sRect2D(ri,sGC_WHITE);
 
   sRender2DEnd();
+#endif
 }
 
 void (*ProgressPaintFunc)(sInt count, sInt max) = ProgressPaint;
@@ -4318,7 +4360,9 @@ wObject *wExecutive::Execute(sBool progress,sBool depend)
   if(ProgressEnable && ProgressPaintFunc)
   {
     ProgressPaintFunc(Commands.GetCount(),Commands.GetCount());
+#if !sCOMMANDLINE
     sUpdateWindow();
+#endif
   }
 
 //  sGetMemoryLeakTracker()->DumpLeaks(L"execution",0,1);

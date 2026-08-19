@@ -122,7 +122,10 @@ public:
 
   sMessage ChangeMsg;
 
-  static sF32 PaletteColors[32][4];
+  // A reference to sGuiPaletteColors, whose storage now lives in
+  // gui/palette.cpp so that code which does not link the gui can serialise it.
+  // Every existing use of PaletteColors still works unchanged.
+  static sF32 (&PaletteColors)[32][4];
 };
 
 /****************************************************************************/

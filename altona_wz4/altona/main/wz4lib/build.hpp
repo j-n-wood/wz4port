@@ -15,7 +15,7 @@
 #endif
 
 #include "base/types2.hpp"
-#include "doc.hpp"
+#include "doc_core.hpp"           // nothing here needs the gui half of doc.hpp
 
 class ScriptCompiler;
 class ScriptContext;
