@@ -205,7 +205,7 @@ struct Shortcut                 // some kind of key binding
   FormInstance *Instance;       // with whom. may be 0
   Form *Class;                  // class to bind to. must be set
   sU32 Key;                     // key to press (may be 0)
-  sInt Qual;                    // zus‰tzliche wire qualifier
+  sInt Qual;                    // zus√§tzliche wire qualifier
   sInt Hit;                     // for drags, when QUAL_HIT is set
   sInt Sets;                    // swithc between command sets, 0 = all sets
   CommandTool *Tool;            // use only when tool is active!

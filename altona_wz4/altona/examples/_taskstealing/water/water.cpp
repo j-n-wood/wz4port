@@ -24,7 +24,7 @@ WaterFX::WaterFX()
   GravityY   = -0.0002f;
   CentralGravity = 0;
   OuterForce = -0.008f;    // anziehung
-  InnerForce =  0.01f;    // abstﬂung
+  InnerForce =  0.01f;    // abst√üung
   InteractRadius = 0.1f;
   Friction = 0.994f;
 
@@ -365,7 +365,7 @@ void WaterFX::Func(sInt n,sInt threadid)
           sF32 l = sFSqrt(lsq);          // distance
           sF32 li = 1.0f-l*rr;           // 1-normalized distance
           sF32 f1 = li*li*OuterForce;    // anziehung
-          sF32 f2 = li*li*li*InnerForce; // abstoﬂung
+          sF32 f2 = li*li*li*InnerForce; // absto√üung
           
           d*= (f1+f2)/l;
 

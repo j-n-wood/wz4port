@@ -2066,7 +2066,7 @@ void Wz4Mesh::Heal(Wz4Mesh *reference, sInt flags, sF32 posThres, sF32 normThres
 
   sFORALL(Vertices,v)
   {
-    // yep, n². Sorry.
+    // yep, nÂ². Sorry.
     sFORALL(reference->Vertices, vref)
     {
       if ((v->Pos-vref->Pos).LengthSq()>posThres) continue;
@@ -6145,8 +6145,8 @@ void Wz4Mesh::Finish2DExtrusionOp(sF32 extrude,sInt flags)
         faceNormals[_i].Unit();
       }
 
-      //sF32 angleThresh = sFCos(sPIF / 3.0f); // 60° angle
-      sF32 angleThresh = sFCos(sPIF / 4.0f); // 45° angle
+      //sF32 angleThresh = sFCos(sPIF / 3.0f); // 60Â° angle
+      sF32 angleThresh = sFCos(sPIF / 4.0f); // 45Â° angle
 
       // sharp edges
       sFORALL(Faces,face)

@@ -30,7 +30,7 @@ WaterFX::WaterFX()
   GravityY   = -0.0002f;
   CentralGravity = 0;
   OuterForce = -0.008f;    // anziehung
-  InnerForce =  0.01f;    // abstßung
+  InnerForce =  0.01f;    // abstÃŸung
   InteractRadius = 0.1f;
   Friction = 0.994f;
 
@@ -268,7 +268,7 @@ void WaterFX::Func(sInt n,sInt threadid)
           sF32 l = sFSqrt(lsq);          // distance
           sF32 li = 1.0f-l*rr;           // 1-normalized distance
           sF32 f1 = li*li*OuterForce;    // anziehung
-          sF32 f2 = li*li*li*InnerForce; // abstoßung
+          sF32 f2 = li*li*li*InnerForce; // abstoÃŸung
           
           d*= (f1+f2)/l;
 
@@ -362,7 +362,7 @@ void RNFR063_Water::Init()
 
   Water->GravityY       = Drop->CentralGravity  =  Para.Gravity;//-0.00005f;
   Water->OuterForce     = Drop->OuterForce      = -Para.OuterForce;//-0.0001f;    // anziehung
-  Water->InnerForce     = Drop->InnerForce      =  Para.InnerForce;//0.01f;     // abstßung
+  Water->InnerForce     = Drop->InnerForce      =  Para.InnerForce;//0.01f;     // abstÃŸung
   Water->InteractRadius = Drop->InteractRadius  =  Para.InteractRadius;//0.1f;
   Water->Friction       = Drop->Friction        =  Para.Friction;//0.995f;
 }

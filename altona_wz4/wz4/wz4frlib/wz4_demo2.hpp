@@ -123,7 +123,7 @@ public:
   sInt RenderpassSort;            // used for sorting nodes 
   sBool MayCollapse;              // childs in this node may be collapsed into another node, for better renderpass sorting.
   sInt RecFlags;                  // recursion flags: prevent double calls of Simulate & Prepare
-  sArray<sMatrix34CM> Matrices;   // Liste von Matrix für's zeichnen. 
+  sArray<sMatrix34CM> Matrices;   // Liste von Matrix fÃ¼r's zeichnen. 
   sInt TimelineStart;             // timeline range
   sInt TimelineEnd;
   sF32 ClipRandDuration;          // hack for the cliprand operator

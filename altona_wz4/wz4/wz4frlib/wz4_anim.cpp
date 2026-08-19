@@ -598,7 +598,7 @@ void Wz4Skeleton::EvaluateFadeCM(sF32 time1,sF32 time2,sF32 fade,sMatrix34 *mata
   {
     if(j->Channel)
     {
-      if(_i>=10 && _i<161)      // detuned fake: explodierende augäpfel
+      if(_i>=10 && _i<161)      // detuned fake: explodierende augÃ¤pfel
       {
         j->Channel->Evaluate(time1,key);
         key.ToMatrix(mat);

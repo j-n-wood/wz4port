@@ -4497,7 +4497,7 @@ void WinStack::OnPaint2D()
         sU32 color = op->Class->OutputType->Color;
         sInt textcolor = sGC_BLACK;
 
-        if(0)     // load & stores einfärben: will ich nicht weil verwirrend
+        if(0)     // load & stores einfÃ¤rben: will ich nicht weil verwirrend
         {
           if(op->Class->OutputType == AnyTypeType)
           {

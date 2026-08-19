@@ -1333,7 +1333,7 @@ namespace Wz4
         cl->Mtrl->AddRef();
 
       // hier sollte der code sein, der die texture spaces vermischt
-      // wir brauchen also auf alle f‰lle einen shader!
+      // wir brauchen also auf alle f√§lle einen shader!
 
       sInt tspaces[2]={-1,-1};
       sInt ntspaces=0;

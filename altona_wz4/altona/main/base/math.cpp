@@ -40,7 +40,7 @@ sADDSUBSYSTEM(Math,0x18,sInitMath,0);
 /****************************************************************************/
 /****************************************************************************/
 
-// Find real roots (=Nullstellen) of at² + bt + c.
+// Find real roots (=Nullstellen) of atÂ² + bt + c.
 sInt sSolveQuadratic(sF32 t[],sF32 a,sF32 b,sF32 c)
 {
   if(a == 0.0f) // yes, exact compares everywhere!
@@ -463,13 +463,13 @@ void sMatrix34::FindEulerXYZ(sF32 &x,sF32 &y,sF32 &z) const
   sF32 rx,ry,rz;
   sF32 sy = -i.z;
 
-  if(sy >= 0.99999f) // ry very close to 90° (singular)
+  if(sy >= 0.99999f) // ry very close to 90Â° (singular)
   {
     ry = sPIF / 2.0f;
     rx = sATan2(j.x,j.y);
     rz = 0.0f;
   }
-  else if(sy <= -0.99999f) // ry very close to -90° (singular)
+  else if(sy <= -0.99999f) // ry very close to -90Â° (singular)
   {
     ry = -sPIF / 2.0f;
     rx = sATan2(-j.x,-k.x);
@@ -496,13 +496,13 @@ void sMatrix34::FindEulerXYZ2(sF32 &x,sF32 &y,sF32 &z) const
   sF32 rx,ry,rz;
   sF32 sy = -i.z;
 
-  if(sy >= 0.99999f) // ry very close to 90° (singular)
+  if(sy >= 0.99999f) // ry very close to 90Â° (singular)
   {
     ry = sPIF / 2.0f;
     rx = sATan2(j.x,j.y);
     rz = 0.0f;
   }
-  else if(sy <= -0.99999f) // ry very close to -90° (singular)
+  else if(sy <= -0.99999f) // ry very close to -90Â° (singular)
   {
     ry = -sPIF / 2.0f;
     rx = sATan2(-j.x,-k.x);
@@ -567,7 +567,7 @@ void sMatrix34::Look(sVector30Arg v)
   k = v;
   k.Unit();
   i.Cross(j,k);
-  i.Unit();         // ist dieses unit überflüssig ?
+  i.Unit();         // ist dieses unit Ã¼berflÃ¼ssig ?
   j.Cross(k,i);
   j.Unit();
   l.Init(0,0,0);
@@ -605,7 +605,7 @@ void sMatrix34::LookPrecise(sVector30Arg v)
   k = v;
   k.UnitPrecise();
   i.Cross(j,k);
-  i.UnitPrecise();         // ist dieses unit überflüssig ?
+  i.UnitPrecise();         // ist dieses unit Ã¼berflÃ¼ssig ?
   j.Cross(k,i);
   j.UnitPrecise();
   l.Init(0,0,0);

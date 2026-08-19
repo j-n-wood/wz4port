@@ -75,7 +75,7 @@ enum
 /***                                                                      ***/
 /****************************************************************************/
 
-// Finds real roots (=Nullstellen) of at² + bt + c, puts them into t,
+// Finds real roots (=Nullstellen) of atÂ² + bt + c, puts them into t,
 // and returns how many there are. Not very fast, but handles all
 // degenerate cases and is quite accurate.
 sInt sSolveQuadratic(sF32 t[],sF32 a,sF32 b,sF32 c);
@@ -1096,13 +1096,13 @@ struct sFilter2Pole
 /***                                                                      ***/
 /****************************************************************************/
 
-// x,y = 8:16 (größere zahlen loopen)
+// x,y = 8:16 (grÃ¶ÃŸere zahlen loopen)
 
 sF32 sPerlin2D(sInt x,sInt y,sInt mask=255,sInt seed=0);  
 sF32 sPerlin3D(sInt x,sInt y,sInt z,sInt mask=255,sInt seed=0);  
 void sPerlinDerive3D(sInt x,sInt y,sInt z,sInt mask,sInt seed,sF32 &value,sVector30 &dir);
 
-// x,y = 0..256 (größere zahlen loopen)
+// x,y = 0..256 (grÃ¶ÃŸere zahlen loopen)
 // mode = 0: x
 // mode = 1: abs(x)
 // mode = 2: sin(x*sPI)

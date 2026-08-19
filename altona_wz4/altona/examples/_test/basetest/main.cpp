@@ -153,8 +153,8 @@ void TestStringFunctions()
   sCopyString(b0,L"abcd",256); sAppendString(b0,L"1234",7);
   CHECK(sCmpString(b0,L"abcd12")==0);
 
-  sCopyString(b0,L"aBcDeFgHiJkLmNoPqRsTuVwXyZ \n\t_:;öÄü-",256);
-  sCopyString(b1,L"AbCdEfGhIjKlMnOpQrStUvWxYz \n\t_:;ÖäÜ-",256);
+  sCopyString(b0,L"aBcDeFgHiJkLmNoPqRsTuVwXyZ \n\t_:;Ã¶Ã„Ã¼-",256);
+  sCopyString(b1,L"AbCdEfGhIjKlMnOpQrStUvWxYz \n\t_:;Ã–Ã¤Ãœ-",256);
 
   sMakeUpper(b0);
   sMakeLower(b1); 
@@ -1707,8 +1707,8 @@ void TestFindEuler()
   for(sInt i=0;i<10000;i++)
   {
     rx = (rnd.Float(2)-1)*(sPIF-0.01f);
-    ry = (rnd.Float(2)-1)*(sPIF/2-0.01f); // 180° only. the other 180° are redundant
-    rz = rnd.Float(1)*(sPIF/2-0.01f);     // 180° only. the other 180° are upside down
+    ry = (rnd.Float(2)-1)*(sPIF/2-0.01f); // 180Â° only. the other 180Â° are redundant
+    rz = rnd.Float(1)*(sPIF/2-0.01f);     // 180Â° only. the other 180Â° are upside down
 
     mat0.EulerXYZ(rx,ry,rz);
     mat0.FindEulerXYZ2(qx,qy,qz);

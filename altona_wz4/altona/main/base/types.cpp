@@ -1110,7 +1110,7 @@ void sFloatInfo::PrintF(const sStringDesc &desc,sInt fractions)
         *s++ = Digits[dig++];
         frac--;
       }
-      if(frac==0 && Digits[dig]>='5')  //aufrunden. gefährlich...
+      if(frac==0 && Digits[dig]>='5')  //aufrunden. gefÃ¤hrlich...
       {
         for(sChar *d = s-1;d>=sx;d--)
         {

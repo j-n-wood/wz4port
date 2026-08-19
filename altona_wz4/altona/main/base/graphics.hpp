@@ -728,7 +728,7 @@ struct sVertexFormatHandle : public sVertexFormatHandlePrivate
   friend sVertexFormatHandle *sCreateVertexFormat(const sU32 *discriptor);
   friend void sDestroyAllVertexFormats();
   friend void sStreamVertexFormat(sWriter &, const sVertexFormatHandle *vhandle);
-  friend void sFlushVertexFormat(sBool flush,void *user=0);
+  friend void sFlushVertexFormat(sBool flush,void *user);   // wz4port: dropped "=0", see patches/02
   friend class sGeometry;
 
   struct OGLDecl

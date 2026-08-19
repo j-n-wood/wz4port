@@ -42,7 +42,7 @@ MyApp::MyApp()
   Water->GravityY                               = -0.00004f;
                           Drop->CentralGravity  = -0.00005f;
   Water->OuterForce     = Drop->OuterForce      = -0.001f;    // anziehung
-  Water->InnerForce     = Drop->InnerForce      =  0.01f;     // abstßung
+  Water->InnerForce     = Drop->InnerForce      =  0.01f;     // abstÃŸung
   Water->InteractRadius = Drop->InteractRadius  =  0.1f;
   Water->Friction       = Drop->Friction        =  0.9995f;
 

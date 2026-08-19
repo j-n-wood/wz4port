@@ -973,7 +973,7 @@ sThread *sGetCurrentThread()
 
 sInt sGetCurrentThreadId()
 {
-  return pthread_self();
+  return (sInt)(sDInt)pthread_self();   // wz4port: pthread_t is a pointer on macOS, see patches/01
 }
 
 /****************************************************************************/
@@ -1016,10 +1016,10 @@ void * sSTDCALL sThreadTrunk_pthread(void *ptr)
   while (!th->ThreadId)
    sSleep(10);
 
-  sU64 self = pthread_self();
-  sLogF(L"sys",L"New sThread started. 0x%x, id is 0x%x\n", self, th->ThreadId);
+  pthread_t self = pthread_self();      // wz4port: was sU64, see patches/01
+  sLogF(L"sys",L"New sThread started. 0x%x, id is 0x%x\n", (sU64)(sDInt)self, th->ThreadId);
 
-  sVERIFY( pthread_equal( self, th->ThreadId ) );
+  sVERIFY( pthread_equal( self, (pthread_t)(sDInt)th->ThreadId ) );
 
   th->Code(th,th->Userdata);
 
@@ -1057,7 +1057,7 @@ sThread::sThread(void (*code)(sThread *,void *),sInt pri,sInt stacksize,void *us
   int result = pthread_create((pthread_t*)ThreadHandle, sNULL, sThreadTrunk_pthread, this);
   sVERIFY(result==0);
 
-  ThreadId = *(pthread_t*)ThreadHandle;
+  ThreadId = (sU64)(sDInt)*(pthread_t*)ThreadHandle;   // wz4port: see patches/01
 
 // clone(sThreadTrunk, StackMemory + stacksize - 1,  CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_VM|CLONE_THREAD ,this);
 

@@ -138,7 +138,7 @@ void sBlobHeap::CheckFree()
       sVERIFY(bn<Buffers.GetCount());
     }
 
-    // should be sorted and not zusammenhängend
+    // should be sorted and not zusammenhÃ¤ngend
 
     if(last)                
       sVERIFY(last->End < fr->Start);
@@ -168,7 +168,7 @@ void sBlobHeap::CheckUsed(sBlobHeapHandle *hnd)
     sFatal(L"sBlobHeap: handle range outside buffers");
 ok:;
 
-    // should be sorted and not zusammenhängend
+    // should be sorted and not zusammenhÃ¤ngend
 
 //    sVERIFY(ur->Start > last);   // not any more
     last = ur->End;

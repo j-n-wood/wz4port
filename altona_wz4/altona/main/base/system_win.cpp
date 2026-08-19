@@ -609,7 +609,7 @@ void sInitKeys()
     { '-'           , VK_SUBTRACT },
     { 0 }
   };
-  static const sChar symbols[] = L"€";
+  static const sChar symbols[] = L"Â€";
 
 
     

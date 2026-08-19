@@ -2411,7 +2411,7 @@ protected:
                                             sVERIFY(sStaticArray<Type>::Used+add<=Max_); 
                                         } 
   Type Storage[Max_];
-public:                                 // das ganze rumgescope ist für den PS3-compiler...
+public:                                 // das ganze rumgescope ist fÃ¼r den PS3-compiler...
   typedef typename sRemovePtrType<Type>::Type ElementType;
   enum { SIZE = Max_ };
   sStackArray()                         { sStaticArray<Type>::Data = Storage; sStaticArray<Type>::Used = 0; sStaticArray<Type>::Alloc = Max_; }

@@ -2001,7 +2001,7 @@ void ScriptDump(const sU32 *code,sTextBuffer &tb)
       break;
 
     case SC_DOT|SC_FLOAT:
-      tb.PrintF(L"°%d ",count);
+      tb.PrintF(L"Â°%d ",count);
       index-=count*2-1;
       break;
     case SC_NEG|SC_INT:
@@ -2990,7 +2990,7 @@ sInt BinaryOp(sInt token,sInt &pri,sInt &mode)
   case '*':               pri= 1; mode=0x0003; return SC_MUL;
   case '/':               pri= 1; mode=0x0003; return SC_DIV;
   case '%':               pri= 1; mode=0x0003; return SC_MOD;
-  case 0xb0:              pri= 1; mode=0x0103; return SC_DOT;   // '°'
+  case 0xb0:              pri= 1; mode=0x0103; return SC_DOT;   // 'Â°'
 
   case TOK_TILDETILDE:    pri= 2; mode=0x000f; return SC_CAT;
 

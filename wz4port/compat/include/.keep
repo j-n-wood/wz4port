@@ -1,0 +1,7 @@
+This directory is on the include path so that upstream's
+    #include "../altona_config.hpp"
+resolves to wz4port/compat/altona_config.hpp.
+
+It also holds the portable shim headers (simd_compat.hpp).
+Do not remove this file: the directory must exist for the include
+path trick to work.

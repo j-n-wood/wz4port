@@ -2836,7 +2836,7 @@ void Wz4BeatCed::PaintWave()
       }
     }
 
-    // write bitmap. this is a cache-friendly 90° rotation!
+    // write bitmap. this is a cache-friendly 90Â° rotation!
 
     for(sInt y=0;y<ys;y++)
     {
