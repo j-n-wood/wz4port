@@ -155,7 +155,7 @@ set(WZ4_GEN_DIR "${CMAKE_BINARY_DIR}/generated")
 #     "AddTypes_a/b/basic_ops", which does not compile. It must be invoked
 #     with a BARE FILENAME from the file's own directory so the names come
 #     out as AddTypes_basic_ops / AddOps_basic_ops, which is what the
-#     sREGOPS macro (wz4lib/doc.hpp:51-56) expands to.
+#     sREGOPS macro (wz4lib/doc_core.hpp:70-74) expands to.
 
 function(wz4_add_ops out_var subdir ops_path)
   get_filename_component(_stem "${ops_path}" NAME_WE)
@@ -188,6 +188,31 @@ wz4_add_ops(GEN_BITMAP wz4frlib "${WZ4_DIR}/wz4frlib/wz3_bitmap_ops.ops")
 # registration entry points the runtime expects. The generated sources are
 # not compiled until phase 2, when the headless op runtime exists.
 add_custom_target(wz4ops_gate ALL DEPENDS ${GEN_BASIC} ${GEN_BITMAP})
+
+#############################################################################
+##  headless_core_gate — phase 2 stage 2.1                                 ##
+#############################################################################
+
+# Compiles a translation unit that includes wz4lib/doc_core.hpp and nothing
+# else, with tests/gui_poison.h force-included ahead of it. The poison header
+# makes any identifier from the real gui/ or util/shaders.hpp a compile error,
+# so this target fails the moment the document model reacquires a GUI
+# dependency. See wz4port/patches/04-doc-headless-split.md.
+#
+# OBJECT, not an executable: wz4lib/doc.cpp is not built until stage 2.4, so
+# there is nothing to link against yet. Everything the gate checks is checked
+# by the compiler.
+
+add_library(headless_core_gate OBJECT
+  "${CMAKE_CURRENT_SOURCE_DIR}/tests/headless_core.cpp"
+)
+target_link_libraries(headless_core_gate PRIVATE altona_flags)
+# SHELL: keeps the flag and its argument together. Without it CMake sees two
+# bare "-include" tokens on this target's command line, deduplicates them, and
+# orphans altona_flags' wz4port_posix_compat.h path.
+target_compile_options(headless_core_gate PRIVATE
+  "SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/tests/gui_poison.h"
+)
 
 #############################################################################
 ##  SIMD parity test                                                       ##

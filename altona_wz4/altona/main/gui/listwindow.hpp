@@ -10,12 +10,11 @@
 #include "gui/window.hpp"
 #include "gui/manager.hpp"
 #include "gui/wire.hpp"
+#include "gui/treeinfo.hpp"       // sLW_MAXTREENEST, sListWindowTreeInfo
 
 class sStaticListWindow;
 
 /****************************************************************************/
-
-#define sLW_MAXTREENEST   128     // max nesting of trees
 
 enum sListWindow2Flags
 {
@@ -70,24 +69,7 @@ struct sListWindow2Column         // column: real column in the table, referenci
   sRect SortBox;                  // hitbox for sort-button
 };
 
-template <class Type>             // use ptr type!
-struct sListWindowTreeInfo
-{
-  sInt Level;                     // level of indention, starting with 0
-  sInt Flags;                     // 1: show children 0: hide children
-  Type Parent;                    // link to parent, if not root (there may be multiple roots)
-  Type FirstChild;                // link to first children
-  Type NextSibling;               // link to next sibling
-  Type *TempPtr;                  // for building single linked list
- 
-  sListWindowTreeInfo() { Level=0; Flags=0; Parent=0; FirstChild=0; NextSibling=0; TempPtr=0; }
-  void Need() { Parent->Need(); FirstChild->Need(); NextSibling->Need(); }
-};
-enum sListWindowTreeInfoFlags
-{
-  sLWTI_CLOSED = 0x0001,
-  sLWTI_HIDDEN = 0x0002,
-};
+// sListWindowTreeInfo and sListWindowTreeInfoFlags moved to gui/treeinfo.hpp
 
 class sStaticListWindow : public sWireClientWindow    // static list: can't select, only display and edit columns
 {

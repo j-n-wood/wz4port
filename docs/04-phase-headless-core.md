@@ -22,7 +22,8 @@ The coupling is far lighter than the include graph suggests. Measured:
 | `wz4lib/basic.cpp` | 980 | 7 |
 | `wz4lib/script.cpp` | 4,355 | 0 |
 
-Three declarations account for essentially all of it:
+Three declarations account for essentially all of it (line numbers are from the pre-split
+`doc.hpp`; all three now live in `doc_gui.hpp`):
 
 - `wPaintInfo` (`doc.hpp:113`) — the viewport painting context, passed to `type` blocks' `Show`
   and to `handles` blocks.
@@ -34,33 +35,76 @@ Three declarations account for essentially all of it:
 
 ## Stages
 
-### 2.1 — Split `doc.hpp`
+### 2.1 — Split `doc.hpp` — **done**
 
-Upstream patch, and the most significant one in the project.
+Upstream patch, and the most significant one in the project. Recorded as
+`wz4port/patches/04-doc-headless-split.md` (03 was already taken by the Latin-1
+conversion).
 
 Split into:
 
-- **`doc_core.hpp`** — `wObject`, `wType`, `wClass`, `wClassInputInfo`, `wOp`, `wOpInputInfo`,
-  `wStackOp`, `wTreeOp`, `wPage`, `wDocument`, `wCommand`, `wExecutive`, `wDocOptions`, the
-  flag enumerations, and `sREGOPS`. No GUI include.
-- **`doc_gui.hpp`** — `wPaintInfo`, `wGridFrameHelper`, `wCustomEditor`, `wHandle`,
-  `wHandleSelectTag`, `wHitInfo`, `wEditOptions`. Includes `gui/gui.hpp`.
+- **`doc_core.hpp`** — the whole document model: `wObject`, `wType`, `wClass`,
+  `wClassInputInfo`, `wOp`, `wOpInputInfo`, `wStackOp`, `wTreeOp`, `wPage`, `wDocument`,
+  `wCommand`, `wExecutive`, `wDocOptions`, `wEditOptions`, `wHandleSelectTag`, `wHitInfo`,
+  the flag enumerations, and `sREGOPS`. No GUI include.
+- **`doc_gui.hpp`** — `wHandle`, `wPaintInfo`, `wGridFrameHelper`, `wCustomEditor`.
+  Includes `gui/gui.hpp`, `gui/listwindow.hpp` and `util/shaders.hpp`.
 - **`doc.hpp`** — includes both, so upstream consumers are unaffected and the original
   editor would still build.
 
-The awkward part is that `wType` and `wClass` hold *pointers to* GUI-facing functions
-(`MakeGui`, `Handles`, `Show`, `Paint`). Approach: forward-declare `wPaintInfo` and
-`wGridFrameHelper` in `doc_core.hpp` and keep the members as pointers to incomplete types.
-Nothing in the headless path dereferences them.
+The rule applied when deciding where a declaration goes: **`doc_gui.hpp` holds exactly what
+cannot compile without the GUI or shader headers; everything else stays in core.** Measured,
+that is only four declarations plus two `sListWindowTreeInfo<>` members.
+
+The awkward part — `wType` and `wClass` holding *pointers to* GUI-facing functions
+(`MakeGui`, `Handles`, `Show`, `Paint`) — cost nothing. `doc_core.hpp` forward-declares
+`wPaintInfo`, `wGridFrameHelper`, `wCustomEditor` and `sWindowDrag`; references and pointers
+to incomplete types are legal in declarations and nothing headless dereferences them.
 
 `type` blocks' `Show` implementations *do* take `wPaintInfo&` by reference and use it. Those
 live in the generated `.cpp` from the `.ops` file, so they are excluded by the headless
 generation mode (stage 2.2) rather than by the header split.
 
-Recorded as `wz4port/patches/03-doc-headless-split.md`.
+**Two divergences from the original plan**, both forced by measurement:
 
-**Gate:** `doc.hpp` still compiles for a hypothetical GUI consumer; `doc_core.hpp` compiles
-with no GUI headers on the include path.
+1. `wEditOptions` and `wHandleSelectTag` are `wDocument` members *by value*, so they cannot
+   live on the GUI side. `wHitInfo` is plain data with no GUI dependency. All three are in
+   core.
+2. `wEditOptions` holds an `sGuiTheme`, and `wTreeOp`/`wPage` hold `sListWindowTreeInfo<>`.
+   Both are plain serializable data that merely happen to live in GUI headers, and both are
+   held by value. They were extracted verbatim into two new dependency-free upstream headers,
+   `gui/theme.hpp` and `gui/treeinfo.hpp`, which `gui/manager.hpp` and `gui/listwindow.hpp`
+   now include. Same patch.
+
+The alternative — shadowing `gui/listwindow.hpp` and `gui/manager.hpp` from
+`wz4port/compat/include/` the way `altona_config.hpp` is shadowed — was rejected: silently
+replacing two real upstream headers for *every* translation unit is a worse landmine than a
+verbatim extraction that leaves both consumers unaffected.
+
+**Gate — passed.**
+
+- A TU including only `doc_core.hpp` compiles clean, and `clang++ -H` shows it pulls
+  `base/{types,types2,serialize,system,math,graphics}.hpp`, `gui/{treeinfo,theme}.hpp` and
+  `compat/altona_config.hpp` — nothing else.
+- A TU including `doc.hpp` (both halves, so `gui/gui.hpp` and `gui/listwindow.hpp` too)
+  parses clean on macOS once `util/shaders.hpp` is stubbed. Before the split it died on that
+  missing generated header, so the GUI consumer is no worse off and demonstrably intact.
+- The two halves were diffed line-by-line against `git show HEAD:.../doc.hpp`: no declaration
+  added, dropped or altered.
+
+And the invariant is now enforced by the build rather than by discipline. The
+`headless_core_gate` target (`wz4port/tests/headless_core.cpp`) compiles a translation unit
+that includes only `doc_core.hpp`, with `wz4port/tests/gui_poison.h` force-included ahead of
+it. That header `#pragma GCC poison`s `sWindow`, `sGui_` and `sSimpleMaterial` — three tokens
+that between them cover every header in `gui/` (all of them reach `gui/window.hpp`) and the
+generated `util/shaders.hpp`. Re-adding a GUI dependency to `doc_core.hpp`, `gui/theme.hpp`
+or `gui/treeinfo.hpp` now fails the build and names the offending file.
+
+The tripwire paid for itself on its first run by catching a wrong assumption of mine:
+`sMaterialEnv` is declared in `base/graphics.hpp`, not in `util/shaders.hpp`.
+
+It is an `OBJECT` library, not an executable, because `wz4lib/doc.cpp` is not built until
+stage 2.4. Promote it to a linked test then.
 
 ### 2.2 — Headless operator generation
 
@@ -112,7 +156,7 @@ Expected friction:
 - `doc.cpp` has 16, largely `sGui->Notify` calls in change propagation and `App->` references.
   Replace with a small notification hook interface that the editor implements and the CLI
   ignores.
-- `Doc` is a global (`doc.hpp:965`) consulted from inside generation code. Keep it; making it
+- `Doc` is a global (`doc_core.hpp:778`) consulted from inside generation code. Keep it; making it
   non-global is a refactor with no benefit to us.
 - `script.cpp` is GUI-free but large; include it only if `wExecutive` requires it. Determine
   and record.
@@ -125,7 +169,7 @@ prints the derived input lists. Plus: op inventory printable from the metadata.
 
 ## Deliverables
 
-- `wz4port/patches/03-doc-headless-split.md`
+- `wz4port/patches/04-doc-headless-split.md`
 - `wz4port/tools/opsmeta/`
 - `wz4port/libwz4core/`
 - Metadata JSON for `basic` and `wz3_bitmap`, hand-reviewed
@@ -142,6 +186,6 @@ prints the derived input lists. Plus: op inventory printable from the metadata.
 
 | Risk | Assessment |
 |---|---|
-| The `doc.hpp` split is messier than 18 lines suggests | **The main risk of this phase.** Function-pointer members referencing GUI types are the crux; forward declaration should suffice, but it needs proving early |
+| ~~The `doc.hpp` split is messier than 18 lines suggests~~ | **Retired.** Forward declaration was sufficient for every function-pointer member, exactly as hoped. The one surprise — two by-value members of GUI-resident POD types — cost two verbatim header extractions |
 | Metadata schema proves insufficient once the editor is built | Moderate. Mitigated by fixing the schema against the *complete* widget inventory in `01-existing-model.md` §5.2 rather than against what phase 4 happens to need |
 | Conditional expressions harder to externalise than expected | Low-moderate. The grammar is small and fully documented |

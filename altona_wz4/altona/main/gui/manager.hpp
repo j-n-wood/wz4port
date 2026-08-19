@@ -15,39 +15,7 @@
 #include "base/windows.hpp"
 #include "util/painter.hpp"
 #include "gui/window.hpp"
-
-
-/****************************************************************************/
-/***                                                                      ***/
-/***   Theme support                                                      ***/
-/***                                                                      ***/
-/****************************************************************************/
-
-struct sGuiTheme
-{
-  sU32 BackColor;
-  sU32 DocColor;
-  sU32 ButtonColor;
-  sU32 TextColor;
-  sU32 DrawColor;
-  sU32 SelectColor;
-  sU32 HighColor;
-  sU32 LowColor;
-  sU32 HighColor2;
-  sU32 LowColor2;
-
-  sString<64> PropFont;
-  sString<64> FixedFont;
-
-  template <class streamer> void Serialize_(streamer &stream);
-  void Serialize(sWriter &s);
-  void Serialize(sReader &s);
-
-  void Tint(sU32 add,sU32 sub);
-};
-
-extern const sGuiTheme sGuiThemeDefault;
-extern const sGuiTheme sGuiThemeDarker;
+#include "gui/theme.hpp"          // sGuiTheme and the two predefined themes
 
 /****************************************************************************/
 /***                                                                      ***/

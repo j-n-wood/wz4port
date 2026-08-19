@@ -32,9 +32,9 @@ Per-phase plans are `docs/03`–`docs/09`.
   `wz4port/patches/` with rationale. Prefer a shim header or an include-path
   override to a patch; prefer a patch to forking a file.
   Invariant: `git status` on `altona_wz4/` shows nothing not listed there.
-- **Edit files with editor tooling, not shell.** `sed` is denied. Python is
-  fine for inspection or a bounded, verifiable transform — never for general
-  code editing.
+- **Edit files with editor tooling, not shell.** `sed` is denied. **Do not use
+  Python to read or write code** — not for editing, and not for verification
+  either. Use `git diff`, `diff` and `grep` to check a refactor.
 - **Prefer single shell commands.** Long `&&`/pipe chains trip the permission
   matcher and interrupt the workflow.
 - **Verify, don't assume.** This codebase has rewarded measurement repeatedly
@@ -65,6 +65,11 @@ Clean build must be 0 errors. Warnings from Altona are expected.
   load-bearing. See `wz4port/README.md`.
 - **macOS builds as `sPLAT_LINUX` deliberately** — Altona's "LINUX" means
   "POSIX desktop", and 21 guards spell it that way.
+- **`error: attempt to use a poisoned identifier` is the `headless_core_gate`
+  tripwire doing its job.** `wz4port/tests/gui_poison.h` poisons `sWindow`,
+  `sGui_` and `sSimpleMaterial` so `wz4lib/doc_core.hpp` can never reacquire a
+  GUI dependency. Fix the include, do not weaken the poison. `gui/theme.hpp`
+  and `gui/treeinfo.hpp` are ours and are allowed.
 
 ## Out of scope
 

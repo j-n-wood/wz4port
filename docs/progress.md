@@ -4,8 +4,9 @@ Read this first when picking the project up cold. It records where things
 stand, what has been decided and why, and what would otherwise have to be
 rediscovered the hard way.
 
-**Last updated:** end of phase 1.
-**Status:** Phase 1 complete and verified. Phase 2 not started.
+**Last updated:** end of phase 2 stage 2.1.
+**Status:** Phase 1 complete and verified. Phase 2 stage 2.1 (the `doc.hpp`
+split) complete, gate passed. Stage 2.2 not started.
 
 ---
 
@@ -39,7 +40,7 @@ about the build.
 |---|---|
 | 0 — Documentation (`docs/00`–`02`) | **Done**, reviewed and approved |
 | 1 — Toolchain and portable base | **Done**, gate passed |
-| 2 — Headless op runtime + metadata | **Next** |
+| 2 — Headless op runtime + metadata | **In progress.** 2.1 done, gate passed. 2.2 next |
 | 3 — Text graph format + CLI | Not started |
 | 4 — Texture library + tests | Not started |
 | 5 — Texture GUI | Not started |
@@ -66,6 +67,7 @@ Clean build from scratch: **0 errors**. Warnings are expected and benign
 | `altona_util` | `scanner` + `scanconfig`, the slice the host tools need |
 | `wz4ops` | Upstream's `.ops` code generator, native arm64 |
 | `wz4ops_gate` | Regenerates `basic_ops` + `wz3_bitmap_ops` into `build/generated/` |
+| `headless_core_gate` | Compiles `wz4lib/doc_core.hpp` alone, with the GUI poisoned |
 | `simd_parity` | Verifies all 43 SSE2 intrinsics against scalar models |
 
 `simd_parity`: **70,184 checks, 0 failures** on arm64 via sse2neon.
@@ -87,7 +89,12 @@ wz4port/
   patches/
     01-pthread-t-casts.md
     02-friend-default-argument.md
-  tests/simd_parity.cpp
+    03-latin1-to-utf8.md
+    04-doc-headless-split.md   phase 2 stage 2.1
+  tests/
+    simd_parity.cpp
+    headless_core.cpp          phase 2 stage 2.1 gate
+    gui_poison.h               tripwire, force-included into that gate only
   third_party/sse2neon.h       pinned v1.9.1, MIT, 11,222 lines
 .gitignore                     new, repo root
 .claude/settings.local.json    gitignored tool allowlist
@@ -97,10 +104,10 @@ wz4port/
 
 ## Upstream footprint
 
-**32 files.** The isolation invariant is that `git status` on `altona_wz4/`
+**36 files.** The isolation invariant is that `git status` on `altona_wz4/`
 must never show anything not listed in `wz4port/patches/`.
 
-Two categories, worth keeping distinct:
+Three categories, worth keeping distinct:
 
 **Code changes — 2 files, 5 lines.** Both genuine C++ errors under clang, not
 portability preferences.
@@ -108,6 +115,20 @@ portability preferences.
 ```
  M base/graphics.hpp      (1 line)  patches/02  friend decl with default arg
  M base/system_linux.cpp  (4 lines) patches/01  pthread_t is a pointer on macOS
+```
+
+**Header reorganisation — 3 files edited, 4 added, no code changed.**
+`patches/04`. Declarations moved verbatim so the document model no longer
+needs the widget toolkit; see stage 2.1 below.
+
+```
+ M wz4lib/doc.hpp         now a two-line shim over the halves
+ A wz4lib/doc_core.hpp    the document model. No gui, no shaders
+ A wz4lib/doc_gui.hpp     wHandle, wPaintInfo, wGridFrameHelper, wCustomEditor
+ M gui/listwindow.hpp     sListWindowTreeInfo moved out
+ A gui/treeinfo.hpp         ... to here
+ M gui/manager.hpp        sGuiTheme moved out
+ A gui/theme.hpp            ... to here
 ```
 
 **Encoding only — 30 files, 72 characters.** Latin-1 → UTF-8, verified
@@ -167,7 +188,7 @@ path with the extension stripped. `wz4ops a/b/basic_ops.ops` emits
 `wz4_add_ops()` in CMakeLists.txt copies each `.ops` into
 `build/generated/<subdir>/` and runs the tool there with just the filename,
 yielding `AddTypes_basic_ops` / `AddOps_basic_ops` — what the `sREGOPS` macro
-(`wz4lib/doc.hpp:51-56`) expands to. It also keeps generated output out of
+(`wz4lib/doc_core.hpp:70-74`) expands to. It also keeps generated output out of
 `altona_wz4/`.
 
 ### 4. macOS builds as `sPLAT_LINUX`, deliberately
@@ -194,6 +215,42 @@ trying to defer them.
 It writes `"..."sTXT(x)` with no separating space, which C++11 parses as a
 user-defined literal. Handled with `-Wno-reserved-user-defined-literal`.
 
+### 7. The GUI-free document model is enforced, not merely intended
+
+`wz4lib/doc_core.hpp` must not acquire a `gui/` or `util/shaders.hpp`
+dependency. Nothing about the include path prevents that — the real GUI
+headers are still on it, and on macOS they even parse cleanly, so a build that
+merely succeeds proves nothing.
+
+The `headless_core_gate` target compiles `wz4port/tests/headless_core.cpp`,
+which includes only `doc_core.hpp`, with `wz4port/tests/gui_poison.h`
+force-included. That header `#pragma GCC poison`s `sWindow`, `sGui_` and
+`sSimpleMaterial`. Every header in `gui/` reaches `gui/window.hpp`, so those
+three tokens cover the lot. Break the invariant and the build fails naming the
+offending file.
+
+Two things to know if it ever fires:
+
+- `gui/theme.hpp` and `gui/treeinfo.hpp` are ours (extractions, `patches/04`)
+  and are *allowed*. They include nothing but `base/`.
+- `sMaterialEnv` is declared in **`base/graphics.hpp`**, not in
+  `util/shaders.hpp`, despite the name. Poisoning it fails the gate on a
+  header we legitimately need. The tripwire caught exactly this on its first
+  run.
+
+### 8. CMake deduplicates bare `-include` flags
+
+`altona_flags` force-includes `wz4port_posix_compat.h`. Adding a second
+`-include` on a target produces two bare `-include` tokens, CMake removes the
+"duplicate", and the surviving flag steals the wrong path — the failure looks
+like `error: cannot specify -o when generating multiple output files`, which
+says nothing useful. Use the `SHELL:` prefix to keep flag and argument
+together:
+
+```cmake
+target_compile_options(t PRIVATE "SHELL:-include ${dir}/header.h")
+```
+
 ---
 
 ## Working conventions
@@ -205,7 +262,8 @@ Agreed with the user; these are not optional.
   `wz4port/patches/` with rationale. Prefer a shim header or an include-path
   override to a patch; prefer a patch to forking a file.
 - **File edits use editor tooling, not shell.** `sed` is denied outright.
-  Python is allowed for specific purposes but never for general code editing.
+  **Python is not used to read or write code at all** — not for editing and
+  not for verifying a refactor. Use `git diff`, `diff` and `grep`.
 - **Every stage ends at a review gate.** Stop at a demonstrable result,
   `git add` the changes (do **not** commit), and confirm direction before
   starting the next stage.
@@ -234,54 +292,60 @@ Not allowlisted on purpose: `curl` and other network fetches, `git commit`,
 
 ---
 
-## Next: phase 2 — headless op runtime and metadata
+## Phase 2 — headless op runtime and metadata
 
-Full plan in `docs/04-phase-headless-core.md`. Summary:
+Full plan in `docs/04-phase-headless-core.md`.
 
-**The structural work of the whole project.** Today every operator source
-file transitively includes Altona's entire widget toolkit, because
-`wz4lib/doc.hpp:18` includes `gui/gui.hpp`. Until that is severed nothing
-headless is possible.
+### Done: 2.1 — the `doc.hpp` split
 
-The coupling is far lighter than the include graph suggests — measured:
+The structural change of the whole project. Every operator source file used to
+pull Altona's entire widget toolkit through `wz4lib/doc.hpp`, and `doc.hpp`
+also included `util/shaders.hpp`, which is *generated* by the `asc` shader
+compiler we do not build — so a TU that merely included `doc.hpp` failed
+outright on this platform.
 
-| File | LOC | GUI-touching lines |
-|---|---:|---:|
-| `wz4lib/doc.hpp` | 1,100 | **18** |
-| `wz4lib/doc.cpp` | 4,469 | 16 |
-| `wz4lib/build.cpp` | 998 | 1 |
-| `wz4lib/basic.cpp` | 980 | 7 |
-| `wz4lib/script.cpp` | 4,355 | 0 |
+`doc.hpp` is now a two-line shim over `doc_core.hpp` (the document model, no
+GUI) and `doc_gui.hpp` (`wHandle`, `wPaintInfo`, `wGridFrameHelper`,
+`wCustomEditor`). Recorded in `wz4port/patches/04-doc-headless-split.md`.
 
-Three declarations account for nearly all of it: `wPaintInfo` (`doc.hpp:113`),
-`wGridFrameHelper` (`:304`), `wCustomEditor` (`:326`).
+The predicted main risk — `wType` and `wClass` holding pointers to GUI-facing
+functions — cost nothing; forward declarations were enough for every one. The
+real surprise was two *by-value* members of GUI-resident plain-data types
+(`sGuiTheme` in `wEditOptions`, `sListWindowTreeInfo<>` in `wTreeOp`/`wPage`),
+which needed the two verbatim extractions listed under the upstream footprint.
 
-Stages: split `doc.hpp` into `doc_core.hpp` + `doc_gui.hpp` (upstream patch —
-the most significant one in the project); build `tools/opsmeta` to emit
-operator metadata as JSON; build `libwz4core`.
+**Gate passed**, and it now runs on every build: `headless_core_gate`. See
+gotcha 7.
 
-**Gate:** headless core links; metadata JSON emitted for `basic` and
+### Next: 2.2 — headless operator generation
+
+Then 2.3 (metadata JSON) and 2.4 (`libwz4core`).
+
+**Phase gate:** headless core links; metadata JSON emitted for `basic` and
 `wz3_bitmap`; a test program constructs a document, connects two operators by
 geometry alone, and prints the derived input lists.
 
-### Decide early in phase 2
+### Still to decide
 
 1. Can `wz4ops`' parser be reused cleanly by a separate `opsmeta` tool
    (preferred — keeps the metadata path entirely in `wz4port/`), or is
    patching `wz4ops` the pragmatic choice? Read `tools/wz4ops/doc.hpp` and
-   assess how separable the parse tree is from the emitter.
+   assess how separable the parse tree is from the emitter. **This is the
+   first thing to settle in 2.2.**
 2. Does `wExecutive` require `script.cpp`, or can the scripting path be
    excluded entirely?
 3. How best to exclude `type` blocks' `Show`/`Paint` externs — a generation
    mode, or a compile-time guard in the emitted code?
 
-### Main risk
+Still-unmeasured GUI coupling, from the phase-2 survey — this is the .cpp
+side, which 2.4 has to deal with:
 
-The `doc.hpp` split being messier than 18 lines suggests. `wType` and
-`wClass` hold *pointers to* GUI-facing functions (`MakeGui`, `Handles`,
-`Show`, `Paint`). Forward-declaring the incomplete types should suffice since
-nothing headless dereferences them — but prove that early, before building
-anything on top of it.
+| File | LOC | GUI-touching lines |
+|---|---:|---:|
+| `wz4lib/doc.cpp` | 4,469 | 16 |
+| `wz4lib/build.cpp` | 998 | 1 |
+| `wz4lib/basic.cpp` | 980 | 7 |
+| `wz4lib/script.cpp` | 4,355 | 0 |
 
 ---
 

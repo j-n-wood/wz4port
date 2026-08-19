@@ -18,7 +18,7 @@ ninja -C build
 
 Requires clang (or gcc), CMake ≥ 3.20 and Ninja. No external libraries yet.
 
-## Current state — phase 1 complete
+## Current state — phase 1 complete, phase 2 stage 2.1 done
 
 | Target | What it is |
 |---|---|
@@ -26,12 +26,13 @@ Requires clang (or gcc), CMake ≥ 3.20 and Ninja. No external libraries yet.
 | `altona_util` | The scanner slice the host tools need |
 | `wz4ops` | Upstream's `.ops` code generator, built natively |
 | `wz4ops_gate` | Regenerates `basic_ops` and `wz3_bitmap_ops` into `build/generated/` |
+| `headless_core_gate` | Compiles `wz4lib/doc_core.hpp` alone, with the GUI poisoned |
 | `simd_parity` | Verifies all 43 SSE2 intrinsics against scalar models (`ctest`) |
 
-Not yet built: the headless op runtime, the texture library, the CLI, the
-editor. Those are phases 2 onward.
+Not yet built: the operator runtime itself, the texture library, the CLI, the
+editor.
 
-## Three things that are not obvious
+## Four things that are not obvious
 
 ### 1. `altona_config.hpp` lives here, not in `altona_wz4/`
 
@@ -74,8 +75,24 @@ does not compile.
 The CMake `wz4_add_ops()` function therefore copies each `.ops` into
 `build/generated/<subdir>/` and runs the tool there with just the filename,
 which yields `AddTypes_basic_ops` / `AddOps_basic_ops` — the names the
-`sREGOPS` macro (`wz4lib/doc.hpp:51-56`) expands to. It also keeps generated
-output out of `altona_wz4/`.
+`sREGOPS` macro (now `wz4lib/doc_core.hpp:70-74`) expands to. It also keeps
+generated output out of `altona_wz4/`.
+
+### 4. The GUI-free document model is enforced by a poisoned build
+
+Phase 2 split `wz4lib/doc.hpp` into `doc_core.hpp` (the document model, no
+GUI) and `doc_gui.hpp` — see `patches/04`. Nothing about the include path
+keeps `doc_core.hpp` GUI-free afterwards: the real `gui/` headers are still on
+it and, on macOS, they parse cleanly. A green build would prove nothing.
+
+So `tests/gui_poison.h` is force-included into the `headless_core_gate` target
+and nowhere else. It `#pragma GCC poison`s `sWindow`, `sGui_` and
+`sSimpleMaterial` — three tokens that between them cover every header in
+`gui/` and the generated `util/shaders.hpp`. Reintroduce a GUI dependency and
+the build fails naming the file.
+
+`gui/theme.hpp` and `gui/treeinfo.hpp` are the two pure-data extractions
+`doc_core.hpp` is allowed to use; they include nothing but `base/`.
 
 ## Layout
 
@@ -83,5 +100,6 @@ output out of `altona_wz4/`.
 compat/          altona_config.hpp, POSIX shim, stub headers
   include/       on the include path; see note 1 above
 patches/         every change made to altona_wz4/, with rationale
+tests/           simd_parity, headless_core + gui_poison
 build/           generated + compiled output (gitignored)
 ```

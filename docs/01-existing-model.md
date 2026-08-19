@@ -260,7 +260,7 @@ needs no link UI at all.
 none of them; the tool must run before anything compiles.
 
 Each generated `.cpp` exposes `AddTypes_<name>_ops()` and `AddOps_<name>_ops()`, invoked via
-the `sREGOPS` macro (`doc.hpp:51-56`) in two passes — types first, then operators.
+the `sREGOPS` macro (`doc_core.hpp:70-74`) in two passes — types first, then operators.
 
 Critically: **`.ops` files contain real algorithm code, not just declarations.** Roughly
 3,600 lines of the texture and mesh implementations live inside `code { }` blocks in the
