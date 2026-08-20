@@ -40,6 +40,15 @@ if(DEFINED EXPECT AND NOT "${_out}" MATCHES "${EXPECT}")
   message(FATAL_ERROR "output did not match expected pattern <${EXPECT}>")
 endif()
 
+# REJECT is the negative form, and the reason it exists is `renders blank`: a
+# bitmap whose alpha is zero everywhere saves as a valid PNG of the right size
+# that displays as plain white. Every check above passes on it and a reviewer
+# cannot tell it from a white image. So the default for every case is "must not
+# be blank", and a case that means to be blank has to say so.
+if(DEFINED REJECT AND NOT REJECT STREQUAL "" AND "${_out}" MATCHES "${REJECT}")
+  message(FATAL_ERROR "output matched forbidden pattern <${REJECT}>")
+endif()
+
 if(NOT EXISTS "${OUT}")
   message(FATAL_ERROR "no file was written to <${OUT}>")
 endif()

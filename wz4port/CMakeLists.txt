@@ -634,6 +634,131 @@ foreach(_op rect twisted twisted_soft)
 endforeach()
 
 #############################################################################
+##  tex_ops — stage 4.3, one case per texture operator                     ##
+#############################################################################
+
+# Each named operator in a tests/tex/ops_*.wz4t file is one case: it renders to
+# build/tex-png/ and the PNG on disk is checked. `expect` is matched against the
+# tool's own report, so an operator that runs but returns a 1x1 bitmap, or a
+# flat fill where structure was expected, fails instead of passing quietly.
+#
+# 4.4 replaces `expect` with a byte-exact golden comparison. Until then these
+# assert only what can be asserted without a reviewed reference.
+
+# wz4_tex_case(<doc> <op> <expect> [reject])
+#
+# `reject` defaults to "renders blank", which is the assertion that matters most
+# before goldens exist: a bitmap with zero alpha writes a valid PNG of the right
+# size that displays as plain white, so every other check passes on it and a
+# reviewer cannot tell it from a white image. A case that is meant to be blank
+# passes its own reject value to opt out.
+function(wz4_tex_case doc op expect)
+  set(_reject "renders blank")
+  if(ARGC GREATER 3)
+    set(_reject "${ARGV3}")
+  endif()
+  add_test(NAME tex_${doc}_${op} COMMAND "${CMAKE_COMMAND}"
+    "-DWZ4GEN=$<TARGET_FILE:wz4gen>"
+    "-DDOC=${CMAKE_CURRENT_SOURCE_DIR}/tests/tex/${doc}.wz4t"
+    "-DMETA=${WZ4_META_DIR}"
+    "-DOP=${op}"
+    "-DOUT=${WZ4_TEX_PNG_DIR}/${doc}_${op}.png"
+    "-DEXPECT=${expect}"
+    "-DREJECT=${_reject}"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/tex/render_png.cmake")
+  set_tests_properties(tex_${doc}_${op} PROPERTIES DEPENDS opsmeta_gate)
+endfunction()
+
+# Generators. Flat is the one case that must be uniform; if any other generator
+# comes out uniform it did nothing.
+wz4_tex_case(ops_gen flat "128 x 128, uniform")
+foreach(_op
+    perlin perlin_abs perlin_sin
+    cell_inner cell_outer cell_color
+    gradient_step gradient_linear gradient_smooth
+    glowrect_ellipse glowrect_rect dots bricks vector atlas)
+  wz4_tex_case(ops_gen ${_op} "128 x 128, structured")
+endforeach()
+
+# Colour operators. All pointwise, all fed from one shared ramp.
+foreach(_op
+    color_mul color_add color_gray color_scale
+    color_invert_opaque color_sub_opaque
+    range_adjust range_range range_invert
+    hscb bitcrusher colorbalance premul
+    mask_mix mask_mul mask_add)
+  wz4_tex_case(ops_color ${_op} "128 x 128, structured")
+endforeach()
+
+# Mask's `sub` is the fourth operator that destroys alpha, and the one that
+# showed the blank check was too narrow: it leaves alpha at 0x0001 rather than
+# 0x0000, which is just as invisible but is not zero.
+wz4_tex_case(ops_color mask_sub "structured, alpha 0001..0001" "")
+
+# Two operators zero the alpha channel, and both do it as upstream's own
+# behaviour rather than as a port bug:
+#
+#   Color invert — xors every channel with 0x7fff, alpha included, so an opaque
+#                  input becomes fully transparent (wz3_bitmap_code.cpp:919).
+#   Color sub    — subtracts the Color's alpha from the input's, and the case
+#                  subtracts an opaque grey, so alpha goes to zero.
+#
+# Both are asserted, alpha range and all, rather than excused. Discovered by the
+# blank-render check above: they were written expecting visible output.
+wz4_tex_case(ops_color color_invert "structured, alpha 0000..0000" "")
+wz4_tex_case(ops_color color_sub    "structured, alpha 0000..0000" "")
+
+# Convolution and resampling, over a hard-edged brick wall.
+foreach(_op blur sharpen)
+  wz4_tex_case(ops_filter ${_op} "128 x 128, structured")
+endforeach()
+
+# Downsample changes the size, which is itself the assertion: a Downsample that
+# silently passed its input through would still be "structured" at 128x128.
+foreach(_op downsample_point downsample_box)
+  wz4_tex_case(ops_filter ${_op} "32 x 32, structured")
+endforeach()
+
+# Warps and resamples, same brick-wall source.
+foreach(_op
+    rotate_bilinear rotate_nearest rotatemul twirl
+    unwrap_polar2normal unwrap_normal2polar unwrap_rect2normal
+    bulge distort)
+  wz4_tex_case(ops_warp ${_op} "128 x 128, structured")
+endforeach()
+
+# Normal generation and lighting.
+foreach(_op
+    normals_2d normals_3d normals_tangent2d normals_tangent3d normals_sharp
+    light_spot light_point
+    bump_spot bump_point bump_directional)
+  wz4_tex_case(ops_light ${_op} "128 x 128, structured")
+endforeach()
+
+# A directional light on a FLAT surface is uniform by definition — every pixel
+# has the same normal. Asserted as uniform rather than excused, and the reason
+# bump_directional above is a separate case: with a normal map it must vary.
+wz4_tex_case(ops_light light_directional "128 x 128, uniform")
+
+# Merge, all twelve blend modes over one shared input pair.
+foreach(_op
+    merge_add merge_mul merge_diff merge_alpha merge_brightness
+    merge_hardlight merge_over merge_addsmooth merge_min merge_max
+    merge_premul merge_sub_opaque)
+  wz4_tex_case(ops_merge ${_op} "128 x 128, structured")
+endforeach()
+
+# Merge's `sub` subtracts alpha as well, so with two opaque inputs it renders
+# blank — the third operator found to do this, after Color's sub and invert.
+wz4_tex_case(ops_merge merge_sub "structured, alpha 0000..0000" "")
+
+# Conversion and file output. Export returns the result of its own save, so this
+# case fails if the file cannot be written.
+foreach(_op export makewz3bitmap)
+  wz4_tex_case(ops_io ${_op} "128 x 128, structured")
+endforeach()
+
+#############################################################################
 ##  core_connect — the phase 2 gate                                        ##
 #############################################################################
 

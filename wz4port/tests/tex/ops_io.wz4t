@@ -1,0 +1,53 @@
+wz4t 1
+
+// Stage 4.3 — the two conversion/output operators that work headlessly.
+//
+// Not covered here, deliberately:
+//   Text        — needs sFont2D, which has no macOS backend. Stage 4.5.
+//   Import      — needs an image file on disk. Stage 4.5.
+//   ImportAnim  — same.
+//   MakeTexture2 — outputs a Texture2D, a GPU texture. Out of scope for this
+//                  project entirely; there is no renderer in this build.
+
+page "io"
+
+op GenBitmap.Bricks at 0,0 size 6x1 {
+  name = src_bricks
+  Size = 128, 128
+  Color0 = #ffc04020
+  Color1 = #ffe0c060
+  Joints = #ff202020
+  SizeJoints = 0.12, 0.18
+  Count = 4, 6
+  Seed = 5
+  SingleWidthStones = 80
+  Side = 0.25
+  ColorBalance = 1
+}
+
+// ---------------------------------------------------------------- Export
+// Passes its input through unchanged AND writes it to Filename, returning the
+// result of the save — so a failed write fails the operator, and this case
+// asserts that the file really can be written.
+//
+// The path is relative, so it lands in whatever directory the tool was run from;
+// under ctest that is the build directory.
+//
+// Correct: output identical to the source wall, plus a readable
+// wz4gen_export_test.png in the build directory.
+op GenBitmap.Export at 0,1 size 3x1 {
+  name = export
+  Filename = "wz4gen_export_test.png"
+}
+
+// ---------------------------------------------------------------- MakeWz3Bitmap
+// A hidden conversion operator: BitmapBase in, GenBitmap out, via an sImage. It
+// is normally inserted automatically by the editor rather than placed by hand,
+// but it is a registered class so a case can place it explicitly.
+//
+// Because it goes through sImage it is a 16-bit → 8-bit → 16-bit round trip, so
+// the result is the source QUANTISED, not bit-identical to it. Correct: visually
+// the same wall; any visible difference means more than quantisation happened.
+op GenBitmap.MakeWz3Bitmap at 3,1 size 3x1 {
+  name = makewz3bitmap
+}

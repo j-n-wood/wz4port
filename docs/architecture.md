@@ -946,6 +946,60 @@ output directory**, so the first run of all four tests failed on a missing
 Same shape as A33, where a round trip passed while mangling text. Both times the
 test was checking the wrong end of the operation.
 
+### A40 · Assert on what the viewer will show, not on what the buffer holds — standing
+
+*Phase 4.3.* Four operators — `Color sub`, `Color invert`, `Merge sub`,
+`Mask sub` — take the alpha channel to zero, because they operate on all four
+channels at once. The bitmap is fine; the *PNG* is fully transparent, and a
+transparent PNG **displays as plain white**.
+
+So the reviewable artefact is indistinguishable from an operator that filled the
+image with white, and indistinguishable from one that did nothing. Three of the
+four cases were written expecting visible output and the first was reviewed as "a
+white square" before the cause was found. Nothing in the pipeline objected: the
+size was right, the checksum was stable, the content was "structured", the file
+was a valid PNG.
+
+Two rules came out of it:
+
+1. **The tool reports the alpha range**, so a blank render explains itself
+   instead of looking like a boring image.
+2. **Every case must not render blank unless it declares that it does.** The
+   negative assertion is the load-bearing one — `REJECT` in
+   `render_png.cmake` — because the positive checks all passed.
+
+The threshold matters and is not `== 0`. `Mask sub` leaves alpha at `0x0001` of
+`0x7fff`, which is exactly as invisible as zero and passes an equality test. The
+test is `amax < 0x0100`: what survives `CopyTo`'s narrowing to 8 bits, because
+that is what reaches the file.
+
+Generalisable, and the third instance of the same shape after A33 and A39: when
+the deliverable is *rendered* by something else — a viewer, a browser, a
+terminal — correctness lives at that boundary, not at the buffer.
+
+### A41 · Verify an operator's input order before writing the case, not after — standing
+
+*Phase 4.3.* `Mask(a,b,mask)` is really `Mask(mask,a,b)`: the code does
+`out = GRAY(in0)` and blends `in1` with `in2` by it. Written the way the name
+implies, the case rendered a smooth blue-to-lavender ramp — a perfectly
+plausible image in which one of the three inputs made no contribution at all.
+
+It was caught by eye, not by any assertion, and only because the case's comment
+had predicted "red to blue" specifically enough to be contradicted. A comment
+saying "a blend of the inputs" would have passed.
+
+Two habits followed, and both paid immediately:
+
+- For every multi-input operator, read the `code {}` block before writing the
+  case. Doing that for `Bump` established (surface, normals) rather than the
+  reverse, and it worked first time.
+- **Write the prediction before looking at the output**, precisely enough to be
+  wrong. Five cases in this stage were corrected because the image contradicted
+  a specific claim; a vaguer claim would have been satisfied by all of them.
+
+Related: A36's lesson about packed choice words, and the same "measure it"
+instinct as Part 3.
+
 ---
 
 ## Part 3 — where inference lost to measurement

@@ -4,17 +4,23 @@ Read this first when picking the project up cold. It records where things
 stand, what has been decided and why, and what would otherwise have to be
 rediscovered the hard way.
 
-**Last updated:** phase 4, stage 4.2.
-**Status:** Phases 1–3 complete and verified. **Phase 4 stages 4.1 and 4.2 done:
-the texture library builds, links, runs, and now writes PNGs you can look at.**
-All 34 `GenBitmap` operators register; `wz4gen render <doc> -op <name> -out
-<file.png>` evaluates an operator and writes the image. A `Flat` → `GlowRect` →
-`Twirl` → `Blur` chain was rendered step by step and checked by eye, which also
-confirms channel order end to end. `.wz4t` gained array-row syntax in 4.1 so
-`Gradient` works. `ctest` is 35 tests, all passing on a clean build.
+**Last updated:** phase 4, stage 4.3.
+**Status:** Phases 1–3 complete and verified. **Phase 4 stages 4.1–4.3 done: the
+texture engine runs, writes PNGs, and has a reviewed case for every operator it
+can reach.** 74 cases over seven `.wz4t` files cover **31 of the 34** `GenBitmap`
+operators — `Import`, `ImportAnim` and `Text` are 4.5's. All render, all have
+been looked at. `ctest` is **109 tests**, all passing on a clean build.
 
-Next: **4.3**, one `.wz4t` case per operator — the bulk of the remaining work in
-this phase, and the input to 4.4's golden lock.
+The renders land in `build/tex-png/`, one PNG per case.
+
+Next: **4.4**, the golden lock — review pass, byte-exact comparison, and
+SSE2-vs-NEON bit parity.
+
+**Read `06-phase-texture.md` before touching the texture tests.** 4.3 found four
+operators that zero the alpha channel, which makes their PNG render as plain
+white and therefore indistinguishable from "filled with white" or "did nothing".
+That is why the cases assert on the alpha range and why `wz4gen render` prints
+it.
 
 ---
 
@@ -57,7 +63,7 @@ about the build.
 | 1 — Toolchain and portable base | **Done**, gate passed |
 | 2 — Headless op runtime + metadata | **Done**, phase gate passed |
 | 3 — Text graph format + CLI | **Done**, phase gate passed |
-| 4 — Texture library + tests | **In progress.** 4.1 and 4.2 done, both gates passed |
+| 4 — Texture library + tests | **In progress.** 4.1, 4.2 and 4.3 done, all gates passed |
 | 5 — Texture GUI | Not started |
 | 6 — Geometry | Not started |
 | 7 — Animated geometry | Not started |
@@ -90,6 +96,7 @@ Clean build from scratch: **0 errors**. Warnings are expected and benign
 | **`wz4tex`** | **The texture engine: wz3_bitmap_code + genvector + generated ops** |
 | `tex_smoke_*` (5) | Stage 4.1 gate: five operators evaluate; `Flat` uniform, rest structured |
 | `tex_chain_*` (4) | **Stage 4.2 gate:** a four-step chain renders to real PNG files (`ctest`) |
+| `tex_ops_*` (74) | **Stage 4.3 gate:** one reviewed case per operator, 31 of 34 (`ctest`) |
 | `wz4t` | **Ours.** JSON, the runtime metadata model, and the `.wz4t` reader + writer |
 | `wz4t_read` | Stage 3.1b gate: a hand-written case parses and connects (`ctest`) |
 | `wz4t_round_*` (4) | Stage 3.2 gate: read→write→read preserves every word (`ctest`) |
@@ -147,6 +154,13 @@ wz4port/
   tests/tex/smoke.wz4t         stage 4.1: does the texture engine execute?
   tests/tex/chain.wz4t         stage 4.2: a chain whose every step is checkable
   tests/tex/render_png.cmake   renders one op and asserts the PNG on disk
+  tests/tex/ops_gen.wz4t       stage 4.3: the generators
+  tests/tex/ops_color.wz4t       the pointwise colour operators
+  tests/tex/ops_merge.wz4t       Merge, all 12 blend modes
+  tests/tex/ops_filter.wz4t      Blur, Sharpen, Downsample
+  tests/tex/ops_warp.wz4t        Rotate, Twirl, Unwrap, Bulge, Distort
+  tests/tex/ops_light.wz4t       Normals, Light, Bump
+  tests/tex/ops_io.wz4t          Export, MakeWz3Bitmap
   tests/
     simd_parity.cpp
     headless_core.cpp          phase 2 stage 2.1 gate
@@ -857,6 +871,85 @@ the same shape softened. Four `ctest` cases.
 Worth knowing for 4.4: the PNG bytes are reproducible across runs, so a
 byte-exact golden comparison will work. Not asserted yet — that is 4.4's job and
 asserting it now would pre-empt the review that stage exists to do.
+
+### Done: 4.3 — a reviewed case for every operator
+
+74 cases in seven `ops_*.wz4t` files, covering 31 of the 34 operators. Grouped by
+family rather than one file per operator, because **the comparison is the test**:
+`ops_filter`'s blur and sharpen read the same brick wall and `ops_merge`'s twelve
+modes read the same input pair, so "these two look identical" becomes a
+detectable failure. Full table in `06-phase-texture.md`.
+
+`Merge` has **12** blend modes, not the 22 the phase plan claimed in three
+places. Corrected.
+
+### The alpha trap — read this before writing another image test
+
+**Four operators zero the alpha channel**: `Color sub`, `Color invert`,
+`Merge sub`, `Mask sub`. They operate on all four channels at once, so an opaque
+input comes out fully transparent — and **a transparent PNG displays as plain
+white**, which is indistinguishable from an operator that filled the image with
+white and indistinguishable from one that did nothing.
+
+Three of the four cases were written expecting visible output. The first,
+`color_invert`, was reviewed as "a white square" before the cause was found.
+Nothing objected: right size, stable checksum, "structured" content, valid PNG.
+
+Closed on both sides:
+
+- `wz4gen render` reports the alpha range and flags `renders blank`. The
+  threshold is `amax < 0x0100`, **not** `== 0` — `Mask sub` leaves alpha at
+  `0x0001` of `0x7fff`, exactly as invisible as zero, and would pass an equality
+  test. `0x0100` is what survives `CopyTo`'s narrowing to 8 bits, which is what
+  reaches the file.
+- Every case must not render blank unless it declares that it does (`REJECT` in
+  `render_png.cmake`). The **negative** assertion is the load-bearing one, since
+  all the positive checks passed. The four that legitimately do assert their
+  alpha range, and each has a companion case with alpha restored by a trailing
+  `Color add #ff000000` so the RGB result is reviewable.
+
+Recorded as `architecture.md` A40, the third instance of A33's shape: when
+something else renders the deliverable, correctness lives at that boundary.
+
+### Five things the eye caught that a checksum would not
+
+All five ran, produced plausible images, and were wrong or misdescribed:
+
+- **`Mask`'s input 0 is the MASK**, not one of the two images. Written the way
+  the name implies, the case rendered a smooth blue-to-lavender ramp in which one
+  of its three inputs made no contribution at all. Now: read the `code {}` block
+  before writing any multi-input case — doing that for `Bump` established
+  (surface, normals) and it worked first time. `architecture.md` A41.
+- **`Perlin`'s `FadeOff` decides whether it looks like Perlin at all.** At the
+  default 1 every octave has equal weight and the top one dominates, so the first
+  draft looked like television static. 0.5 is the 1/f weighting.
+- **`Unwrap`'s `polar2normal` and `normal2polar` are the opposite way round**
+  from what the names suggest; `normal2polar` is the dartboard.
+- **`Dots`' `Count` is a density**, `Size*Count/4096` — 24 means 96 dots at
+  128×128.
+- **`Gradient`'s `step` mode** holds each stop until the next, so a stop at
+  `Pos=1` has zero width and never appears.
+
+The habit that made those catchable: **write the prediction before looking, and
+make it specific enough to be wrong.** A comment saying "a blend of the inputs"
+would have been satisfied by every one of them.
+
+`linear` versus `smoothstep` is documented in the case file as genuinely subtle —
+they differ by checksum, not visibly. Saying so beats implying the eye can
+separate them.
+
+### Layout is semantic, so test files need deliberate gaps
+
+Vertical adjacency **is** connection, so a generator placed directly under the
+bottom edge of an unrelated group becomes its consumer and fails with "too many
+inputs" — which is what `Bricks` at row 8 did under a `GlowRect` ending at row 8.
+An op's default width is 3 (`wz4t_read.cpp:755`), which caught `Atlas` too: a
+3-wide consumer under three 3-wide sources overlaps only the first and silently
+packs one tile.
+
+`wz4gen describe` now prints array blocks. Without it the tool implied that an
+operator with array rows had none — which is how a `Gradient` came to be written
+with no stops in 4.1.
 
 ### Assert on the artefact, not the exit code
 

@@ -1,0 +1,298 @@
+wz4t 1
+
+// Stage 4.3 — the colour operators. These are all pointwise, so a 1-D source
+// shows what they do more clearly than a 2-D one would: any change is a change
+// in the ramp, at a position you can point at.
+//
+// One source feeds all of them. That is deliberate: `color_gray` and
+// `color_invert` are only meaningful next to each other if they are working on
+// identical input, and sharing one source is also the cheapest way to be sure
+// they are.
+//
+// The source is 36 wide so that twelve 3-wide consumers on the row below all
+// overlap it. Vertical adjacency is connection in this format, so the two
+// independent groups further down start at rows 3 and 6 with a clear gap.
+
+page "color"
+
+// Black, red, green, blue, white. Covers full-saturation hue and the whole
+// luminance range, which is what the ops below need to be legible.
+op GenBitmap.Gradient at 0,0 size 36x1 {
+  name = src_ramp
+  Size = 128, 128
+  Flags = linear
+  element { Pos = 0     Color = #ff000000 }
+  element { Pos = 0.25  Color = #ffff0000 }
+  element { Pos = 0.5   Color = #ff00ff00 }
+  element { Pos = 0.75  Color = #ff0000ff }
+  element { Pos = 1     Color = #ffffffff }
+}
+
+// ---------------------------------------------------------------- Color
+// Each mode combines the input with Color. The same Color throughout, so the
+// mode is the only variable.
+//
+// mul by mid-grey: correct output is the source at half brightness, hues intact.
+op GenBitmap.Color at 0,1 size 3x1 {
+  name = color_mul
+  Mode = mul
+  Color = #ff808080
+}
+
+// add mid-grey: correct output is the source lifted towards white; the black
+// end becomes mid-grey and the bright end clips.
+op GenBitmap.Color at 3,1 size 3x1 {
+  name = color_add
+  Mode = add
+  Color = #ff808080
+}
+
+// sub mid-grey: the mirror of add — but it subtracts the ALPHA channel too, and
+// the Color here is opaque, so alpha goes to zero and the PNG renders blank.
+// Same trap as `invert` below, and asserted the same way.
+op GenBitmap.Color at 6,1 size 3x1 {
+  name = color_sub
+  Mode = sub
+  Color = #ff808080
+}
+
+// `sub` made reviewable, by restoring alpha the same way color_invert_opaque
+// does. Correct: the dark half of the ramp crushed to black, the bright end
+// reduced to mid-tones.
+op GenBitmap.Color at 6,2 size 3x1 {
+  name = color_sub_opaque
+  Mode = add
+  Color = #ff000000
+}
+
+// gray ignores Color's hue and desaturates. Correct output is the ramp with NO
+// colour left at all — the three hue stops become three distinct greys, not one
+// flat grey, because red, green and blue have different luminance weights.
+op GenBitmap.Color at 9,1 size 3x1 {
+  name = color_gray
+  Mode = gray
+  Color = #ff808080
+}
+
+// invert xors EVERY channel with 0x7fff (wz3_bitmap_code.cpp:919), alpha
+// included. 0x7fff is 1.0 here, so for an opaque input alpha inverts to zero
+// and the PNG is fully transparent — which looks WHITE in every viewer and is
+// indistinguishable by eye from "filled with white" or "did nothing".
+//
+// That is upstream's behaviour, not a port bug, and it is asserted deliberately:
+// this case expects ALPHA ZERO. `wz4gen render` reports the alpha state for
+// exactly this reason.
+op GenBitmap.Color at 12,1 size 3x1 {
+  name = color_invert
+  Mode = invert
+  Color = #ff808080
+}
+
+// The same inversion made reviewable. `add` with an opaque black saturates alpha
+// back to 1.0 while adding nothing to RGB, so what is left is the RGB inversion
+// on its own.
+//
+// Correct: the photographic negative of the source ramp — white at the left
+// where the source is black, then cyan, magenta, yellow where it was red,
+// green, blue, and black at the right.
+op GenBitmap.Color at 12,2 size 3x1 {
+  name = color_invert_opaque
+  Mode = add
+  Color = #ff000000
+}
+
+// scale: correct output differs from `mul` — that is the whole point of having
+// both. Compare the two side by side.
+op GenBitmap.Color at 15,1 size 3x1 {
+  name = color_scale
+  Mode = scale
+  Color = #ff808080
+}
+
+// ---------------------------------------------------------------- Range
+// Remaps the input range onto Color0..Color1.
+//
+// `adjust` remaps each channel independently between Color0 and Color1, so the
+// source's hues SURVIVE.
+//
+// Correct: the red/green/blue bands are still clearly three different hues,
+// compressed into a narrower, muddier range than the source.
+op GenBitmap.Range at 18,1 size 3x1 {
+  name = range_adjust
+  Mode = adjust, normal
+  Color0 = #ff202060
+  Color1 = #ffffe080
+}
+
+// `range` maps onto the Color0→Color1 axis instead, so the output contains only
+// colours on the line between those two — the source's hues are GONE.
+//
+// Correct: a dark-blue-to-pale-yellow ramp with no red or green anywhere in it,
+// obviously different from range_adjust. If the two match, the mode bit is being
+// ignored.
+op GenBitmap.Range at 21,1 size 3x1 {
+  name = range_range
+  Mode = range, normal
+  Color0 = #ff202060
+  Color1 = #ffffe080
+}
+
+// adjust, invert: the same as range_adjust with the two ends swapped.
+op GenBitmap.Range at 24,1 size 3x1 {
+  name = range_invert
+  Mode = adjust, invert
+  Color0 = #ff202060
+  Color1 = #ffffe080
+}
+
+// ---------------------------------------------------------------- HSCB
+// Hue rotate by a third of a turn, saturation up, mild contrast and brightness.
+// Correct: the hue stops have all moved round the colour wheel — the red stop
+// should read as green-ish, green as blue-ish, blue as red-ish — while black
+// and white stay neutral, because rotating the hue of a grey does nothing.
+op GenBitmap.HSCB at 27,1 size 3x1 {
+  name = hscb
+  Hue = 0.333
+  Saturation = 1.4
+  Contrast = 1.2
+  Brightness = 1.1
+}
+
+// ---------------------------------------------------------------- Bitcrusher
+// Quantises each channel to Steps levels. Correct: the smooth ramp becomes a
+// staircase with hard vertical edges and four flat treads per span.
+op GenBitmap.Bitcrusher at 30,1 size 3x1 {
+  name = bitcrusher
+  Steps = 4
+  Phase = 0
+}
+
+// ---------------------------------------------------------------- ColorBalance
+// Pushes shadows towards blue and highlights towards yellow, leaving midtones
+// alone — the standard "cool shadows, warm highlights" grade.
+//
+// Correct: the dark end of the ramp is bluer than the source and the bright end
+// warmer, with the middle close to unchanged.
+op GenBitmap.ColorBalance at 33,1 size 3x1 {
+  name = colorbalance
+  Shadows = -0.2, -0.1, 0.3
+  Midtones = 0, 0, 0
+  Highlights = 0.25, 0.15, -0.2
+}
+
+// ---------------------------------------------------------------- PreMulAlpha
+// Needs a source whose ALPHA varies, which the ramp above does not have, so
+// this group has its own. Alpha runs 0 to 1 left to right over a constant white.
+//
+// The alpha ramp then has to be flattened before the result can be looked at:
+// PreMulAlpha leaves alpha alone, so the PNG still carries the ramp, the viewer
+// composites it over white, and the premultiplied RGB is hidden behind it. The
+// trailing `add #ff000000` forces alpha opaque without touching RGB.
+//
+// Correct: `premul` fades from BLACK at the left to WHITE at the right, out of a
+// source whose RGB is uniform white — that ramp is the operator's whole effect.
+// A uniform result would mean it did nothing, and the case asserts `structured`
+// for exactly that reason.
+stack at 0,3 {
+  op GenBitmap.Gradient {
+    name = src_alpha
+    Size = 128, 128
+    Flags = linear
+    element { Pos = 0  Color = #00ffffff }
+    element { Pos = 1  Color = #ffffffff }
+  }
+  op GenBitmap.PreMulAlpha {
+    name = premul_raw
+  }
+  op GenBitmap.Color {
+    name = premul
+    Mode = add
+    Color = #ff000000
+  }
+}
+
+// ---------------------------------------------------------------- Mask
+// Three inputs, and the ORDER matters in a way the operator name does not
+// suggest: input 0 is the MASK, not one of the images. The code does
+// `out = GRAY(in0)` and then blends in1 with in2 by it
+// (wz3_bitmap_ops.ops:738). Written the other way round — mask last, as the
+// name implies — this case produced a blue-to-lavender ramp with the red input
+// nowhere in it, which is a plausible enough image to have been waved through.
+//
+// So: gradient leftmost (the mask), then red, then blue. 9 wide, because three
+// 3-wide sources sit above it.
+//
+// Correct for `mix`: a left-to-right blend from solid BLUE to solid RED through
+// purple. Blue is input 2 and red is input 1, so where the mask is black the
+// second image wins — the opposite of the reading you would guess from the
+// argument order, and checked rather than assumed.
+row at 0,7 {
+  op GenBitmap.Gradient {
+    Size = 128, 128
+    Flags = linear
+    element { Pos = 0  Color = #ff000000 }
+    element { Pos = 1  Color = #ffffffff }
+  }
+  op GenBitmap.Flat { Size = 128, 128  Color = #ffff2020 }
+  op GenBitmap.Flat { Size = 128, 128  Color = #ff2020ff }
+}
+
+op GenBitmap.Mask at 0,8 size 9x1 {
+  name = mask_mix
+  Mode = mix
+}
+
+// The same three inputs combined arithmetically instead. Correct: clearly
+// different from mask_mix — if the two match, the mode word is being ignored.
+row at 0,10 {
+  op GenBitmap.Gradient {
+    Size = 128, 128
+    Flags = linear
+    element { Pos = 0  Color = #ff000000 }
+    element { Pos = 1  Color = #ffffffff }
+  }
+  op GenBitmap.Flat { Size = 128, 128  Color = #ffff2020 }
+  op GenBitmap.Flat { Size = 128, 128  Color = #ff2020ff }
+}
+
+op GenBitmap.Mask at 0,11 size 9x1 {
+  name = mask_mul
+  Mode = mul
+}
+
+// The remaining two of Mask's four modes, placed to the right of the two above
+// rather than below them so they share the same rows.
+row at 12,7 {
+  op GenBitmap.Gradient {
+    Size = 128, 128
+    Flags = linear
+    element { Pos = 0  Color = #ff000000 }
+    element { Pos = 1  Color = #ffffffff }
+  }
+  op GenBitmap.Flat { Size = 128, 128  Color = #ffff2020 }
+  op GenBitmap.Flat { Size = 128, 128  Color = #ff2020ff }
+}
+
+op GenBitmap.Mask at 12,8 size 9x1 {
+  name = mask_add
+  Mode = add
+}
+
+row at 12,10 {
+  op GenBitmap.Gradient {
+    Size = 128, 128
+    Flags = linear
+    element { Pos = 0  Color = #ff000000 }
+    element { Pos = 1  Color = #ffffffff }
+  }
+  op GenBitmap.Flat { Size = 128, 128  Color = #ffff2020 }
+  op GenBitmap.Flat { Size = 128, 128  Color = #ff2020ff }
+}
+
+// Like Color's and Merge's `sub`, this subtracts alpha too — and it is the case
+// that showed the blank-render check was too narrow, because it leaves alpha at
+// 0x0001 rather than 0x0000: just as invisible, but not equal to zero.
+op GenBitmap.Mask at 12,11 size 9x1 {
+  name = mask_sub
+  Mode = sub
+}

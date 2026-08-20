@@ -480,6 +480,17 @@ static void Describe(wMetaLibrary &meta,const sChar *what)
   for(sInt i=0;i<c->Params.GetCount();i++)
     DescribeParam(*c->Params[i]);
 
+  // The array block, if there is one. Without this, `describe` silently implies
+  // that an operator with array rows has no rows — which is how a Gradient case
+  // came to be written with none and rendered black.
+  if(c->Array)
+  {
+    sPrintF(L"\n  array: %d word(s) per row, `element { }` in .wz4t\n",
+      c->ArrayWords);
+    for(sInt i=0;i<c->Array->Params.GetCount();i++)
+      DescribeParam(*c->Array->Params[i]);
+  }
+
   // The word budget and the parameters should agree. They come from different
   // fields of the same emitter, so a mismatch means the metadata is wrong —
   // worth saying out loud rather than leaving a reader to notice.
@@ -1023,18 +1034,44 @@ void sMain()
             // outputs have been reviewed by eye — locking them earlier would
             // just freeze whatever the code does today, which is precisely the
             // failure mode 06-phase-texture.md warns about.
+            // Alpha is tracked and reported separately from the checksum
+            // because a transparent PNG looks like a WHITE one in every viewer,
+            // and that is indistinguishable by eye from an operator that filled
+            // the bitmap with white or did nothing at all. Found the hard way:
+            // Color's `invert` mode inverts alpha along with RGB
+            // (wz3_bitmap_code.cpp:919 xors every channel with 0x7fff), so an
+            // opaque input inverts to fully transparent and reviews as blank.
+            //
+            // 0x7fff is 1.0 here, not 0x8000: GetColor64 maps 8-bit 0xff to
+            // 0x7fff (wz3_bitmap_code.cpp:222).
             sBool uniform = 1;
             sU64 sum = 0;
+            sU32 amin = 0xffff, amax = 0;
             for(sInt i=0;i<bm->Size;i++)
             {
               if(bm->Data[i]!=bm->Data[0])
                 uniform = 0;
               sum = sum*1099511628211ULL ^ bm->Data[i];
+              sU32 a = sU32(bm->Data[i]>>48)&0xffff;
+              amin = sMin(amin,a);
+              amax = sMax(amax,a);
             }
 
-            sPrintF(L"  %d x %d, %s, checksum %08x%08x\n",
+            // Reported as the raw 16-bit range rather than a category, because
+            // the categories are not as clean as they look: `Color mul` drops
+            // alpha by one LSB to 0x7ffe through rounding, which is not a
+            // meaningful change, while `Color sub` takes it to 0 flat, which
+            // is. Printing both endpoints lets the case state its own truth.
+            // "Blank" is not amax==0. Mask's `sub` mode leaves alpha at 0x0001
+            // out of 0x7fff, which is exactly as invisible as zero but would
+            // pass an equality test. The threshold is what survives CopyTo's
+            // narrowing to 8 bits: below 0x0100 the PNG's alpha byte rounds to
+            // 0 and the image displays as plain white.
+            sPrintF(L"  %d x %d, %s, alpha %04x..%04x%s, checksum %08x%08x\n",
               bm->XSize,bm->YSize,
               uniform ? L"uniform" : L"structured",
+              amin,amax,
+              amax<0x0100 ? L" — renders blank" : L"",
               sU32(sum>>32),sU32(sum));
 
             if(out)

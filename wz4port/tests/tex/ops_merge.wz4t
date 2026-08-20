@@ -1,0 +1,292 @@
+wz4t 1
+
+// Stage 4.3 — Merge, all twelve blend modes.
+//
+// TWELVE, not the 22 the phase plan claimed: the mode word is
+// "add|sub|mul|diff|alpha|brightness|hardlight|over|addsmooth|min|max|premul
+// alpha" (wz3_bitmap_ops.ops:676), a 4-bit field with twelve labels defined.
+//
+// Every mode gets the same input pair, so the mode is the only variable and any
+// two outputs that match mean a mode is being ignored:
+//
+//   input 0 — a horizontal black-to-white ramp
+//   input 1 — greyscale Voronoi cells
+//
+// A ramp against a pattern is the standard way to read a blend mode: you can see
+// what happened at every input level at once, along the horizontal axis.
+//
+// Merge is varargs and takes both operators above it, sorted left to right, so
+// each group is two 3-wide sources with a 6-wide Merge under them. The groups
+// are spaced 7 apart in x so no group can reach into its neighbour.
+
+page "merge"
+
+op GenBitmap.Gradient at 0,0 size 3x1 {
+  Size = 128, 128
+  Flags = linear
+  element { Pos = 0  Color = #ff000000 }
+  element { Pos = 1  Color = #ffffffff }
+}
+op GenBitmap.Cell at 3,0 size 3x1 {
+  Size = 128, 128
+  Color0 = #ff000000
+  Color1 = #ffffffff
+  Max = 16
+  Seed = 3
+  Mode = inner
+}
+// Correct: brighter than either input almost everywhere, clipping to white where
+// the ramp is already bright.
+op GenBitmap.Merge at 0,1 size 6x1 {
+  name = merge_add
+  Mode = add
+}
+
+op GenBitmap.Gradient at 7,0 size 3x1 {
+  Size = 128, 128
+  Flags = linear
+  element { Pos = 0  Color = #ff000000 }
+  element { Pos = 1  Color = #ffffffff }
+}
+op GenBitmap.Cell at 10,0 size 3x1 {
+  Size = 128, 128
+  Color0 = #ff000000
+  Color1 = #ffffffff
+  Max = 16
+  Seed = 3
+  Mode = inner
+}
+// `sub` subtracts the ALPHA channel too, and both inputs are opaque, so alpha
+// goes to zero and the PNG renders blank — the same trap as Color's `sub` and
+// `invert` modes. Asserted as blank rather than worked around.
+op GenBitmap.Merge at 7,1 size 6x1 {
+  name = merge_sub
+  Mode = sub
+}
+
+// The same subtraction made reviewable: `add` with an opaque black restores
+// alpha without touching RGB.
+//
+// Correct: darker than the ramp, black wherever the cells are brighter than it.
+op GenBitmap.Color at 7,2 size 6x1 {
+  name = merge_sub_opaque
+  Mode = add
+  Color = #ff000000
+}
+
+op GenBitmap.Gradient at 14,0 size 3x1 {
+  Size = 128, 128
+  Flags = linear
+  element { Pos = 0  Color = #ff000000 }
+  element { Pos = 1  Color = #ffffffff }
+}
+op GenBitmap.Cell at 17,0 size 3x1 {
+  Size = 128, 128
+  Color0 = #ff000000
+  Color1 = #ffffffff
+  Max = 16
+  Seed = 3
+  Mode = inner
+}
+// Correct: the cells fading to black towards the left, because multiplying by a
+// dark ramp darkens. Nowhere brighter than either input.
+op GenBitmap.Merge at 14,1 size 6x1 {
+  name = merge_mul
+  Mode = mul
+}
+
+op GenBitmap.Gradient at 21,0 size 3x1 {
+  Size = 128, 128
+  Flags = linear
+  element { Pos = 0  Color = #ff000000 }
+  element { Pos = 1  Color = #ffffffff }
+}
+op GenBitmap.Cell at 24,0 size 3x1 {
+  Size = 128, 128
+  Color0 = #ff000000
+  Color1 = #ffffffff
+  Max = 16
+  Seed = 3
+  Mode = inner
+}
+// Correct: dark where the two inputs agree, bright where they differ — so there
+// is a dark band running through it wherever ramp and cells happen to match.
+op GenBitmap.Merge at 21,1 size 6x1 {
+  name = merge_diff
+  Mode = diff
+}
+
+op GenBitmap.Gradient at 28,0 size 3x1 {
+  Size = 128, 128
+  Flags = linear
+  element { Pos = 0  Color = #ff000000 }
+  element { Pos = 1  Color = #ffffffff }
+}
+op GenBitmap.Cell at 31,0 size 3x1 {
+  Size = 128, 128
+  Color0 = #ff000000
+  Color1 = #ffffffff
+  Max = 16
+  Seed = 3
+  Mode = inner
+}
+// Correct: the cells read as DARK blobs rather than bright ones, over a field
+// that brightens to the right — an inversion of the cells' usual sense, which is
+// how you tell this mode from `mul`.
+op GenBitmap.Merge at 28,1 size 6x1 {
+  name = merge_alpha
+  Mode = alpha
+}
+
+op GenBitmap.Gradient at 35,0 size 3x1 {
+  Size = 128, 128
+  Flags = linear
+  element { Pos = 0  Color = #ff000000 }
+  element { Pos = 1  Color = #ffffffff }
+}
+op GenBitmap.Cell at 38,0 size 3x1 {
+  Size = 128, 128
+  Color0 = #ff000000
+  Color1 = #ffffffff
+  Max = 16
+  Seed = 3
+  Mode = inner
+}
+// Correct: the cells keep their bright-centred shape but are lifted by the
+// ramp, so the right-hand side washes out towards white while the left stays
+// dark. Close to `add` in character but visibly gentler.
+op GenBitmap.Merge at 35,1 size 6x1 {
+  name = merge_brightness
+  Mode = brightness
+}
+
+op GenBitmap.Gradient at 42,0 size 3x1 {
+  Size = 128, 128
+  Flags = linear
+  element { Pos = 0  Color = #ff000000 }
+  element { Pos = 1  Color = #ffffffff }
+}
+op GenBitmap.Cell at 45,0 size 3x1 {
+  Size = 128, 128
+  Color0 = #ff000000
+  Color1 = #ffffffff
+  Max = 16
+  Seed = 3
+  Mode = inner
+}
+// Correct: the classic hard-light look — the left half behaves like multiply and
+// the right half like screen, so the contrast increases towards both ends.
+op GenBitmap.Merge at 42,1 size 6x1 {
+  name = merge_hardlight
+  Mode = hardlight
+}
+
+op GenBitmap.Gradient at 49,0 size 3x1 {
+  Size = 128, 128
+  Flags = linear
+  element { Pos = 0  Color = #ff000000 }
+  element { Pos = 1  Color = #ffffffff }
+}
+op GenBitmap.Cell at 52,0 size 3x1 {
+  Size = 128, 128
+  Color0 = #ff000000
+  Color1 = #ffffffff
+  Max = 16
+  Seed = 3
+  Mode = inner
+}
+// `over` is alpha compositing, and BOTH inputs here are fully opaque, so the top
+// one covers the bottom one completely.
+//
+// Correct: the cells alone, with no trace of the ramp — identical in appearance
+// to input 1 by itself. That is the right answer, not a sign the merge was
+// skipped, and it is the one mode in this file whose output looks like it did
+// nothing. Testing it against a translucent input would need a source with an
+// alpha ramp; merge_premul below is the related case.
+op GenBitmap.Merge at 49,1 size 6x1 {
+  name = merge_over
+  Mode = over
+}
+
+op GenBitmap.Gradient at 56,0 size 3x1 {
+  Size = 128, 128
+  Flags = linear
+  element { Pos = 0  Color = #ff000000 }
+  element { Pos = 1  Color = #ffffffff }
+}
+op GenBitmap.Cell at 59,0 size 3x1 {
+  Size = 128, 128
+  Color0 = #ff000000
+  Color1 = #ffffffff
+  Max = 16
+  Seed = 3
+  Mode = inner
+}
+// Correct: like add but without the hard clipping — bright, and smoother than
+// merge_add where merge_add went flat white.
+op GenBitmap.Merge at 56,1 size 6x1 {
+  name = merge_addsmooth
+  Mode = addsmooth
+}
+
+op GenBitmap.Gradient at 63,0 size 3x1 {
+  Size = 128, 128
+  Flags = linear
+  element { Pos = 0  Color = #ff000000 }
+  element { Pos = 1  Color = #ffffffff }
+}
+op GenBitmap.Cell at 66,0 size 3x1 {
+  Size = 128, 128
+  Color0 = #ff000000
+  Color1 = #ffffffff
+  Max = 16
+  Seed = 3
+  Mode = inner
+}
+// Correct: the darker of the two at every pixel — the ramp on the left, the
+// cells wherever they dip below it.
+op GenBitmap.Merge at 63,1 size 6x1 {
+  name = merge_min
+  Mode = min
+}
+
+op GenBitmap.Gradient at 70,0 size 3x1 {
+  Size = 128, 128
+  Flags = linear
+  element { Pos = 0  Color = #ff000000 }
+  element { Pos = 1  Color = #ffffffff }
+}
+op GenBitmap.Cell at 73,0 size 3x1 {
+  Size = 128, 128
+  Color0 = #ff000000
+  Color1 = #ffffffff
+  Max = 16
+  Seed = 3
+  Mode = inner
+}
+// Correct: the exact complement of merge_min — the brighter of the two
+// everywhere. min and max together must cover the pair with no overlap.
+op GenBitmap.Merge at 70,1 size 6x1 {
+  name = merge_max
+  Mode = max
+}
+
+op GenBitmap.Gradient at 77,0 size 3x1 {
+  Size = 128, 128
+  Flags = linear
+  element { Pos = 0  Color = #ff000000 }
+  element { Pos = 1  Color = #ffffffff }
+}
+op GenBitmap.Cell at 80,0 size 3x1 {
+  Size = 128, 128
+  Color0 = #ff000000
+  Color1 = #ffffffff
+  Max = 16
+  Seed = 3
+  Mode = inner
+}
+// Quoted: the label contains a space.
+op GenBitmap.Merge at 77,1 size 6x1 {
+  name = merge_premul
+  Mode = "premul alpha"
+}

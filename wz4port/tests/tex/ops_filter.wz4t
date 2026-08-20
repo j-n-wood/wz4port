@@ -1,0 +1,68 @@
+wz4t 1
+
+// Stage 4.3 — convolution and resampling. These need a source with HARD EDGES
+// to be diagnostic: a blur of noise just looks like different noise, whereas a
+// blur of a brick wall obviously has soft mortar lines.
+//
+// Bricks is that source, and one copy feeds all four consumers so the four
+// results are directly comparable.
+
+page "filter"
+
+// 12 wide: four 3-wide consumers on the row below all overlap it.
+op GenBitmap.Bricks at 0,0 size 12x1 {
+  name = src_bricks
+  Size = 128, 128
+  Color0 = #ffc04020
+  Color1 = #ffe0c060
+  Joints = #ff202020
+  SizeJoints = 0.12, 0.18
+  Count = 4, 6
+  Seed = 5
+  SingleWidthStones = 80
+  Side = 0.25
+  ColorBalance = 1
+}
+
+// ---------------------------------------------------------------- Blur
+// Correct: the wall with every edge softened, mortar lines fading into the
+// stones. Nothing should have moved — a blur that also shifts the image is a
+// sign the kernel is not centred.
+op GenBitmap.Blur at 0,1 size 3x1 {
+  name = blur
+  Passes = 2
+  Blur = 0.02, 0.02
+  Amplify = 1
+}
+
+// ---------------------------------------------------------------- Sharpen
+// The same kernel used the other way round.
+//
+// Correct: the mortar lines gain bright/dark haloes on either side, which is
+// what unsharp masking does. It must NOT look like the blur.
+op GenBitmap.Sharpen at 3,1 size 3x1 {
+  name = sharpen
+  Passes = 2
+  Blur = 0.02, 0.02
+  Amplify = 1
+}
+
+// ---------------------------------------------------------------- Downsample
+// 128 down to 32, so these two outputs are 32x32 and not 128x128.
+//
+// `point` takes one source pixel per output pixel. Correct: a visibly aliased,
+// crunchy 32x32 wall — thin mortar lines break up or vanish entirely.
+op GenBitmap.Downsample at 6,1 size 3x1 {
+  name = downsample_point
+  Size = 32, 32
+  Flags = point
+}
+
+// `box` averages instead. Correct: the same 32x32 wall but smooth, with every
+// mortar line still present as a soft grey line. Comparing the two is the whole
+// point — if they are identical the filter flag is being ignored.
+op GenBitmap.Downsample at 9,1 size 3x1 {
+  name = downsample_box
+  Size = 32, 32
+  Flags = box
+}

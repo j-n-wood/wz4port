@@ -39,7 +39,7 @@ Conversion out via `CopyTo(sImage*)` (8-bit RGBA) and `CopyTo(sImageI16*)`.
 **Generators:** `Flat`, `Perlin`, `Cell`, `Gradient`, `Import`, `ImportAnim`, `GlowRect`,
 `Dots`, `Atlas`, `Bricks`, `Text`, `Vector`, `Paste`.
 
-**Colour:** `Color`, `Range`, `HSCB`, `Bitcrusher`, `Merge` (22 blend modes), `PreMulAlpha`,
+**Colour:** `Color`, `Range`, `HSCB`, `Bitcrusher`, `Merge` (12 blend modes), `PreMulAlpha`,
 `Mask`, `ColorBalance`.
 
 **Convolution:** `Blur`, `Sharpen`, `Downsample`.
@@ -150,21 +150,94 @@ have found it, and would equally have passed on a zero-byte or truncated file. T
 deletes any previous output, then checks existence, size and the PNG signature. Recorded as
 `architecture.md` A39, and it is the same lesson as A33.
 
-### 4.3 — Per-operator test cases
+### 4.3 — Per-operator test cases — **done**
 
 One `.wz4t` case per operator, in `wz4port/tests/tex/`. Design rules:
 
 - **Small and fast** — 128×128 or 256×256, no long chains.
 - **Visually diagnostic** — the output should make the operator's behaviour obvious. A `Blur`
   case blurs something with hard edges; a `Twirl` case twirls a grid; a `Merge` case shows all
-  22 blend modes over a known pair.
+  12 blend modes over a known pair.
 - **Deterministic** — explicit seeds everywhere.
-- **Parameter coverage** — where an operator has modes, exercise each. `Merge` gets 22 outputs,
+- **Parameter coverage** — where an operator has modes, exercise each. `Merge` gets 12 outputs,
   `Cell` gets its inner/outer/cell-colour modes, `Perlin` gets its mode flags.
 
-Each case gets a one-line comment saying what a correct result looks like.
+Each case gets a comment saying what a correct result looks like.
 
-**Gate:** every operator has a case; all render without crashing.
+**Gate — passed.** **74 cases** over seven files, covering **31 of the 34** operators; `Import`,
+`ImportAnim` and `Text` are 4.5's, as planned. All render, all reviewed by eye.
+
+Grouped by family rather than one file per operator, because the comparison is the test:
+`ops_filter.wz4t`'s blur and sharpen read the *same* brick wall, and `ops_merge.wz4t`'s twelve
+modes read the same input pair, so "these two look identical" is a detectable failure. One
+file per operator would have made every source subtly different.
+
+| File | Cases | Covers |
+|---|---:|---|
+| `ops_gen.wz4t` | 16 | Flat, Perlin ×3, Cell ×3, Gradient ×3, GlowRect ×2, Dots, Bricks, Vector, Atlas |
+| `ops_color.wz4t` | 19 | Color ×6 (+2 alpha-restored), Range ×3, HSCB, Bitcrusher, ColorBalance, PreMulAlpha, Mask ×4 |
+| `ops_merge.wz4t` | 13 | Merge, all 12 modes (+1 alpha-restored) |
+| `ops_filter.wz4t` | 4 | Blur, Sharpen, Downsample ×2 |
+| `ops_warp.wz4t` | 9 | Rotate ×2, RotateMul, Twirl, Unwrap ×3, Bulge, Distort |
+| `ops_light.wz4t` | 11 | Normals ×5, Light ×3, Bump ×3 |
+| `ops_io.wz4t` | 2 | Export, MakeWz3Bitmap |
+
+`ctest` is **109 tests** in total, up from 35.
+
+`Merge` has **12** modes, not the 22 this document claimed in three places
+(`wz3_bitmap_ops.ops:676` — a 4-bit field with twelve labels). Corrected above.
+
+#### Found here: four operators zero the alpha channel, and a blank PNG looks white
+
+`Color sub`, `Color invert`, `Merge sub` and `Mask sub` all take alpha to zero (or, in Mask's
+case, to `0x0001`) because they operate on all four channels. The saved PNG is then fully
+transparent — which **displays as plain white** and is indistinguishable by eye from an
+operator that filled the bitmap with white or did nothing at all.
+
+Three of the four were written expecting visible output, and the first draft of `color_invert`
+was reviewed as a white square before the cause was understood. This is precisely the
+"plausible, stable, wrong" failure the *honest limitation* section below warns about, arriving
+in stage 4.3 rather than 4.4.
+
+Closed on both sides:
+
+- `wz4gen render` now reports the alpha range and flags `renders blank`. The threshold is
+  `amax < 0x0100`, not `== 0`, because that is what survives `CopyTo`'s narrowing to 8 bits —
+  `Mask sub`'s `0x0001` is exactly as invisible as zero and would have passed an equality test.
+- Every case must NOT render blank unless it says so (`REJECT` in `render_png.cmake`). The four
+  that legitimately do assert their alpha range explicitly, and each has a companion case with
+  alpha restored by a trailing `Color add #ff000000` so the RGB result is actually reviewable.
+
+#### Five things the review corrected that a checksum would not have
+
+Each of these was a case that ran, produced a plausible image, and was wrong or misdescribed:
+
+- **`Mask`'s input 0 is the mask**, not one of the two images (`out = GRAY(in0)`, then blend
+  in1/in2 by it). Written the way the name implies, the case produced a blue-to-lavender ramp
+  with one of its inputs absent from the output entirely.
+- **`Perlin`'s `FadeOff` decides whether it looks like Perlin noise at all.** At the default 1
+  every octave has equal weight, the highest dominates, and the result is white noise. The
+  first draft of the case looked like static.
+- **`Unwrap`'s `polar2normal` and `normal2polar` are the other way round** from the reading
+  their names suggest; `normal2polar` is the one that produces a dartboard.
+- **`Dots`' `Count` is a density**, `Size*Count/4096`, so 24 means 96 dots at 128×128.
+- **`Gradient`'s `step` mode** holds each stop's colour until the next, so a stop at `Pos=1` has
+  zero width and never appears — the case showed two bands where it claimed three.
+
+`linear` versus `smoothstep` is recorded in the case file as a known-subtle pair: they differ
+by checksum but not visibly at 128×128 with three stops. Saying so is better than implying the
+eye can separate them.
+
+#### Also found: layout is semantic, so test files need deliberate gaps
+
+Vertical adjacency *is* connection, so a generator placed directly under the bottom edge of an
+unrelated group becomes its consumer and fails with "too many inputs". `Bricks` at row 8 under
+a `GlowRect` ending at row 8 did exactly that. An op's default width is 3
+(`wz4t_read.cpp:755`), which also caught `Atlas`: a 3-wide consumer under three 3-wide sources
+overlaps only the first and silently packs one tile.
+
+`wz4gen describe` now prints array blocks. Without it the tool implied that an operator with
+array rows had none — which is how a `Gradient` came to be written with no stops in 4.1.
 
 ### 4.4 — Golden lock and the runner
 

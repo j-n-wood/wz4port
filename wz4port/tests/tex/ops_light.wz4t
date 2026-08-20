@@ -1,0 +1,214 @@
+wz4t 1
+
+// Stage 4.3 — normal generation and lighting.
+//
+// Light and Bump are the same code with one difference: Light calls
+// `out->Bump(0,...)` with a NULL normal map (wz3_bitmap_ops.ops:1064), so it
+// lights a flat surface, while Bump passes `in1` as the normal map. That is why
+// Light takes one input and Bump takes two, and why Bump's inputs are
+// (surface, normals) in that order — checked, not assumed.
+
+page "light"
+
+// ---------------------------------------------------------------- Normals
+// A height field to derive normals from. 15 wide for five consumers.
+op GenBitmap.Perlin at 0,0 size 15x1 {
+  name = src_height
+  Size = 128, 128
+  Frequency = 2
+  Octaves = 3
+  FadeOff = 0.5
+  Seed = 2
+}
+
+// A normal map stores a direction per pixel in the colour channels, so all four
+// of these should be pale, low-contrast, mostly blue-violet images — that is
+// what "mostly pointing at the viewer" looks like. A normal map that comes out
+// looking like the greyscale height field means the operator did nothing.
+//
+// 2d: correct output has no blue variation to speak of, because a 2d normal
+// leaves Z constant.
+op GenBitmap.Normals at 0,1 size 3x1 {
+  name = normals_2d
+  Strength = 4
+  Mode = "2d", normal
+}
+
+// 3d: correct output varies in all three channels and is the one that looks
+// like a conventional normal map.
+op GenBitmap.Normals at 3,1 size 3x1 {
+  name = normals_3d
+  Strength = 4
+  Mode = "3d", normal
+}
+
+// tangent space, 2d and 3d. Correct: each visibly different from its non-tangent
+// counterpart above.
+op GenBitmap.Normals at 6,1 size 3x1 {
+  name = normals_tangent2d
+  Strength = 4
+  Mode = "tangent 2d", normal
+}
+
+op GenBitmap.Normals at 9,1 size 3x1 {
+  name = normals_tangent3d
+  Strength = 4
+  Mode = "tangent 3d", normal
+}
+
+// The second control of the Mode word, which the four cases above all leave at
+// `normal`. On the same row as them, not below: an op at 0,2 would take
+// normals_2d as its input and compute the normals OF A NORMAL MAP.
+//
+// Correct: the same normal map as normals_3d but with harsher, higher-contrast
+// detail.
+op GenBitmap.Normals at 12,1 size 3x1 {
+  name = normals_sharp
+  Strength = 4
+  Mode = "3d", "extra sharp"
+}
+
+// ---------------------------------------------------------------- Light
+// Lighting a FLAT white surface, so what you see is the shape of the light
+// itself with nothing else mixed in. 9 wide for three consumers.
+op GenBitmap.Flat at 0,3 size 9x1 {
+  name = src_white
+  Size = 128, 128
+  Color = #ffffffff
+}
+
+// spot: correct output is a bright elliptical pool towards Pos, falling off to
+// dark at the edges — a cone of light on a wall.
+op GenBitmap.Light at 0,4 size 3x1 {
+  name = light_spot
+  Mode = spot
+  Pos = 0.35, 0.35, 0.6
+  Dir = 0.125, 0.25
+  Diffuse = #ffffffff
+  Ambient = #ff303040
+  Outer = 0.75
+  Falloff = 1
+  Amplify = 1
+}
+
+// point: correct output is a radially symmetric glow around Pos, with no cone
+// edge — obviously different from spot.
+op GenBitmap.Light at 3,4 size 3x1 {
+  name = light_point
+  Mode = point
+  Pos = 0.35, 0.35, 0.6
+  Diffuse = #ffffffff
+  Ambient = #ff303040
+  Outer = 0.75
+  Falloff = 1
+  Amplify = 1
+}
+
+// directional: a light with no position at all, so correct output is UNIFORM or
+// close to it — on a flat surface every pixel has the same normal and therefore
+// receives the same amount of light. That is the correct answer here, not a
+// failure, and it is the one case in this file that may report `uniform`.
+op GenBitmap.Light at 6,4 size 3x1 {
+  name = light_directional
+  Mode = directional
+  Dir = 0.125, 0.25
+  Diffuse = #ffffffff
+  Ambient = #ff303040
+  Outer = 0.75
+  Falloff = 1
+  Amplify = 1
+}
+
+// ---------------------------------------------------------------- Bump
+// Three groups, one per mode, side by side. Each needs its own pair of inputs
+// because both must sit directly above the Bump that consumes them:
+//
+//     y=6            [Perlin]          the height field
+//     y=7   [Flat ][ Normals]          surface colour, and normals from it
+//     y=8   [     Bump      ]          6 wide, so it takes both
+//
+// Correct: the flat coloured surface now looks like an embossed, lit relief of
+// the noise — highlights on slopes facing the light, shadow on those facing
+// away. If it looks like flat colour the normal map is not reaching it.
+
+op GenBitmap.Perlin at 3,6 size 3x1 {
+  Size = 128, 128
+  Frequency = 2
+  Octaves = 3
+  FadeOff = 0.5
+  Seed = 2
+}
+op GenBitmap.Flat at 0,7 size 3x1 {
+  Size = 128, 128
+  Color = #ffc08040
+}
+op GenBitmap.Normals at 3,7 size 3x1 {
+  Strength = 4
+  Mode = "3d", normal
+}
+op GenBitmap.Bump at 0,8 size 6x1 {
+  name = bump_spot
+  Mode = spot
+  Pos = 0.35, 0.35, 0.6
+  Dir = 0.125, 0.25
+  Diffuse = #ffffffff
+  Ambient = #ff404040
+  Outer = 0.75
+  Falloff = 1
+  Amplify = 1
+}
+
+op GenBitmap.Perlin at 10,6 size 3x1 {
+  Size = 128, 128
+  Frequency = 2
+  Octaves = 3
+  FadeOff = 0.5
+  Seed = 2
+}
+op GenBitmap.Flat at 7,7 size 3x1 {
+  Size = 128, 128
+  Color = #ffc08040
+}
+op GenBitmap.Normals at 10,7 size 3x1 {
+  Strength = 4
+  Mode = "3d", normal
+}
+op GenBitmap.Bump at 7,8 size 6x1 {
+  name = bump_point
+  Mode = point
+  Pos = 0.35, 0.35, 0.6
+  Diffuse = #ffffffff
+  Ambient = #ff404040
+  Outer = 0.75
+  Falloff = 1
+  Amplify = 1
+}
+
+op GenBitmap.Perlin at 17,6 size 3x1 {
+  Size = 128, 128
+  Frequency = 2
+  Octaves = 3
+  FadeOff = 0.5
+  Seed = 2
+}
+op GenBitmap.Flat at 14,7 size 3x1 {
+  Size = 128, 128
+  Color = #ffc08040
+}
+op GenBitmap.Normals at 17,7 size 3x1 {
+  Strength = 4
+  Mode = "3d", normal
+}
+
+// Unlike light_directional, this one must NOT be uniform: the surface has a
+// normal map now, so a directional light still varies across it.
+op GenBitmap.Bump at 14,8 size 6x1 {
+  name = bump_directional
+  Mode = directional
+  Dir = 0.125, 0.25
+  Diffuse = #ffffffff
+  Ambient = #ff404040
+  Outer = 0.75
+  Falloff = 1
+  Amplify = 1
+}

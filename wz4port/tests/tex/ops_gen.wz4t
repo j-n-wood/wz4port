@@ -1,0 +1,293 @@
+wz4t 1
+
+// Stage 4.3 — the generators: operators that make a bitmap rather than filter
+// one. 128x128 throughout, every seed explicit.
+//
+// Every operator here is named, and the name is the ctest case. Where an
+// operator has modes, each mode gets its own name, because a mode flag that is
+// silently ignored looks exactly like one that works.
+//
+// LAYOUT MATTERS. Vertical adjacency *is* connection in this format, so
+// unrelated groups need a clear row between them: a generator placed directly
+// under the bottom edge of anything else becomes its consumer and fails with
+// "too many inputs". The rows used here are 0, 2, 4, 6-7, 9-10 and 12-13.
+
+page "generators"
+
+// ---------------------------------------------------------------- Flat
+// Solid mid-grey. Also the reference for "uniform": every other case in this
+// file must come out structured.
+op GenBitmap.Flat at 0,0 size 3x1 {
+  name = flat
+  Size = 128, 128
+  Color = #ff808080
+}
+
+// ---------------------------------------------------------------- Perlin
+// FadeOff is the per-octave amplitude falloff and it decides whether this
+// operator looks like Perlin noise at all: at the default 1 every octave has
+// equal weight, the top one dominates, and the result is indistinguishable from
+// white noise. 0.5 is the usual 1/f weighting.
+//
+// Correct: soft cloudy greyscale, features a few tens of pixels across.
+op GenBitmap.Perlin at 4,0 size 3x1 {
+  name = perlin
+  Size = 128, 128
+  Frequency = 2
+  Octaves = 4
+  FadeOff = 0.5
+  Seed = 1
+}
+
+// abs() folds the noise about zero. Correct output is the same field with
+// ridged creases where the smooth version crossed mid-grey, and is darker
+// overall because folding removes the negative half.
+op GenBitmap.Perlin at 8,0 size 3x1 {
+  name = perlin_abs
+  Size = 128, 128
+  Frequency = 2
+  Octaves = 4
+  FadeOff = 0.5
+  Seed = 1
+  Mode = abs
+}
+
+// The sine is applied to each octave's noise value before the octaves are
+// summed (`wz3_bitmap_code.cpp:631`), a full period across the noise range —
+// so this is a fold, not a post-process, and it does NOT produce marble banding
+// however hard you drive it.
+//
+// Correct: a smooth, high-contrast, blobby field, clearly a different character
+// from `perlin` at the same seed — not clipped to pure black and white. Amplify
+// above about 2 clips it: sRange7fff saturates and the result goes binary.
+op GenBitmap.Perlin at 12,0 size 3x1 {
+  name = perlin_sin
+  Size = 128, 128
+  Frequency = 1
+  Octaves = 2
+  FadeOff = 0.5
+  Seed = 1
+  Mode = "-", sin
+  Amplify = 1.5
+}
+
+// ---------------------------------------------------------------- Cell
+// Voronoi. `inner` shades from each cell's seed point outwards, so correct
+// output is a field of blobs, each bright at its centre.
+op GenBitmap.Cell at 0,2 size 3x1 {
+  name = cell_inner
+  Size = 128, 128
+  Color0 = #ff000000
+  Color1 = #ffffffff
+  Max = 24
+  Seed = 3
+  Mode = inner
+}
+
+// `outer` measures to the cell boundary instead, so correct output is the
+// negative of the above in character: bright walls between dark cells.
+op GenBitmap.Cell at 4,2 size 3x1 {
+  name = cell_outer
+  Size = 128, 128
+  Color0 = #ff000000
+  Color1 = #ffffffff
+  Max = 24
+  Seed = 3
+  Mode = outer
+}
+
+// `cell-color` gives each cell one flat colour, so correct output is a hard
+// mosaic with no gradient inside any cell.
+op GenBitmap.Cell at 8,2 size 3x1 {
+  name = cell_color
+  Size = 128, 128
+  Color0 = #ff203060
+  Color1 = #ffe0d0a0
+  Max = 24
+  Seed = 3
+  // Quoted because the scanner would otherwise split `cell-color` into three
+  // tokens — the same reason the empty label is written `"-"`.
+  Mode = inner, "cell-color"
+}
+
+// ---------------------------------------------------------------- Gradient
+// Three stops — black, red, white — at 0.2, 0.5 and 0.8. The interpolation mode
+// is the whole point of these three cases, so the stops are identical across
+// them and only Flags differs.
+//
+// Two things drove that placement, both found by looking at the output:
+//
+//  - The stops are not at 0/0.5/1, because `step` holds each stop's colour
+//    until the next one: a stop at Pos=1 has zero width and never appears, so
+//    that spacing showed two bands instead of three.
+//  - They are inset from the edges rather than at 0/1/3/2/3, because the
+//    gradient clamps outside the stop range. The flat runs before 0.2 and after
+//    0.8 are what make `linear`'s creases visible, and without them `linear`
+//    and `smoothstep` are indistinguishable by eye — they differ only by
+//    checksum, which is not a reviewable case.
+//
+// `step` — correct output is three hard-edged vertical bands: black to 0.5, red
+// to 0.8, white to the right edge.
+op GenBitmap.Gradient at 0,4 size 3x1 {
+  name = gradient_step
+  Size = 128, 128
+  Flags = step
+  element { Pos = 0.2  Color = #ff000000 }
+  element { Pos = 0.5  Color = #ffff0000 }
+  element { Pos = 0.8  Color = #ffffffff }
+}
+
+// `linear` — correct output ramps black→red then red→white, with a visible
+// crease at each stop where the slope changes, then flat white after 2/3.
+op GenBitmap.Gradient at 4,4 size 3x1 {
+  name = gradient_linear
+  Size = 128, 128
+  Flags = linear
+  element { Pos = 0.2  Color = #ff000000 }
+  element { Pos = 0.5  Color = #ffff0000 }
+  element { Pos = 0.8  Color = #ffffffff }
+}
+
+// `smoothstep` — the same ramp with the creases eased away: the slope goes to
+// zero at each stop instead of changing abruptly.
+//
+// Be warned when reviewing this one: with three stops each span is only 30% of
+// the width, so the easing is compressed and the result looks very close to
+// `linear` by eye. It is not broken — the checksums differ. This is a case
+// where the golden comparison, not the eye, is the discriminator, and saying so
+// is better than pretending the difference is obvious.
+op GenBitmap.Gradient at 8,4 size 3x1 {
+  name = gradient_smooth
+  Size = 128, 128
+  Flags = smoothstep
+  element { Pos = 0.2  Color = #ff000000 }
+  element { Pos = 0.5  Color = #ffff0000 }
+  element { Pos = 0.8  Color = #ffffffff }
+}
+
+// ---------------------------------------------------------------- GlowRect
+// Needs an input to draw onto. `Blend` and `Power` shape the falloff.
+//
+// Correct: a soft-edged white ellipse on dark blue, fading to nothing well
+// inside the border.
+stack at 0,6 {
+  op GenBitmap.Flat {
+    Size = 128, 128
+    Color = #ff101828
+  }
+  op GenBitmap.GlowRect {
+    name = glowrect_ellipse
+    Center = 0.5, 0.5
+    Radius = 0.4, 0.3
+    Color = #ffffffff
+    Power = 1
+  }
+}
+
+// The same call with `rectangle`, plus a Size, which is the flat inner core the
+// falloff starts from.
+//
+// Correct: a bright flat rectangle in the middle, falling off linearly to the
+// Radius bounds, with clear DIAGONAL creases running out to the four corners.
+// Those diagonals are the signature of the rectangular distance metric and are
+// how you tell this mode from `ellipse` at a glance — they are not an artefact.
+stack at 4,6 {
+  op GenBitmap.Flat {
+    Size = 128, 128
+    Color = #ff101828
+  }
+  op GenBitmap.GlowRect {
+    name = glowrect_rect
+    Center = 0.5, 0.5
+    Radius = 0.4, 0.3
+    Size = 0.15, 0.1
+    Color = #ffffffff
+    Power = 1
+    Flags = "-", rectangle
+  }
+}
+
+// ---------------------------------------------------------------- Dots
+// Scatters single-pixel dots of Color1 over Color0.
+//
+// Count is a DENSITY, not a number of dots: the implementation computes
+// `sMulDiv(Size,count,1<<12)` (wz3_bitmap_code.cpp:1390), so at 128x128 a Count
+// of 24 means 16384*24/4096 = 96 dots.
+//
+// Correct: roughly a hundred white single-pixel dots on dark blue, in the same
+// places every run because Seed is fixed.
+stack at 8,6 {
+  op GenBitmap.Flat {
+    Size = 128, 128
+    Color = #ff101828
+  }
+  op GenBitmap.Dots {
+    name = dots
+    Color0 = #ff101828
+    Color1 = #ffffffff
+    Count = 24
+    Seed = 7
+  }
+}
+
+// ---------------------------------------------------------------- Bricks
+// Correct: a 4-by-6 brick wall, red and yellow stones on black joints, with
+// some stones spanning two columns (SingleWidthStones is a percentage, so at 80
+// most are single but not all).
+op GenBitmap.Bricks at 0,9 size 3x1 {
+  name = bricks
+  Size = 128, 128
+  Color0 = #ffc04020
+  Color1 = #ffe0c060
+  Joints = #ff202020
+  SizeJoints = 0.12, 0.18
+  Count = 4, 6
+  Seed = 5
+  SingleWidthStones = 80
+  Side = 0.25
+  ColorBalance = 1
+}
+
+// ---------------------------------------------------------------- Vector
+// A filled triangle rasterised over a dark field. The first row of a contour
+// carries `restart = line`; the rest carry `-`. Fewer than three points and
+// CalcGenBitmapVectorLoop drops the contour entirely, so an empty result here
+// means the rows were not read.
+//
+// Correct: one solid pale triangle on dark blue, apex pointing DOWN — y runs
+// downward in bitmap space, so the (0.5, 0.90) vertex is at the bottom.
+stack at 4,9 {
+  op GenBitmap.Flat {
+    Size = 128, 128
+    Color = #ff101828
+  }
+  op GenBitmap.Vector {
+    name = vector
+    Color = #ffe0e0c0
+    element { x = 0.12  y = 0.15  col = #ffe0e0c0  restart = line }
+    element { x = 0.88  y = 0.25  col = #ffe0e0c0  restart = "-" }
+    element { x = 0.50  y = 0.90  col = #ffe0e0c0  restart = "-" }
+  }
+}
+
+// ---------------------------------------------------------------- Atlas
+// Packs its inputs into one bitmap and records their rectangles. varargs, so
+// the three sources above it are all consumed.
+//
+// Correct: three 32x32 tiles — red, green, blue — packed left to right along
+// the top of a 128x128 sheet, the rest filled with Color.
+//
+// Atlas must be 9 wide, not 3: an op's default width is 3 (wz4t_read.cpp), so
+// the row puts the tiles at x = 8, 11 and 14. A 3-wide consumer would overlap
+// only the first of them and silently pack one tile.
+row at 8,12 {
+  op GenBitmap.Flat { Size = 32, 32  Color = #ffff4040 }
+  op GenBitmap.Flat { Size = 32, 32  Color = #ff40ff40 }
+  op GenBitmap.Flat { Size = 32, 32  Color = #ff4040ff }
+}
+
+op GenBitmap.Atlas at 8,13 size 9x1 {
+  name = atlas
+  Size = 128, 128
+  Color = #ff202020
+}

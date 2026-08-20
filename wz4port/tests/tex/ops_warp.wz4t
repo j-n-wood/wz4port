@@ -1,0 +1,157 @@
+wz4t 1
+
+// Stage 4.3 — the resample and warp operators. A brick wall is the source
+// throughout: a regular grid makes any distortion obvious and shows immediately
+// whether straight lines stay straight.
+//
+// The source is 24 wide so that eight 3-wide consumers on the row below all
+// overlap it. Distort needs two inputs and so has its own group further down,
+// with a clear row of separation.
+
+page "warp"
+
+op GenBitmap.Bricks at 0,0 size 24x1 {
+  name = src_bricks
+  Size = 128, 128
+  Color0 = #ffc04020
+  Color1 = #ffe0c060
+  Joints = #ff202020
+  SizeJoints = 0.12, 0.18
+  Count = 4, 6
+  Seed = 5
+  SingleWidthStones = 80
+  Side = 0.25
+  ColorBalance = 1
+}
+
+// ---------------------------------------------------------------- Rotate
+// Angle is in turns, not degrees or radians: 0.05 is 18 degrees.
+//
+// Correct: the wall rotated anticlockwise about the centre, wrapping at all four
+// edges because Flags is `both` — so the corners are filled with wrapped wall
+// rather than left empty.
+op GenBitmap.Rotate at 0,1 size 3x1 {
+  name = rotate_bilinear
+  Angle = 0.05
+  Center = 0.5, 0.5
+  Scale = 1, 1
+  Offset = 0.5, 0.5
+  Flags = both, bilinear
+}
+
+// The same rotation with nearest-neighbour sampling. Correct: identical
+// geometry, but the edges are visibly jagged rather than smoothly interpolated.
+// If this is indistinguishable from rotate_bilinear the filter bit is dead.
+op GenBitmap.Rotate at 3,1 size 3x1 {
+  name = rotate_nearest
+  Angle = 0.05
+  Center = 0.5, 0.5
+  Scale = 1, 1
+  Offset = 0.5, 0.5
+  Flags = both, nearest
+}
+
+// ---------------------------------------------------------------- RotateMul
+// Applies its transform Count times, accumulating with Mode each time — the
+// classic recursive-kaleidoscope operator.
+//
+// Correct: four progressively rotated and shrunken copies of the wall added on
+// top of each other — much busier than a single Rotate, and noticeably BRIGHTER
+// than the source, because Mode is `add` and four copies accumulate. Not
+// symmetric: each copy is rotated a further 0.04 turn in the same direction.
+op GenBitmap.RotateMul at 6,1 size 3x1 {
+  name = rotatemul
+  Angle = 0.04
+  Scale = 0.85, 0.85
+  Offset = 0.5, 0.5
+  Flags = both, bilinear
+  PreAdjust = #ff808080
+  Mode = add, linear
+  Count = 4
+  Fade = #ffc0c0c0
+}
+
+// ---------------------------------------------------------------- Twirl
+// Correct: the wall twisted about the centre, strongest at the middle and
+// falling off to unchanged at the Radius bound — straight mortar lines become
+// spirals near the centre and stay straight at the corners.
+op GenBitmap.Twirl at 9,1 size 3x1 {
+  name = twirl
+  Strength = 1.5
+  Gamma = 2
+  Radius = 0.5, 0.5
+  Center = 0.5, 0.5
+  Flags = both
+}
+
+// ---------------------------------------------------------------- Unwrap
+// Coordinate-space conversions. All three modes must look different from each
+// other and from the source.
+//
+// The names read the opposite way round from what you might expect, so both are
+// described from the output rather than from the label.
+//
+// polar2normal treats the SOURCE as already being in polar form and flattens it
+// out. Correct: a fan of petal shapes filling the frame edge to edge, with no
+// circular boundary anywhere — it is not a dartboard.
+op GenBitmap.Unwrap at 12,1 size 3x1 {
+  name = unwrap_polar2normal
+  Mode = polar2normal, both
+}
+
+// normal2polar is the one that wraps the wall around the centre. Correct: a
+// dartboard — concentric rings of brick colour inside a circle, with the corners
+// outside the disc left dark.
+op GenBitmap.Unwrap at 15,1 size 3x1 {
+  name = unwrap_normal2polar
+  Mode = normal2polar, both
+}
+
+// rect2normal. Correct: different again from both of the above.
+op GenBitmap.Unwrap at 18,1 size 3x1 {
+  name = unwrap_rect2normal
+  Mode = rect2normal, both
+}
+
+// ---------------------------------------------------------------- Bulge
+// Correct: the middle of the wall pushed outward as though behind a lens, the
+// mortar grid bowing outward, with the edges least affected.
+op GenBitmap.Bulge at 21,1 size 3x1 {
+  name = bulge
+  Amount = 1
+}
+
+// ---------------------------------------------------------------- Distort
+// Two inputs: the image to distort and a bitmap whose red/green channels are
+// read as a displacement vector. Perlin noise is the usual choice, and it makes
+// the effect unmistakable.
+//
+// Correct: the wall smeared into wobbling, organic shapes, with the grid still
+// recognisable but no straight lines left anywhere.
+row at 0,3 {
+  op GenBitmap.Bricks {
+    Size = 128, 128
+    Color0 = #ffc04020
+    Color1 = #ffe0c060
+    Joints = #ff202020
+    SizeJoints = 0.12, 0.18
+    Count = 4, 6
+    Seed = 5
+    SingleWidthStones = 80
+    Side = 0.25
+    ColorBalance = 1
+  }
+  op GenBitmap.Perlin {
+    Size = 128, 128
+    Frequency = 2
+    Octaves = 3
+    FadeOff = 0.5
+    Seed = 4
+  }
+}
+
+op GenBitmap.Distort at 0,4 size 6x1 {
+  name = distort
+  Strength = 0.15
+  Flags = both
+}
