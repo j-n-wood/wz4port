@@ -17,6 +17,14 @@
 #include "wz4lib/doc_core.hpp"
 #include "wz4lib/basic_ops.hpp"
 #include "base/system.hpp"
+#include "meta.hpp"
+#include "json.hpp"               // wFormatFloat — Altona has no %g
+
+// Where opsmeta puts its output. Compiled in so the tool works with no
+// arguments in a normal build; override with -meta <dir>.
+#ifndef WZ4GEN_META_DIR
+#define WZ4GEN_META_DIR L"meta"
+#endif
 
 /****************************************************************************/
 
@@ -292,6 +300,359 @@ static void ListDocument(const sChar *filename)
 
 /****************************************************************************/
 /***                                                                      ***/
+/***   describe — the full parameter description of one operator           ***/
+/***                                                                      ***/
+/****************************************************************************/
+
+// This is what wClass cannot tell you. It comes entirely from the metadata that
+// opsmeta emits, and it is the same description the text-format reader and the
+// editor's parameter panel will use.
+
+static const sChar *SpaceName(sInt space)
+{
+  switch(space)
+  {
+  case wMS_WORDS:   return L"word";
+  case wMS_STRINGS: return L"string";
+  case wMS_LINKS:   return L"link";
+  default:          return L"-";
+  }
+}
+
+static void DescribeParam(const wMetaParam &p)
+{
+  // Storage first: it is the part a reader or an editor actually needs, and the
+  // part that is easiest to get wrong — there are three independent offset
+  // spaces, so an offset on its own is ambiguous.
+  sString<64> where;
+  if(p.Space==wMS_NONE)
+    where.PrintF(L"%-9s",L"-");
+  else
+    where.PrintF(L"%s %-2d",SpaceName(p.Space),p.Offset);
+
+  sString<64> kind;
+  if(p.Layout==wML_VECTOR)
+    kind.PrintF(L"%s.xyzw",p.Kind);
+  else if(p.Layout==wML_ARRAY)
+    kind.PrintF(L"%s[%d]",p.Kind,p.Count);
+  else
+    kind.PrintF(L"%s",p.Kind);
+
+  sString<512> line;
+  line.PrintF(L"  %-9s %-13s %s",where,kind,p.Symbol);
+
+  if(p.Continues)
+    line.Add(L"  (continues — shares the word above)");
+  if(p.RebuildOnChange)
+    line.Add(L"  (rebuilds the panel)");
+
+  sPrintF(L"%s\n",line);
+
+  // Ranges and defaults, where the kind has them.
+  if(p.Kind==L"float" || p.Kind==L"int")
+  {
+    sChar mn[64],mx[64],st[64];
+    wFormatFloat(mn,sCOUNTOF(mn),p.Min);
+    wFormatFloat(mx,sCOUNTOF(mx),p.Max);
+    wFormatFloat(st,sCOUNTOF(st),p.Step);
+
+    sString<256> r;
+    r.PrintF(L"            range %s .. %s  step %s",mn,mx,st);
+    if(p.LogStep)
+      r.Add(L" (log)");
+    sPrintF(L"%s\n",r);
+
+    if(p.DefaultsF.GetCount())
+    {
+      sString<256> d;
+      d.PrintF(L"            default ");
+      for(sInt i=0;i<p.DefaultsF.GetCount();i++)
+      {
+        if(i)
+          d.Add(L", ");
+        sString<64> one;
+        if(p.Kind==L"int")
+        {
+          one.PrintF(L"%d",p.DefaultsI[i]);
+        }
+        else
+        {
+          sChar num[64];
+          wFormatFloat(num,sCOUNTOF(num),p.DefaultsF[i]);
+          one.PrintF(L"%s",num);
+        }
+        d.Add(one);
+      }
+      sPrintF(L"%s\n",d);
+    }
+  }
+
+  if(p.Kind==L"color")
+  {
+    sString<256> d;
+    d.PrintF(L"            channels \"%s\"",p.Channels);
+    if(p.DefaultsI.GetCount())
+    {
+      d.Add(L"  default ");
+      for(sInt i=0;i<p.DefaultsI.GetCount();i++)
+      {
+        if(i)
+          d.Add(L", ");
+        sString<32> one;
+        one.PrintF(L"#%08x",sU32(p.DefaultsI[i]));
+        d.Add(one);
+      }
+    }
+    sPrintF(L"%s\n",d);
+  }
+
+  if(p.Kind==L"string" || p.Kind==L"filein" || p.Kind==L"fileout")
+  {
+    if(!p.DefaultString.IsEmpty())
+      sPrintF(L"            default \"%s\"\n",p.DefaultString);
+  }
+
+  if(p.Kind==L"char")
+    sPrintF(L"            capacity %d character(s), %d word(s)\n",p.Capacity,p.Words);
+
+  // Choice widgets: several controls can share one integer at different
+  // shifts, which is the thing about `flags` that surprises people.
+  for(sInt i=0;i<p.Widgets.GetCount();i++)
+  {
+    const wMetaWidget *w = p.Widgets[i];
+    sString<512> line2;
+    line2.PrintF(L"            widget shift %-2d mask 0x%08x  ",w->Shift,sU32(w->Mask));
+    for(sInt k=0;k<w->Choices.GetCount();k++)
+    {
+      if(k)
+        line2.Add(L" | ");
+      sString<64> one;
+      one.PrintF(L"%s=%d",w->Choices[k].Label,w->Choices[k].Value);
+      line2.Add(one);
+    }
+    sPrintF(L"%s\n",line2);
+  }
+}
+
+static void Describe(wMetaLibrary &meta,const sChar *what)
+{
+  const wMetaClass *c = meta.Find(what);
+  if(!c)
+  {
+    sPrintF(L"wz4gen: no metadata for <%s>\n",what);
+    sPrintF(L"        try \"OutputType.ClassName\", or wz4gen list\n");
+    sSetErrorCode();
+    return;
+  }
+
+  sPrintF(L"%s.%s\n",c->OutputType,c->Name);
+  sPrintF(L"  tab %s, column %d%s\n",c->TabType,c->Column,
+    c->HasCode ? L"" : L", no code body");
+
+  if(c->Flags.GetCount())
+  {
+    sString<256> f;
+    f.PrintF(L"  flags");
+    for(sInt i=0;i<c->Flags.GetCount();i++)
+    {
+      f.Add(L" ");
+      f.Add(c->Flags[i]);
+    }
+    sPrintF(L"%s\n",f);
+  }
+
+  sPrintF(L"  %d parameter word(s), %d string(s)\n\n",c->ParaWords,c->ParaStrings);
+
+  if(c->Params.GetCount()==0)
+  {
+    sPrintF(L"  (no parameters)\n");
+    return;
+  }
+
+  for(sInt i=0;i<c->Params.GetCount();i++)
+    DescribeParam(*c->Params[i]);
+
+  // The word budget and the parameters should agree. They come from different
+  // fields of the same emitter, so a mismatch means the metadata is wrong —
+  // worth saying out loud rather than leaving a reader to notice.
+  sInt used = 0;
+  for(sInt i=0;i<c->Params.GetCount();i++)
+    if(c->Params[i]->Space==wMS_WORDS)
+      used += c->Params[i]->Words;
+  if(used!=c->ParaWords)
+    sPrintF(L"\n  note: parameters account for %d of %d word(s)"
+            L" — the rest is padding\n",used,c->ParaWords);
+}
+
+/****************************************************************************/
+/***                                                                      ***/
+/***   checkmeta — read the whole metadata and check it hangs together     ***/
+/***                                                                      ***/
+/****************************************************************************/
+
+// opsmeta validates what it emits; this validates it from the CONSUMER side,
+// which is a different question. It is also the first thing that reads the
+// schema in anger, and a schema is only proven useful once something does.
+
+static void CheckMeta(wMetaLibrary &meta)
+{
+  sInt problems = 0;
+  sInt classes = 0;
+  sInt params = 0;
+  sInt padded = 0;
+  sInt choices = 0;
+  sInt unnamed = 0;
+  sInt arrays = 0;
+
+  for(sInt ci=0;ci<meta.GetClassCount();ci++)
+  {
+    const wMetaClass *c = meta.GetClass(ci);
+    classes++;
+
+    if(c->Name.IsEmpty())
+    {
+      sPrintF(L"  FAIL class %d has no name\n",ci);
+      problems++;
+    }
+    if(c->OutputType.IsEmpty())
+    {
+      sPrintF(L"  FAIL %s has no output type\n",c->Name);
+      problems++;
+    }
+
+    // Word accounting. Parameters may legitimately leave gaps — "padding"
+    // reserves words for future use and produces no parameter at all — so a
+    // shortfall is a note, but an OVERRUN means the metadata contradicts
+    // itself.
+    sInt used = 0;
+    sInt maxend = 0;
+
+    for(sInt pi=0;pi<c->Params.GetCount();pi++)
+    {
+      const wMetaParam *p = c->Params[pi];
+      params++;
+
+      // A missing symbol is legal in the DSL: `label "Edit";`,
+      // `action "Invert" (1);` and even `fileout "Filename";` give a label and
+      // no name (parse.cpp:623-637 makes both optional). So this is not an
+      // error — but a parameter that OWNS STORAGE and has no name cannot be
+      // addressed by name, which the .wz4t reader will have to handle with a
+      // label fallback. Counted, not failed.
+      if(p->Symbol.IsEmpty() && p->Space!=wMS_NONE)
+      {
+        unnamed++;
+        if(sGetShellSwitch(L"verbose"))
+          sPrintF(L"  note %s.%s: %s at %s %d has a label (\"%s\") but no symbol\n",
+            c->OutputType,c->Name,p->Kind,SpaceName(p->Space),p->Offset,p->Label);
+      }
+
+      if(p->Space==wMS_WORDS)
+      {
+        if(!p->Continues)
+        {
+          used += p->Words;
+          maxend = sMax(maxend,p->Offset+p->Words);
+        }
+
+        if(p->Offset<0)
+        {
+          sPrintF(L"  FAIL %s.%s %s: word space but offset %d\n",
+            c->OutputType,c->Name,p->Symbol,p->Offset);
+          problems++;
+        }
+      }
+
+      if(p->Space==wMS_STRINGS && p->Offset>=c->ParaStrings)
+      {
+        sPrintF(L"  FAIL %s.%s %s: string %d of %d\n",
+          c->OutputType,c->Name,p->Symbol,p->Offset,c->ParaStrings);
+        problems++;
+      }
+
+      // A continues parameter must land on a word some earlier parameter owns.
+      if(p->Continues)
+      {
+        const wMetaParam *owner = c->FindParam(p->Symbol);
+        if(!owner || owner->Continues)
+        {
+          sPrintF(L"  FAIL %s.%s %s: continues but owns nothing\n",
+            c->OutputType,c->Name,p->Symbol);
+          problems++;
+        }
+        else if(owner->Offset!=p->Offset)
+        {
+          sPrintF(L"  FAIL %s.%s %s: continues at word %d, owner at %d\n",
+            c->OutputType,c->Name,p->Symbol,p->Offset,owner->Offset);
+          problems++;
+        }
+      }
+
+      // Every choice must sit inside its widget's mask once shifted, or the
+      // editor would write bits that belong to a neighbour.
+      for(sInt wi=0;wi<p->Widgets.GetCount();wi++)
+      {
+        const wMetaWidget *w = p->Widgets[wi];
+        for(sInt k=0;k<w->Choices.GetCount();k++)
+        {
+          choices++;
+          sInt bits = w->Choices[k].Value << w->Shift;
+          if((bits & ~w->Mask)!=0)
+          {
+            sPrintF(L"  FAIL %s.%s %s: choice %s = %d at shift %d escapes mask 0x%08x\n",
+              c->OutputType,c->Name,p->Symbol,w->Choices[k].Label,
+              w->Choices[k].Value,w->Shift,sU32(w->Mask));
+            problems++;
+          }
+        }
+      }
+    }
+
+    if(maxend>c->ParaWords)
+    {
+      sPrintF(L"  FAIL %s.%s: parameters reach word %d but only %d declared\n",
+        c->OutputType,c->Name,maxend,c->ParaWords);
+      problems++;
+    }
+    else if(used<c->ParaWords)
+    {
+      padded++;
+    }
+
+    // The table widget's row, in its own word space.
+    if(c->Array)
+    {
+      arrays++;
+      sInt rowend = 0;
+      for(sInt pi=0;pi<c->Array->Params.GetCount();pi++)
+      {
+        const wMetaParam *p = c->Array->Params[pi];
+        params++;
+        if(p->Space==wMS_WORDS && !p->Continues)
+          rowend = sMax(rowend,p->Offset+p->Words);
+      }
+      if(rowend>c->ArrayWords)
+      {
+        sPrintF(L"  FAIL %s.%s: array row reaches word %d but only %d declared\n",
+          c->OutputType,c->Name,rowend,c->ArrayWords);
+        problems++;
+      }
+    }
+  }
+
+  sPrintF(L"  %d class(es), %d parameter(s), %d choice value(s)\n",
+    classes,params,choices);
+  sPrintF(L"  %d class(es) with a table widget\n",arrays);
+  sPrintF(L"  %d class(es) with reserved words (padding)\n",padded);
+  sPrintF(L"  %d storage-bearing parameter(s) with no symbol"
+          L" (need a label fallback; -verbose to list)\n",unnamed);
+  sPrintF(L"  %d problem(s)\n",problems);
+
+  if(problems)
+    sSetErrorCode();
+}
+
+/****************************************************************************/
+/***                                                                      ***/
 /***   identity — does a document survive a load/save by this build?       ***/
 /***                                                                      ***/
 /****************************************************************************/
@@ -487,6 +848,39 @@ void sMain()
       ListDocument(file);
     else
       ListRegistered();
+  }
+  else if(sCmpString(command,L"describe")==0 || sCmpString(command,L"checkmeta")==0)
+  {
+    sBool check = sCmpString(command,L"checkmeta")==0;
+    const sChar *what = sGetShellParameter(0,1);
+    const sChar *dir = sGetShellParameter(L"meta",0);
+    if(!dir)
+      dir = WZ4GEN_META_DIR;
+
+    if(!check && !what)
+    {
+      sPrint(L"usage: wz4gen describe <ClassName|OutputType.ClassName> [-meta <dir>]\n");
+      sSetErrorCode();
+    }
+    else
+    {
+      wMetaLibrary meta;
+      if(!meta.LoadDirectory(dir))
+      {
+        sPrintF(L"wz4gen: %s\n",meta.GetError());
+        sPrintF(L"        metadata comes from opsmeta; build it, or pass -meta <dir>\n");
+        sSetErrorCode();
+      }
+      else if(check)
+      {
+        sPrintF(L"checkmeta: %s\n",dir);
+        CheckMeta(meta);
+      }
+      else
+      {
+        Describe(meta,what);
+      }
+    }
   }
   else if(sCmpString(command,L"identity")==0)
   {

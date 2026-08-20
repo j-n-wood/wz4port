@@ -401,10 +401,30 @@ target_compile_options(headless_core_gate PRIVATE
 ##  wz4gen — headless CLI (phase 3)                                        ##
 #############################################################################
 
+# wz4t — our text format and the runtime side of the metadata.
+#
+# The phase plan called these wz4port/libwz4core/wz4t_*.cpp. They are a separate
+# target instead: `wz4core` is upstream sources compiled in place, and mixing
+# our code into it would blur the isolation seam. Nothing else changes.
+
+add_library(wz4t STATIC
+  "${CMAKE_CURRENT_SOURCE_DIR}/wz4t/json.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/wz4t/meta.cpp"
+)
+target_include_directories(wz4t PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/wz4t")
+target_link_libraries(wz4t PUBLIC wz4core)
+target_compile_options(wz4t PRIVATE
+  "SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/tests/gui_poison.h"
+)
+
 add_executable(wz4gen "${CMAKE_CURRENT_SOURCE_DIR}/tools/wz4gen/main.cpp")
-target_link_libraries(wz4gen PRIVATE wz4core)
+target_link_libraries(wz4gen PRIVATE wz4t)
 target_compile_options(wz4gen PRIVATE
   "SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/tests/gui_poison.h"
+)
+# So the tool works with no arguments from a normal build.
+target_compile_definitions(wz4gen PRIVATE
+  "WZ4GEN_META_DIR=L\"${WZ4_META_DIR}\""
 )
 
 # Every .wz4 document in the tree must load. This is the cheapest available
@@ -443,6 +463,14 @@ foreach(_doc ${WZ4_DOCS})
 endforeach()
 
 file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/roundtrip")
+
+# Read the whole metadata back and check it hangs together from the consumer
+# side — offsets inside their declared budget, `continues` landing on a word its
+# owner declares, every choice value fitting its widget's mask. opsmeta
+# validates what it writes; this validates what can be read, which is a
+# different question, and it is what proves the schema is actually usable.
+add_test(NAME checkmeta COMMAND wz4gen checkmeta -meta "${WZ4_META_DIR}")
+set_tests_properties(checkmeta PROPERTIES DEPENDS opsmeta_gate)
 
 #############################################################################
 ##  core_connect — the phase 2 gate                                        ##

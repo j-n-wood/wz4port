@@ -160,9 +160,64 @@ the six documents, **817 `GenBitmap` operators** become reachable once phase 4 r
 
 ### 3.1 — Reader
 
-Parse `.wz4t` into an in-memory `wDocument`, resolving class names and validating parameter
-names and value kinds against the phase 2 metadata. Errors must name the line and the
-parameter — this is a format humans write, so diagnostics matter more than usual.
+**Split in two.** The `.wz4t` reader cannot resolve a parameter without knowing its kind,
+offset and space, and — measured — **`wClass` does not carry that**. It has `ParaWords` and
+`ParaStrings`, a *budget*, and nothing else; parameter names, kinds and offsets only ever
+existed inside the generated `MakeGui`, which `-headless` omits (`patches/05`).
+
+So the metadata from stage 2.3 is not a convenience for this phase. It is the only description
+of a parameter that survives headless, and it has to be readable at runtime before the text
+reader can exist.
+
+#### 3.1a — metadata at runtime — **done**
+
+`wz4port/wz4t/` — a new target, not `libwz4core/wz4t_*.cpp` as the plan said: `wz4core` is
+upstream sources compiled in place, and mixing our code into it would blur the isolation seam.
+
+- `json.{hpp,cpp}` — a small general JSON reader. General rather than shaped to this one
+  schema because the ImGui editor will read the same files and would otherwise duplicate it.
+- `meta.{hpp,cpp}` — `wMetaLibrary`: classes, parameters, the three offset spaces, choice
+  widgets with shift and mask, and the table widget.
+- `wz4gen describe <class>` — the parameter description `wClass` cannot give. Brought forward
+  from 3.4 because it is the natural demonstration.
+- `wz4gen checkmeta` — validates the whole metadata **from the consumer side**.
+
+**Gate — passed.** `checkmeta` over all 33 modules: **370 classes, 2,728 parameters, 3,282
+choice values, 13 table widgets, 0 problems.**
+
+The parameter count is the interesting number: **2,728 matches opsmeta's own count exactly**,
+producer and consumer arrived at independently. It did not at first — the reader was silently
+ignoring the `array` block and reported 2,667. A 61-parameter discrepancy between two counts
+that should agree is precisely the kind of thing that goes unnoticed for a phase, so the
+reader now loads array rows too. (The choice-value counts differ legitimately: opsmeta
+cross-checks 2,729 of the 3,282 because it skips labels that are ambiguous within their
+option string.)
+
+Two things `checkmeta` checks that opsmeta cannot, because they are questions about what a
+*reader* needs: that a `continues` parameter lands on a word its owner actually declares, and
+that every choice value fits inside its widget's mask once shifted — a choice escaping its
+mask would have the editor writing bits belonging to a neighbouring control.
+
+#### Findings for 3.1b
+
+- **One storage-bearing parameter in the whole corpus has no symbol.**
+  `TextObject.TextExport`'s `fileout "Filename";` gives a label and no name — legal, since
+  `parse.cpp:623-637` makes both optional. It cannot be addressed by name, so the reader needs
+  a label fallback. Exactly one case, so this is bounded.
+- **9 classes leave words unaccounted for.** `padding` reserves words and produces no
+  parameter at all (`parse.cpp:462-475`), so gaps are expected and a shortfall is not an
+  error. An *overrun* would be, and there are none.
+- My first version of the check demanded a symbol from every parameter and reported four
+  failures. All four were legitimate DSL usage — `label "Edit";`, `action "Invert" (1);` and
+  the `fileout` above. **The check was wrong, not the metadata.**
+
+#### 3.1b — the `.wz4t` reader itself
+
+Parse into a `wDocument`, resolving class names through `wMetaLibrary` and validating
+parameter names and value kinds against it. Errors must name the line and the parameter.
+
+This is a format humans write, so diagnostics matter more than usual: an error must say which
+line and which parameter, and a misspelled parameter name must not be silently ignored.
 
 **Gate:** a hand-written three-operator case parses and its derived connections are correct.
 
@@ -193,7 +248,9 @@ to the subgraphs whose classes we have registered.
 
 ## Deliverables
 
-- `wz4port/libwz4core/wz4t_read.cpp`, `wz4t_write.cpp`
+- `wz4port/wz4t/` — `json`, `meta` (done), plus `wz4t_read`, `wz4t_write`.
+  The plan said `wz4port/libwz4core/wz4t_*.cpp`; it is a separate `wz4t` target instead,
+  because `wz4core` is upstream sources compiled in place
 - `wz4port/tools/wz4gen/`
 - The `.wz4t` grammar, documented and frozen
 - Round-trip test over the bundled documents

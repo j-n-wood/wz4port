@@ -4,12 +4,13 @@ Read this first when picking the project up cold. It records where things
 stand, what has been decided and why, and what would otherwise have to be
 rediscovered the hard way.
 
-**Last updated:** phase 3, stage 3.3 + the class-identity fix.
-**Status:** Phases 1 and 2 complete and verified. The operator runtime links and
-runs headless. **Phase 3 stage 3.3 done first (out of order, deliberately): all
-six bundled `.wz4` documents load** — 7,090 operators, 111 pages — confirming the
-phase-2 serialisation surgery preserved the format. A destructive-write bug found
-there is fixed (`patches/07`). Stages 3.1 (reader) and 3.2 (writer) next.
+**Last updated:** phase 3, stage 3.1a.
+**Status:** Phases 1 and 2 complete and verified; the operator runtime links and
+runs headless. Phase 3: **3.3 done** (all six bundled `.wz4` documents load —
+7,090 operators), **the destructive-write bug fixed** (`patches/07`), and
+**3.1a done** — the operator metadata is readable at runtime and validated from
+the consumer side (370 classes, 2,728 parameters, 0 problems). Next is 3.1b, the
+`.wz4t` reader itself.
 
 ---
 
@@ -51,7 +52,7 @@ about the build.
 | 0 — Documentation (`docs/00`–`02`) | **Done**, reviewed and approved |
 | 1 — Toolchain and portable base | **Done**, gate passed |
 | 2 — Headless op runtime + metadata | **Done**, phase gate passed |
-| 3 — Text graph format + CLI | **In progress.** 3.3 done (first, deliberately). 3.1/3.2 next |
+| 3 — Text graph format + CLI | **In progress.** 3.3 and 3.1a done. 3.1b (the reader) next |
 | 4 — Texture library + tests | Not started |
 | 5 — Texture GUI | Not started |
 | 6 — Geometry | Not started |
@@ -82,10 +83,12 @@ Clean build from scratch: **0 errors**. Warnings are expected and benign
 | `headless_ops_gate` | Generates and compiles both op modules `-headless`, GUI poisoned |
 | `opsmeta_gate` | Emits + validates metadata for all 33 `.ops` modules into `build/meta/` |
 | **`wz4core`** | **The operator runtime, GUI-free: doc, build, basic, script, generated basic_ops** |
-| `wz4gen` | The headless CLI. `list` works; `describe`/`convert`/`render` are phase 3 |
+| `wz4t` | **Ours.** JSON reader + the runtime metadata model. `.wz4t` read/write to come |
+| `wz4gen` | The headless CLI: `list`, `identity`, `describe`, `checkmeta`. `convert`/`render` to come |
 | `core_connect` | Phase 2 gate: links `wz4core`, derives a graph from geometry (`ctest`) |
 | `load_*` (6 tests) | Every bundled `.wz4` document must load and be non-empty (`ctest`) |
 | `identity_*` (6 tests) | And survive a load/save/reload with every class intact (`ctest`) |
+| `checkmeta` | The metadata reads back consistently: 370 classes, 2,728 params (`ctest`) |
 | `simd_parity` | Verifies all 43 SSE2 intrinsics against scalar models |
 
 `simd_parity`: **70,184 checks, 0 failures** on arm64 via sse2neon.
@@ -122,7 +125,10 @@ wz4port/
   tools/opsmeta/               phase 2 stage 2.3 — .ops -> metadata JSON
     main.cpp  emit.cpp  json.cpp
     opsmeta.hpp  json.hpp
-  tools/wz4gen/main.cpp        phase 3 — the headless CLI: list, identity
+  tools/wz4gen/main.cpp        phase 3 — the CLI: list, identity, describe, checkmeta
+  wz4t/                        phase 3 — ours: JSON + runtime metadata
+    json.hpp  json.cpp         a small general JSON reader, plus wFormatFloat
+    meta.hpp  meta.cpp         wMetaLibrary — what wClass cannot tell you
   tests/
     simd_parity.cpp
     headless_core.cpp          phase 2 stage 2.1 gate
@@ -626,11 +632,49 @@ Retaining the class name made the question answerable. Across the six documents,
 `Wz4Render` 1,299 (out of scope), **`GenBitmap` 624**, materials 779 (out of
 scope). A real corpus, not a token one.
 
+### Done: 3.1a — the metadata is readable at runtime
+
+The reader stage split in two, because of a measurement: **`wClass` does not
+know its own parameters.** It carries `ParaWords`/`ParaStrings` — a budget — and
+nothing else. Names, kinds and offsets only ever existed in the generated
+`MakeGui`, which `-headless` omits. So the stage-2.3 metadata is not a
+convenience for the text format; it is the only parameter description that
+survives headless, and it had to become readable first.
+
+New target `wz4t` (not `libwz4core/wz4t_*.cpp` as the plan said — `wz4core` is
+upstream sources compiled in place, and mixing ours in would blur the isolation
+seam): a small general JSON reader, and `wMetaLibrary`. General JSON on purpose
+— the ImGui editor reads the same files and would otherwise duplicate it.
+
+`wz4gen describe` shows what `wClass` cannot. `wz4gen checkmeta` validates the
+whole metadata **from the consumer side**: 370 classes, 2,728 parameters, 3,282
+choice values, 13 table widgets, **0 problems**.
+
+**The parameter count is the result worth noting: 2,728 matches opsmeta's own
+count exactly**, reached independently by producer and consumer. It did not at
+first — the reader silently ignored the `array` block and said 2,667. Two counts
+that should agree disagreeing by 61 is how a phase-long bug starts, so the
+reader now loads array rows too.
+
+`checkmeta` asks two things opsmeta cannot, both reader questions: does a
+`continues` parameter land on a word its owner actually declares, and does every
+choice value fit its widget's mask once shifted (a choice escaping its mask would
+have the editor writing a neighbour's bits).
+
+**My first version of the check was wrong**, not the metadata: it demanded a
+symbol from every parameter and failed on `label "Edit";`, `action "Invert" (1);`
+and `fileout "Filename";` — all legal, since the DSL makes both label and name
+optional.
+
+Findings for 3.1b: exactly **one** storage-bearing parameter in the whole corpus
+has no symbol (`TextObject.TextExport`'s `fileout`), so the reader needs a label
+fallback for a single bounded case; and 9 classes leave words unaccounted for,
+which is `padding` reserving them and is expected.
+
 ### Still to use from phase 2
 
-- **The metadata is the parameter vocabulary.** `.wz4t` needs to name parameters
-  and values; `build/meta/*.json` already carries every symbol, kind, choice
-  label and default. Read it rather than re-deriving.
+- ~~The metadata is the parameter vocabulary.~~ Done in 3.1a — and it turned out
+  to be mandatory rather than convenient.
 - **`sCheckBreakKey` wants a SIGINT handler.** `wz4port/compat/altona_missing.cpp`
   returns 0 today. Making it report a `SIGINT` flag is how Ctrl+C should
   interrupt a long generation from the CLI, and the executive already polls it

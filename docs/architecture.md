@@ -109,6 +109,7 @@ Enforced by the build — breaking these fails compilation and names the file:
 | Connection-from-geometry behaves as documented | `core_connect`'s 14 checks against `01-existing-model.md` §2.2 |
 | The `.wz4` document format still reads | `load_*` — all six bundled documents, non-empty, via `ctest` |
 | A load/save by this build does not damage a document | `identity_*` — class identity tally preserved, all six documents |
+| The metadata reads back consistently | `checkmeta` — offsets, `continues` owners, choice masks, all 33 modules |
 
 Enforced only by discipline — nothing catches a regression:
 
@@ -705,6 +706,60 @@ The first classification attempt keyed on the message and mislabelled the
 `MakeTexture` failures as "the ones that matter". Diagnostics that a human will
 act on need the residual to be genuinely residual, or the number gets ignored.
 
+### A28 · The metadata is mandatory, not a convenience — standing
+
+*Phase 3.1a.* `wClass` carries `ParaWords` and `ParaStrings` — a *budget* — and
+knows nothing else about its parameters. No names, no kinds, no offsets. That
+description only ever existed inside the generated `MakeGui`, which `-headless`
+omits (A11).
+
+So anything that turns text into parameter words needs the stage-2.3 metadata.
+It is not an editor convenience that happened to arrive early; it is **the only
+parameter description that survives headless**, and everything above the runtime
+depends on it. That reframes 2.3 from "a deliverable for the editor" to "the
+layer the CLI and the editor both stand on".
+
+Consequence for structure: `wz4port/wz4t/` holds a *general* JSON reader rather
+than one shaped to this schema, because the ImGui editor reads the same files and
+would otherwise reimplement it.
+
+### A29 · Validate a format from the consumer side too — standing
+
+*Phase 3.1a.* `opsmeta` validates what it writes (A16). `wz4gen checkmeta`
+validates what can be *read*, which is a different question, and it caught
+something opsmeta could not: the reader was silently skipping the `array` block,
+so it saw 2,667 parameters where the emitter had written 2,728.
+
+**Two counts that should agree, disagreeing by 61, with neither side
+complaining** — that is how a bug survives a whole phase. The fix was to load
+array rows; the lesson is that a producer's self-check and a consumer's
+self-check are not substitutes.
+
+`checkmeta` also asks two questions only a reader would think to ask: does a
+`continues` parameter land on a word its owner actually declares, and does every
+choice value fit inside its widget's mask once shifted. A choice escaping its
+mask would have the editor writing bits belonging to a neighbouring control.
+
+A schema is only proven useful once something reads it in anger. 370 classes,
+2,728 parameters, 3,282 choice values, 0 problems — and the parameter count now
+matches the emitter's exactly.
+
+### A30 · `sArray::AddMany` does not construct — standing hazard
+
+*Phase 3.1a, found by segfault.* Altona's `sArray::AddMany` returns **raw
+memory**: no constructors run. `AddManyInit` is no better — it does
+`r[i] = Type()`, an *assignment* into uninitialised storage, so for any element
+that owns memory `operator=` reads garbage pointers.
+
+An `sArray<T>` where `T` contains an `sArray` therefore cannot be filled with
+`AddMany`. It compiles, and it crashes.
+
+The rule for our code: **element types that own storage are held by pointer**
+(`sArray<T *>`, `new T`), with an explicit destructor loop. Plain-old-data
+elements — ints, `sPoolString` (a bare pointer), `sString<n>` (a fixed buffer) —
+are safe with `AddMany` provided every field is assigned before it is read,
+which is why `opsmeta` and `wz4gen`'s tally structs are fine.
+
 ---
 
 ## Part 3 — where inference lost to measurement
@@ -727,6 +782,9 @@ adopted because of this list.
 | Conditionals will be the awkward part of the metadata | Already lowered by the parser. The awkward parts were three offset spaces and a float formatter (A20, A18, A21) |
 | Grepping the `.ops` files gives a widget census | It counted commented-out operators and missed modifiers in non-canonical order. The parser's own answer differs substantially (A17) |
 | Altona's `%f` can be trusted for a data file | Renders `4.0f` as `4.00000023` (A18) |
+| Altona's `%g` exists | It does not. An unknown format falls through to PrintInt, so `0.125` printed as `0` (A18) |
+| `wClass` describes its own parameters | It carries a word budget and nothing else (A28) |
+| `sArray::AddMany` constructs its elements | Raw memory. `AddManyInit` assigns into raw memory. Both crash on element types owning storage (A30) |
 | `doc.cpp` has 16 GUI-touching lines | It contains all ~840 lines of `wPaintInfo`. Third time a line count understated coupling (A22) |
 | Extracting a declaration is enough to decouple | It compiles; it does not link. The definitions needed extracting too (A23) |
 | `script.cpp` might be excludable | `wExecutive::Execute` drives `ScriptContext` directly (A19) |
