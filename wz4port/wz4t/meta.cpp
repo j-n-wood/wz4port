@@ -75,6 +75,23 @@ const wMetaParam *wMetaClass::FindParam(const sChar *symbol) const
 
 /****************************************************************************/
 
+void wGatherWidgets(const wMetaClass *mc,const wMetaParam *owner,
+  sArray<const wMetaWidget *> &out)
+{
+  for(sInt i=0;i<mc->Params.GetCount();i++)
+  {
+    const wMetaParam *p = mc->Params[i];
+    if(p->Symbol!=owner->Symbol)
+      continue;
+    if(p->Space!=wMS_WORDS || p->Offset!=owner->Offset)
+      continue;
+    for(sInt k=0;k<p->Widgets.GetCount();k++)
+      out.AddTail(p->Widgets[k]);
+  }
+}
+
+/****************************************************************************/
+
 static sInt SpaceFromName(const sChar *name)
 {
   if(sCmpString(name,L"words")==0)   return wMS_WORDS;

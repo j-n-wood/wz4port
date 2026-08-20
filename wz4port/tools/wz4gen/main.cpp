@@ -16,6 +16,8 @@
 
 #include "wz4lib/doc_core.hpp"
 #include "wz4lib/basic_ops.hpp"
+#include "wz4frlib/wz3_bitmap_ops.hpp"
+#include "wz4frlib/wz3_bitmap_code.hpp"    // GenBitmap, for render
 #include "base/system.hpp"
 #include "meta.hpp"
 #include "json.hpp"               // wFormatFloat — Altona has no %g
@@ -30,14 +32,18 @@
 /****************************************************************************/
 
 // wDocument's constructor calls this; it is the seam that chooses which
-// operator libraries exist. Only `basic` for now — the texture and geometry
-// modules arrive in phases 4 and 6.
+// operator libraries exist.
+//
+// Order matters: wz3_bitmap's GenBitmap derives from basic's BitmapBase, so
+// basic has to register its types first. sREGOPS runs types on pass 0 and
+// operators on pass 1, which is what makes cross-module inheritance work.
 
 void RegisterWZ4Classes()
 {
-  for(sInt i=0;i<2;i++)           // two passes: types first, then operators
+  for(sInt i=0;i<2;i++)
   {
     sREGOPS(basic,0);
+    sREGOPS(wz3_bitmap,0);
   }
 }
 
@@ -947,6 +953,7 @@ void sMain()
     // texture library to evaluate and an image writer to save.
     const sChar *file = sGetShellParameter(0,1);
     const sChar *which = sGetShellParameter(L"op",0);
+    const sChar *out = sGetShellParameter(L"out",0);
     const sChar *dir = sGetShellParameter(L"meta",0);
     if(!dir)
       dir = WZ4GEN_META_DIR;
@@ -985,9 +992,44 @@ void sMain()
       {
         sPrintF(L"%s: %s.%s\n",which,
           op->Class->OutputType->Symbol,op->Class->Name);
-        sPrintF(L"wz4gen: render arrives in phase 4 — this build has no "
-                L"texture library to evaluate and no image writer\n");
-        sSetErrorCode();
+
+        // Evaluate. This runs the connection builder, the command list and the
+        // executive, then the operator's own code body — the first time
+        // anything in this port actually executes a generator.
+        wObject *obj = Doc->CalcOp(op);
+        if(!obj)
+        {
+          sPrintF(L"wz4gen: evaluation produced nothing\n");
+          if(op->CalcErrorString)
+            sPrintF(L"        %s\n",op->CalcErrorString);
+          sSetErrorCode();
+        }
+        else
+        {
+          wType *bmtype = Doc->FindType(L"GenBitmap");
+          if(bmtype && obj->IsType(bmtype))
+          {
+            GenBitmap *bm = (GenBitmap *)obj;
+
+            // A generator that ran but wrote nothing looks the same as one that
+            // did not run, so say how much of the image is non-black.
+            sInt nonzero = 0;
+            for(sInt i=0;i<bm->Size;i++)
+              if(bm->Data[i]!=0)
+                nonzero++;
+
+            sPrintF(L"  %d x %d, %d of %d pixel(s) non-zero\n",
+              bm->XSize,bm->YSize,nonzero,bm->Size);
+          }
+          else
+          {
+            sPrintF(L"  produced a %s\n",obj->Type ? obj->Type->Symbol : L"?");
+          }
+
+          if(out)
+            sPrintF(L"wz4gen: writing images arrives in stage 4.2\n");
+          obj->Release();
+        }
       }
     }
   }

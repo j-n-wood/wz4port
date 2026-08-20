@@ -54,7 +54,7 @@ Conversion out via `CopyTo(sImage*)` (8-bit RGBA) and `CopyTo(sImageI16*)`.
 
 ## Stages
 
-### 4.1 — Build `libwz4tex`
+### 4.1 — Build `libwz4tex` — **done**
 
 Compile `wz3_bitmap_code.cpp` + `genvector.cpp` + generated `wz3_bitmap_ops` against
 `libwz4core`, using the SIMD shim.
@@ -68,7 +68,46 @@ Two operators are stubbed initially and revisited in stage 4.5:
 Also note `Bitmap_Inner` is declared `__stdcall` (`wz3_bitmap_code.cpp:17`) but is plain C++;
 the calling convention is meaningless on both targets and is simply dropped.
 
-**Gate:** `libwz4tex` compiles and links headlessly on macOS arm64.
+**Gate — passed.** Target is `wz4tex`; recorded as `wz4port/patches/08-texture-library.md`.
+It compiles, links, and **runs**: `wz4gen render` evaluates an operator and reports its size
+and non-zero pixel count. `Flat`, `Perlin`, `Cell` and `Blur` each produce a full 64×64 bitmap
+from `tests/tex/smoke.wz4t` — the first time this port has executed a generator. Four `ctest`
+cases, failing on `1 x 1` or `0 of` so an operator that runs but writes nothing cannot pass.
+
+All 34 `GenBitmap` operators register. `example.wz4`'s unknown-class count drops 4,687 → 3,854,
+and all six phase-3 document round trips still pass, now comparing far more real parameters.
+
+The survey's dependency measurement held: three MSVC-isms (`__assume`, `__stdcall`,
+`__forceinline`) went into the force-included compat header as shims, and the only upstream
+change was one line — `<emmintrin.h>` → `"simd_compat.hpp"`, because the real header
+hard-errors on arm64.
+
+`GenBitmap::Text` is stubbed behind `#if !WZ4PORT_HAVE_SFONT2D`, leaving the bitmap untouched
+so a graph containing it still evaluates. `LoadAtlas` needed no stub.
+
+#### Found here, and it blocks part of 4.3: `.wz4t` cannot express parameter arrays
+
+`Gradient`'s colour stops live in a `array { float Pos; color Color; }` block, and the format
+has no syntax for array rows — `02-target-model.md` §4 never defined one. A `Gradient` with no
+rows renders black, which is what the smoke test showed before the case was changed.
+
+Scope is bounded: **two** of the 34 texture operators use arrays, `Gradient` and `Vector`.
+Corpus-wide it is 13 classes. So 32 operators can have real cases in 4.3 without this, but
+those two cannot, and `Gradient` is too central to leave out.
+
+Needs a grammar addition before 4.3 — rows inside the operator block, something like
+
+```
+op GenBitmap.Gradient at 0,0 size 3x1 {
+  Size = 256, 256
+  row { Pos = 0    Color = #ff000000 }
+  row { Pos = 1    Color = #ffffffff }
+}
+```
+
+with `row` distinguished from the existing top-level `row` block by context. The metadata
+already carries the array descriptor and its row parameters (`wMetaArray`, read in 3.1a), so
+the reader and writer have everything they need.
 
 ### 4.2 — `wz4gen render` for bitmaps
 

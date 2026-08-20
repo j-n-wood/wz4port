@@ -134,6 +134,18 @@ struct wMetaClass
 
 /****************************************************************************/
 
+// Every widget that touches one parameter's word, in declaration order.
+//
+// A `continue flags` parameter declares further widgets on a word an earlier
+// parameter owns, so the widgets of one integer are spread across several
+// wMetaParam entries. Both the reader and the writer need the whole set: the
+// reader to assign `Size = 256, 256` one value per widget, the writer to decode
+// the word back without dropping the continued bits.
+void wGatherWidgets(const wMetaClass *mc,const wMetaParam *owner,
+  sArray<const wMetaWidget *> &out);
+
+/****************************************************************************/
+
 class wMetaLibrary
 {
   sArray<wMetaClass *> Classes;

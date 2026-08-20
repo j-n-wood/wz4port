@@ -71,5 +71,36 @@
 #endif  // __APPLE__
 
 /****************************************************************************/
+/***   MSVC-isms                                                          ***/
+/****************************************************************************/
+
+// __assume(false) marks an unreachable default: case. MSVC-only; clang spells
+// the same promise __builtin_assume. Used once, at
+// wz4frlib/wz3_bitmap_code.cpp:637, in the inner loop of the Perlin generator,
+// where it lets the compiler drop a bounds check.
+//
+// A macro here rather than a patch: the meaning is identical on both compilers
+// and there is nothing to explain at the call site.
+#ifndef __assume
+#define __assume(x)  __builtin_assume(x)
+#endif
+
+// MSVC's forced inline. Altona spells this sINLINE and only maps it to
+// __forceinline on the MSVC branch (base/types.hpp:292); wz4frlib/genvector.cpp
+// writes the raw keyword instead. `inline` is the honest translation — clang's
+// always_inline would change codegen, not just naming.
+#ifndef __forceinline
+#define __forceinline  inline
+#endif
+
+// The Windows calling convention, meaningless on both of this port's targets.
+// wz3_bitmap_code.cpp writes the raw keyword on six functions rather than
+// Altona's own sSTDCALL, which base/types.hpp:573 already defines empty for
+// POSIX. Dropping it changes nothing about how the code runs.
+#if !defined(_WIN32) && !defined(__stdcall)
+#define __stdcall
+#endif
+
+/****************************************************************************/
 
 #endif  // FILE_WZ4PORT_POSIX_COMPAT_H

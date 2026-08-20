@@ -37,7 +37,7 @@ that was reversed is more useful than one silently replaced.
                        └─────────────────────────────────────────┘
                                           │
                        ┌─────────────────────────────────────────┐
-  phase 4+             │  libwz4tex   ·   libwz4geo              │
+  phase 4 ▸ / 6        │  wz4tex ✓ (34 ops)   ·   libwz4geo      │
                        └─────────────────────────────────────────┘
                                           │
                        ┌─────────────────────────────────────────┐
@@ -111,6 +111,7 @@ Enforced by the build — breaking these fails compilation and names the file:
 | The choice decomposition agrees with Altona | `opsmeta` cross-check against `sFindFlag`, 2,729 values |
 | Every conditional symbol resolves | `opsmeta` errors rather than emitting `offset: -1` |
 | The operator runtime links and runs with no GUI | `core_connect` (`ctest`), against `wz4core` built with the poison |
+| The texture engine evaluates to a real bitmap | `tex_smoke_*` — four operators, failing on `1 x 1` or `0 of` |
 | Connection-from-geometry behaves as documented | `core_connect`'s 14 checks against `01-existing-model.md` §2.2 |
 | The `.wz4` document format still reads | `load_*` — all six bundled documents, non-empty, via `ctest` |
 | A load/save by this build does not damage a document | `identity_*` — class identity tally preserved, all six documents |
@@ -867,6 +868,43 @@ The resolution is a flag, `wWZ4T_ALLOWUNKNOWN`, **off by default**:
 Same input, same parser, opposite correct answers — so leniency belongs to the
 *caller's intent*, not to the format. Worth remembering when the editor loads a
 user's document (lenient) versus a regression case (strict).
+
+### A36 · A packed choice word takes one value per control, and labels win — standing
+
+*Phase 4.1.* `GenBitmap.Size` is a single `flags` word holding **two** controls,
+at shifts 0 and 8, each offering the labels `"1"` … `"8192"`. That one parameter
+breaks two naive assumptions at once:
+
+- **`Size = 64, 64` is two values for one word**, not two words. The reader
+  assigns comma-separated values positionally, one per control — which is what
+  `02-target-model.md` §4.2 showed all along. It also dissolves the label
+  ambiguity that the writer previously had to bail out of (A16): each value
+  resolves within its own control, so two controls sharing a label is fine.
+- **A numeric label is a label, not a number.** Label `"64"` has control value 6.
+  So a bare `64` in the text means the label, and the writer must always emit the
+  **label** — emitting the raw value 3 for `"8"` would read back as label `"8"`
+  and silently change the texture size.
+
+Both rules are shared between reader and writer through one `wGatherWidgets`
+helper, because getting them to disagree is exactly how a round trip corrupts
+data while looking fine.
+
+### A37 · Check for a local definition before extracting a "missing" symbol — standing
+
+*Phase 4.1.* `genvector.cpp` produced eight errors: two "unknown type name
+`__forceinline`" and six "use of undeclared identifier `sMulShift12`". I searched
+the tree, found `sMulShift12` defined only as a file-local function in a
+*different* translation unit (`util/rasterizer.cpp`), concluded the file had
+never compiled, and started designing a header extraction.
+
+Both helpers were defined in `genvector.cpp` itself, ten lines above the first
+use. Clang could not parse the definitions because the return type was preceded
+by an unknown keyword, so the call sites failed too. **One cause, eight errors,
+and the six loudest pointed at the wrong file.**
+
+The habit worth keeping: fix the *first* error and re-run before believing the
+rest. The same shape appeared in phase 2 — patch 02's five bogus "private
+member" errors all came from one rejected friend declaration.
 
 ---
 

@@ -39,6 +39,12 @@ struct wValue
   sInt I;
   sPoolString S;
 
+  // The token's source text, for every kind. Choice labels in this corpus are
+  // often numeric — GenBitmap.Size offers "1".."8192" — so `Size = 64, 64`
+  // arrives as integers while meaning the LABEL "64", whose control value is 6.
+  // Without the text there is no way to tell that from a raw 64.
+  sPoolString Text;
+
   wValue() { IsString = 0; IsFloat = 0; F = 0; I = 0; }
 };
 
@@ -250,6 +256,8 @@ sBool wWz4tReader::Value(wValue &out)
 
   if(Scan.Token==sTOK_INT)
   {
+    if(!negative)
+      out.Text = sPoolString(Scan.ValueString);
     out.I = Scan.ScanInt();
     out.F = sF32(out.I);
     if(negative)
@@ -263,6 +271,8 @@ sBool wWz4tReader::Value(wValue &out)
   if(Scan.Token==sTOK_FLOAT)
   {
     out.IsFloat = 1;
+    if(!negative)
+      out.Text = sPoolString(Scan.ValueString);
     // Not Scan.ScanFloat(): it is not correctly rounded and loses a ULP, which
     // showed up as a document round trip changing 0x3f9e9828 to 0x3f9e9827.
     // ValueString is the token's exact source text. See wParseFloat.
@@ -284,6 +294,7 @@ sBool wWz4tReader::Value(wValue &out)
   {
     out.IsString = 1;
     Scan.ScanString(out.S);
+    out.Text = out.S;
     return 1;
   }
 
@@ -291,6 +302,7 @@ sBool wWz4tReader::Value(wValue &out)
   {
     out.IsString = 1;
     Scan.ScanName(out.S);
+    out.Text = out.S;
     return 1;
   }
 
@@ -306,7 +318,7 @@ sBool wWz4tReader::Value(wValue &out)
 sBool wWz4tReader::Apply(wStackOp *op,const wMetaClass *mc,const wMetaParam *p,
   sArray<wValue> &values)
 {
-  // How many slots does this parameter actually have?
+  // How many values may this parameter take?
   sInt slots = 1;
   if(p->Layout==wML_VECTOR || p->Layout==wML_ARRAY)
     slots = p->Count;
@@ -314,6 +326,16 @@ sBool wWz4tReader::Apply(wStackOp *op,const wMetaClass *mc,const wMetaParam *p,
   if(p->Kind==L"string" || p->Kind==L"filein" || p->Kind==L"fileout"
     || p->Kind==L"char" || p->Kind==L"link")
     slots = 1;
+
+  // A choice parameter is one word, but it can hold several controls at
+  // different shifts — so it accepts one value per control. See the widget
+  // branch below.
+  if(p->Widgets.GetCount()>0)
+  {
+    sArray<const wMetaWidget *> widgets;
+    wGatherWidgets(mc,p,widgets);
+    slots = sMax(1,widgets.GetCount());
+  }
 
   if(values.GetCount()>slots)
   {
@@ -378,27 +400,80 @@ sBool wWz4tReader::Apply(wStackOp *op,const wMetaClass *mc,const wMetaParam *p,
     return 1;
   }
 
-  // flags / radio / strobe: an identifier names a choice, and several choices
-  // from different widgets combine into one integer. An integer is accepted
-  // too, because not every choice has a name.
+  // flags / radio / strobe. One word, but often SEVERAL controls packed into it
+  // at different shifts — and `continue flags` can add more from a separate
+  // declaration, so the full set comes from wGatherWidgets.
+  //
+  // Two forms, and the distinction is what makes `Size = 256, 256` work:
+  //
+  //   several values  positional, one per widget, each resolved WITHIN its own
+  //                   widget. That is the form docs/02 §4.2 uses, and it is
+  //                   unambiguous even when two widgets share a label — which
+  //                   Size does, twice over, with "1".."8192" in both.
+  //   one value       searched across every widget, or taken as a raw integer.
+  //                   Convenient for a single-control parameter.
   if(p->Widgets.GetCount()>0)
   {
+    sArray<const wMetaWidget *> widgets;
+    wGatherWidgets(mc,p,widgets);
+
     sInt acc = 0;
-    for(sInt vi=0;vi<values.GetCount();vi++)
+
+    if(values.GetCount()>1)
     {
-      if(!values[vi].IsString)
+      if(values.GetCount()>widgets.GetCount())
       {
-        acc |= values[vi].I;
-        continue;
+        sString<512> msg;
+        msg.PrintF(L"%s has %d control(s), got %d value(s)",
+          p->Symbol,widgets.GetCount(),values.GetCount());
+        Fail(msg);
+        return 0;
       }
 
-      sBool found = 0;
-      for(sInt wi=0;wi<p->Widgets.GetCount() && !found;wi++)
+      for(sInt vi=0;vi<values.GetCount();vi++)
       {
-        const wMetaWidget *w = p->Widgets[wi];
+        const wMetaWidget *w = widgets[vi];
+
+        // A label match wins over a raw number. `Size = 64, 64` therefore means
+        // the choice labelled "64" (control value 6), which is what an author
+        // writing it intends. Where a label happens to equal its own value —
+        // "2" = 2 in Blur's Passes — the two readings agree anyway.
+        sInt v = 0;
+        sBool found = 0;
         for(sInt k=0;k<w->Choices.GetCount() && !found;k++)
         {
-          if(w->Choices[k].Label==values[vi].S)
+          if(w->Choices[k].Label==values[vi].Text)
+          {
+            v = w->Choices[k].Value;
+            found = 1;
+          }
+        }
+
+        if(!found)
+        {
+          if(values[vi].IsString)
+          {
+            sString<512> msg;
+            msg.PrintF(L"%s control %d has no choice called \"%s\"; options are \"%s\"",
+              p->Symbol,vi,values[vi].S,p->Options);
+            Fail(msg);
+            return 0;
+          }
+          v = values[vi].I;       // a plain control value
+        }
+
+        acc |= (v << w->Shift) & w->Mask;
+      }
+    }
+    else
+    {
+      sBool found = 0;
+      for(sInt wi=0;wi<widgets.GetCount() && !found;wi++)
+      {
+        const wMetaWidget *w = widgets[wi];
+        for(sInt k=0;k<w->Choices.GetCount() && !found;k++)
+        {
+          if(w->Choices[k].Label==values[0].Text)
           {
             acc |= (w->Choices[k].Value << w->Shift) & w->Mask;
             found = 1;
@@ -408,13 +483,18 @@ sBool wWz4tReader::Apply(wStackOp *op,const wMetaClass *mc,const wMetaParam *p,
 
       if(!found)
       {
-        sString<512> msg;
-        msg.PrintF(L"%s has no choice called \"%s\"; options are \"%s\"",
-          p->Symbol,values[vi].S,p->Options);
-        Fail(msg);
-        return 0;
+        if(values[0].IsString)
+        {
+          sString<512> msg;
+          msg.PrintF(L"%s has no choice called \"%s\"; options are \"%s\"",
+            p->Symbol,values[0].S,p->Options);
+          Fail(msg);
+          return 0;
+        }
+        acc = values[0].I;        // the whole word, as written
       }
     }
+
     op->EditS()[p->Offset] = acc;
     return 1;
   }

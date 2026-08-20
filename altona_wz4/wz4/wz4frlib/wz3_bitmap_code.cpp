@@ -8,7 +8,11 @@
 #include "wz4frlib/wz3_bitmap_code.hpp"
 #include "wz4frlib/wz3_bitmap_ops.hpp"
 #include "genvector.hpp"
-#include <emmintrin.h>
+// Was <emmintrin.h>. On arm64 that header hard-errors ("only meant to be used
+// on x86 and x64 architecture"), so this goes through the port's shim, which
+// selects sse2neon there and the real intrinsics everywhere else.
+// See wz4port/compat/include/simd_compat.hpp and wz4port/patches/08.
+#include "simd_compat.hpp"
 
 /****************************************************************************/
 
@@ -2500,6 +2504,18 @@ void GenBitmap::Downsample(GenBitmap *in,sInt flags)
 
 void GenBitmap::Text(sF32 x,sF32 y,sF32 width,sF32 height,sU32 col,sU32 flags,sF32 lineskip,const sChar *text,const sChar *fontname)
 {
+#if !WZ4PORT_HAVE_SFONT2D
+  // Everything below needs Altona's sFont2D — an OS font wrapper with GDI and
+  // X11 backends and none for macOS — plus a 2D render target this build never
+  // creates. wz4port stubs it so the other 36 texture operators can be built
+  // and tested; a FreeType implementation lands in phase 4 stage 4.5.
+  //
+  // Leaves the bitmap untouched rather than failing, so a graph containing a
+  // Text operator still evaluates and everything downstream of it can be seen.
+  // See wz4port/patches/08.
+  (void)x; (void)y; (void)width; (void)height; (void)col; (void)flags;
+  (void)lineskip; (void)text; (void)fontname;
+#else
   sU32 *bitmem;
 
   sInt xi,yi,i;
@@ -2589,6 +2605,7 @@ void GenBitmap::Text(sF32 x,sF32 y,sF32 width,sF32 height,sU32 col,sU32 flags,sF
 
   delete font;
   sRender2DEnd();
+#endif  // WZ4PORT_HAVE_SFONT2D
 }
 
 /****************************************************************************/

@@ -1,0 +1,63 @@
+wz4t 1
+
+// Stage 4.1 smoke test: does the texture engine actually execute?
+//
+// Three generators and one filter, each producing something that cannot be
+// mistaken for an empty bitmap. Small on purpose — this is about the pipeline
+// running, not about coverage; the per-operator suite is stage 4.3.
+
+page "smoke"
+
+// A solid colour. If this comes out empty, nothing works.
+stack at 0,0 {
+  op GenBitmap.Flat {
+    name = flat
+    Size = 64, 64
+    Color = #ff4080c0
+  }
+}
+
+// Perlin noise with an explicit seed, so it is reproducible.
+stack at 4,0 {
+  op GenBitmap.Perlin {
+    name = noise
+    Size = 64, 64
+    Frequency = 4
+    Octaves = 3
+    Seed = 1
+  }
+}
+
+// Voronoi cells: a second, quite different generator path.
+//
+// Gradient would be the obvious third choice and is deliberately NOT here: its
+// colour stops live in a parameter array, and .wz4t has no syntax for array
+// rows yet. It renders black until that lands. Only Gradient and Vector are
+// affected, out of 34 texture operators.
+stack at 8,0 {
+  op GenBitmap.Cell {
+    name = cells
+    Size = 64, 64
+    Color0 = #ff204080
+    Color1 = #ffc0e0ff
+    Max = 24
+    Seed = 3
+  }
+}
+
+// And a filter over the noise, which is where the SSE2/NEON code lives.
+// Blur has no Size of its own — it takes the input's, like every filter here.
+stack at 12,0 {
+  op GenBitmap.Perlin {
+    Size = 64, 64
+    Frequency = 4
+    Octaves = 3
+    Seed = 1
+  }
+  op GenBitmap.Blur {
+    name = blurred
+    Passes = 2
+    Blur = 0.05, 0.05
+    Amplify = 1
+  }
+}

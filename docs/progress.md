@@ -4,12 +4,12 @@ Read this first when picking the project up cold. It records where things
 stand, what has been decided and why, and what would otherwise have to be
 rediscovered the hard way.
 
-**Last updated:** end of phase 3.
-**Status:** Phases 1, 2 and 3 complete and verified. **The phase 3 gate passes:
-`.wz4` → `.wz4t` → `.wz4` over all six bundled documents preserves every
-operator's identity, geometry and store name, every parameter of every
-registered operator, and reproduces the re-derived connection lists exactly.**
-`ctest` is 24 tests. Phase 4 (texture library and test suite) not started.
+**Last updated:** phase 4, stage 4.1.
+**Status:** Phases 1–3 complete and verified. **Phase 4 stage 4.1 done: the
+texture library builds, links and RUNS.** All 34 `GenBitmap` operators register
+and `wz4gen render` evaluates them — `Flat`, `Perlin`, `Cell` and `Blur` each
+produce a full 64×64 bitmap. First time this port has executed a generator.
+`ctest` is 28 tests. Next: `.wz4t` array syntax (see below), then 4.2.
 
 ---
 
@@ -52,7 +52,7 @@ about the build.
 | 1 — Toolchain and portable base | **Done**, gate passed |
 | 2 — Headless op runtime + metadata | **Done**, phase gate passed |
 | 3 — Text graph format + CLI | **Done**, phase gate passed |
-| 4 — Texture library + tests | **Next** |
+| 4 — Texture library + tests | **In progress.** 4.1 done, gate passed |
 | 5 — Texture GUI | Not started |
 | 6 — Geometry | Not started |
 | 7 — Animated geometry | Not started |
@@ -82,6 +82,8 @@ Clean build from scratch: **0 errors**. Warnings are expected and benign
 | `headless_ops_gate` | Generates and compiles both op modules `-headless`, GUI poisoned |
 | `opsmeta_gate` | Emits + validates metadata for all 33 `.ops` modules into `build/meta/` |
 | **`wz4core`** | **The operator runtime, GUI-free: doc, build, basic, script, generated basic_ops** |
+| **`wz4tex`** | **The texture engine: wz3_bitmap_code + genvector + generated ops** |
+| `tex_smoke_*` (4) | Stage 4.1 gate: four operators evaluate to a full bitmap (`ctest`) |
 | `wz4t` | **Ours.** JSON, the runtime metadata model, and the `.wz4t` reader + writer |
 | `wz4t_read` | Stage 3.1b gate: a hand-written case parses and connects (`ctest`) |
 | `wz4t_round_*` (2) | Stage 3.2 gate: read→write→read preserves every word (`ctest`) |
@@ -123,6 +125,7 @@ wz4port/
     05-wz4ops-headless.md      phase 2 stage 2.2
     06-doc-cpp-headless.md     phase 2 stage 2.4
     07-retain-foreign-class.md phase 3 — stop writes destroying unknown ops
+    08-texture-library.md      phase 4 stage 4.1
   compat/altona_missing.cpp    sCheckBreakKey — an upstream POSIX gap
   tools/opsmeta/               phase 2 stage 2.3 — .ops -> metadata JSON
     main.cpp  emit.cpp  json.cpp
@@ -135,6 +138,7 @@ wz4port/
     wz4t_read.cpp  wz4t_write.cpp
   tests/cases/three_ops.wz4t   stage 3.1b: geometry and connections
   tests/cases/values.wz4t      stage 3.2: value kinds, escapes, non-ASCII text
+  tests/tex/smoke.wz4t         stage 4.1: does the texture engine execute?
   tests/
     simd_parity.cpp
     headless_core.cpp          phase 2 stage 2.1 gate
@@ -149,14 +153,14 @@ wz4port/
 
 ## Upstream footprint
 
-**59 files** (`git diff --name-only 8c8f82c -- altona_wz4`, **run after
+**60 files** (`git diff --name-only 8c8f82c -- altona_wz4`, **run after
 staging** — `git diff` does not see untracked files, which is how an earlier
 count came out at 56 and missed three additions).
 
 The isolation invariant is that `git status` on `altona_wz4/` must never show
 anything not listed in `wz4port/patches/`.
 
-Five categories, worth keeping distinct. Only the last three — 27 files — are
+Six categories, worth keeping distinct. Only the last four — 28 files — are
 structural; the other 32 are inert (30 encoding-only, 2 genuine clang errors).
 
 **Code changes — 2 files, 5 lines.** Both genuine C++ errors under clang, not
@@ -220,6 +224,14 @@ build that does not know every module cannot damage a document.
 ```
  M wz4lib/doc_core.hpp   ForeignClass / ForeignType
  M wz4lib/doc.cpp        set on substitution, used on write, copied by CopyFrom
+```
+
+**Texture library — 1 file.** `patches/08`. Everything else the pixel engine
+needed became a shim in `wz4port/compat/`.
+
+```
+ M wz4frlib/wz3_bitmap_code.cpp   <emmintrin.h> -> "simd_compat.hpp";
+                                 GenBitmap::Text guarded pending FreeType
 ```
 
 **Encoding only — 30 files, 72 characters.** Latin-1 → UTF-8, verified
@@ -776,6 +788,55 @@ for a reason nobody would think to look for in the *scanner*.
 **Rule of thumb now established twice over: for anything numeric or textual
 crossing a format boundary, do not use Altona's conversions.** `wFormatFloat`
 and `wParseFloat` in `wz4t/json.hpp` are the ones to use.
+
+---
+
+## Phase 4 — texture library
+
+Full plan in `docs/06-phase-texture.md`.
+
+### Done: 4.1 — `wz4tex` builds, links and runs
+
+`patches/08`. The 3,578-line pixel engine needed exactly what the survey said:
+three MSVC-isms as shims in the force-included compat header (`__assume`,
+`__stdcall`, `__forceinline`) and **one** upstream line —
+`<emmintrin.h>` → `"simd_compat.hpp"`, because the real header hard-errors on
+arm64 and takes `xmmintrin.h`/`mmintrin.h` with it.
+
+`GenBitmap::Text` is stubbed behind `#if !WZ4PORT_HAVE_SFONT2D` (no `sFont2D`
+backend for macOS); it leaves the bitmap untouched so a graph containing it still
+evaluates. Stage 4.5 implements it on FreeType.
+
+**The engine runs.** All 34 `GenBitmap` operators register; `wz4gen render`
+evaluates one and reports its size and non-zero pixel count. Registering the
+module also dropped `example.wz4`'s unknown-class count 4,687 → 3,854, and all
+six phase-3 round trips still pass — now comparing far more real parameters.
+
+### Blocking part of 4.3: `.wz4t` has no array syntax
+
+`Gradient`'s colour stops live in a parameter array, and the format never defined
+row syntax — a `Gradient` with no rows renders black, which is how this was
+found. **Two** of 34 texture operators are affected (`Gradient`, `Vector`); 13
+classes corpus-wide. The metadata already carries the array descriptor
+(`wMetaArray`, from 3.1a), so reader and writer have what they need. Sketch and
+reasoning in `06` §4.1.
+
+### Three diagnosis lessons from 4.1
+
+- **`__forceinline` produced eight errors, six of which named the wrong file.**
+  "use of undeclared identifier `sMulShift12`" sent me hunting for missing
+  helpers in `util/rasterizer.cpp`; they were defined in `genvector.cpp` itself,
+  ten lines above, behind a keyword clang could not parse. Check whether a
+  "missing" symbol is defined locally before extracting anything.
+- **`Size = 64, 64` is two values for ONE word.** `Size` is a `flags` parameter
+  with two controls packed at shifts 0 and 8, so the reader now assigns
+  comma-separated values positionally, one per control — which is what `02` §4.2
+  always showed. It also removes the label ambiguity, since each value resolves
+  within its own control.
+- **A numeric choice label beats a raw number.** `Size`'s labels are `"1"` …
+  `"8192"` and label `"64"` has control value 6. So a bare `64` means the label,
+  and the writer always emits the label rather than the value — writing `8` for
+  value 3 would read back as label `"8"`, a different size.
 
 ### Still to use from phase 2
 

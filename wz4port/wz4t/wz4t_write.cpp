@@ -29,6 +29,18 @@ static sBool IsBareName(const sChar *s)
   return 1;
 }
 
+// Digits only, so the reader lexes it as one integer token and its text still
+// matches the label. "64" qualifies; "16 Samples" and "1/2" do not.
+static sBool IsPlainNumber(const sChar *s)
+{
+  if(!s || !*s)
+    return 0;
+  for(;*s;s++)
+    if(*s<'0' || *s>'9')
+      return 0;
+  return 1;
+}
+
 static void PrintQuoted(sTextBuffer &out,const sChar *s)
 {
   out.PrintChar('"');
@@ -56,90 +68,62 @@ static void PrintFloat(sTextBuffer &out,sF32 v)
 
 /****************************************************************************/
 
-// A flags parameter's integer can be shared: `continue flags` declares more
-// widgets on a word an earlier parameter owns. To decode the word into labels
-// we need EVERY widget that touches it, not just the owner's — otherwise the
-// continued bits would be silently dropped on write.
-static void GatherWidgets(const wMetaClass *mc,const wMetaParam *owner,
-  sArray<const wMetaWidget *> &out)
-{
-  for(sInt i=0;i<mc->Params.GetCount();i++)
-  {
-    const wMetaParam *p = mc->Params[i];
-    if(p->Symbol!=owner->Symbol)
-      continue;
-    if(p->Space!=wMS_WORDS || p->Offset!=owner->Offset)
-      continue;
-    for(sInt k=0;k<p->Widgets.GetCount();k++)
-      out.AddTail(p->Widgets[k]);
-  }
-}
-
-// True if `label` names exactly one choice across all these widgets. An
-// ambiguous label cannot be written, because the reader resolves the first
-// match and would pick the wrong widget. "-" as a blank entry is the usual
-// case; see docs/architecture.md A16.
-static sBool LabelIsUnique(sArray<const wMetaWidget *> &widgets,
-  const sChar *label)
-{
-  sInt seen = 0;
-  for(sInt i=0;i<widgets.GetCount();i++)
-    for(sInt k=0;k<widgets[i]->Choices.GetCount();k++)
-      if(widgets[i]->Choices[k].Label==label)
-        seen++;
-  return seen==1;
-}
-
-// Renders a packed integer as choice labels, or fails so the caller can fall
-// back to writing the number.
+// Renders a packed integer as one value per control, comma separated —
+// `Size = 256, 256`, matching docs/02 §4.2 and what the reader assigns
+// positionally. Positional means a label shared by two controls (Size uses
+// "1".."8192" in both of its) is no longer ambiguous, so labels can be written
+// where before this had to fall back to a number.
+//
+// Returns 0 if the word cannot be expressed that way at all, so the caller can
+// write the raw integer instead.
 static sBool PrintChoices(sTextBuffer &out,const wMetaClass *mc,
   const wMetaParam *p,sInt value)
 {
   sArray<const wMetaWidget *> widgets;
-  GatherWidgets(mc,p,widgets);
+  wGatherWidgets(mc,p,widgets);
   if(widgets.GetCount()==0)
     return 0;
 
-  sTextBuffer tb;
-  sInt written = 0;
+  // Any bit outside every control's mask would be lost on the way back.
   sInt covered = 0;
+  for(sInt i=0;i<widgets.GetCount();i++)
+    covered |= widgets[i]->Mask;
+  if((value & ~covered)!=0)
+    return 0;
 
+  sTextBuffer tb;
   for(sInt i=0;i<widgets.GetCount();i++)
   {
     const wMetaWidget *w = widgets[i];
     sInt v = (value & w->Mask) >> w->Shift;
-    covered |= w->Mask;
 
     const wMetaChoice *match = 0;
     for(sInt k=0;k<w->Choices.GetCount();k++)
       if(w->Choices[k].Value==v)
         match = &w->Choices[k];
 
-    if(!match)
-      return 0;                   // a value with no name: write the number
+    if(i)
+      tb.Print(L", ");
 
-    // A zero-valued blank entry contributes nothing, so leave it out rather
-    // than emitting "-|sin".
-    if(v==0)
-      continue;
-
-    if(!LabelIsUnique(widgets,match->Label))
-      return 0;
-    if(!IsBareName(match->Label))
-      return 0;                   // quoting works, but the number reads better
-
-    if(written)
-      tb.Print(L"|");
-    tb.Print(match->Label);
-    written++;
+    // Always the LABEL when the control has one, because the reader resolves a
+    // label before a number and the two can disagree: Size's label "8" is
+    // control value 3, so writing the raw 3 would read back as label "3" — a
+    // different size. Quoted when the label is neither a bare name nor a plain
+    // number, so it still lexes as one token.
+    if(match)
+    {
+      if(IsBareName(match->Label) || IsPlainNumber(match->Label))
+        tb.Print(match->Label);
+      else
+        PrintQuoted(tb,match->Label);
+    }
+    else
+    {
+      sString<32> num;
+      num.PrintF(L"%d",v);
+      tb.Print(num);
+    }
   }
-
-  // Any bit set outside every mask would be lost.
-  if((value & ~covered)!=0)
-    return 0;
-
-  if(!written)
-    tb.Print(L"0");               // all widgets at their blank entry
 
   out.Print(tb.Get());
   return 1;

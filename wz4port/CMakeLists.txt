@@ -398,6 +398,35 @@ target_compile_options(headless_core_gate PRIVATE
 )
 
 #############################################################################
+##  wz4tex — the texture library (phase 4)                                 ##
+#############################################################################
+
+# wz3_bitmap_code.cpp is the whole 3,578-line pixel engine: no graphics API, no
+# GUI, no Win32, and one external dependency — <emmintrin.h>, which goes through
+# compat/include/simd_compat.hpp and lands on sse2neon here. genvector.cpp is
+# the scanline rasteriser behind the Vector operator.
+#
+# GenBitmap::Text is stubbed: it needs Altona's sFont2D, which has GDI and X11
+# backends and none for macOS. Define WZ4PORT_HAVE_SFONT2D=1 once
+# compat/font_freetype.cpp exists (stage 4.5).
+
+add_library(wz4tex STATIC
+  "${WZ4_DIR}/wz4frlib/wz3_bitmap_code.cpp"
+  "${WZ4_DIR}/wz4frlib/genvector.cpp"
+  "${GENHL_BITMAP}"
+)
+target_include_directories(wz4tex PUBLIC
+  "${WZ4_GENHL_DIR}"
+  "${WZ4_DIR}"
+  "${WZ4_DIR}/wz4frlib"           # genvector.hpp is included unqualified
+  "${CMAKE_CURRENT_SOURCE_DIR}/third_party"
+)
+target_link_libraries(wz4tex PUBLIC wz4core)
+target_compile_options(wz4tex PRIVATE
+  "SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/tests/gui_poison.h"
+)
+
+#############################################################################
 ##  wz4gen — headless CLI (phase 3)                                        ##
 #############################################################################
 
@@ -420,7 +449,7 @@ target_compile_options(wz4t PRIVATE
 )
 
 add_executable(wz4gen "${CMAKE_CURRENT_SOURCE_DIR}/tools/wz4gen/main.cpp")
-target_link_libraries(wz4gen PRIVATE wz4t)
+target_link_libraries(wz4gen PRIVATE wz4t wz4tex)
 target_compile_options(wz4gen PRIVATE
   "SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/tests/gui_poison.h"
 )
@@ -526,6 +555,24 @@ foreach(_doc ${WZ4_DOCS})
     "${CMAKE_BINARY_DIR}/roundtrip/${_name}.wz4t"
     "${CMAKE_BINARY_DIR}/roundtrip/${_name}_back.wz4")
   set_tests_properties(docround_${_name} PROPERTIES DEPENDS opsmeta_gate)
+endforeach()
+
+#############################################################################
+##  tex_smoke — the stage 4.1 gate                                         ##
+#############################################################################
+
+# libwz4tex compiles, links, and actually runs: four generators/filters
+# evaluate to a non-empty bitmap of the requested size. wz4gen render reports
+# how many pixels are non-zero, so an operator that runs but writes nothing
+# fails rather than looking the same as one that ran.
+
+foreach(_op flat noise cells blurred)
+  add_test(NAME tex_smoke_${_op} COMMAND wz4gen render
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/tex/smoke.wz4t"
+    -op ${_op} -meta "${WZ4_META_DIR}")
+  set_tests_properties(tex_smoke_${_op} PROPERTIES
+    DEPENDS opsmeta_gate
+    FAIL_REGULAR_EXPRESSION "0 of|1 x 1")
 endforeach()
 
 #############################################################################
