@@ -110,6 +110,7 @@ Enforced by the build — breaking these fails compilation and names the file:
 | The `.wz4` document format still reads | `load_*` — all six bundled documents, non-empty, via `ctest` |
 | A load/save by this build does not damage a document | `identity_*` — class identity tally preserved, all six documents |
 | The metadata reads back consistently | `checkmeta` — offsets, `continues` owners, choice masks, all 33 modules |
+| `.wz4t` parses, connects, and refuses bad input | `wz4t_read` — 19 checks, 6 of them rejections |
 
 Enforced only by discipline — nothing catches a regression:
 
@@ -760,6 +761,36 @@ elements — ints, `sPoolString` (a bare pointer), `sString<n>` (a fixed buffer)
 are safe with `AddMany` provided every field is assigned before it is read,
 which is why `opsmeta` and `wz4gen`'s tally structs are fine.
 
+### A31 · A reader that accepts anything is worse than none — standing
+
+*Phase 3.1b.* `.wz4t` exists to hold test cases a reviewer can read. If the
+parser silently ignored a misspelled parameter name, the case would quietly test
+the operator's *default* instead of the value the author wrote, and it would pass
+for the wrong reason forever.
+
+So the reader refuses, and the gate tests the refusals as first-class cases: a
+missing header, an unknown version, an unknown class, a misspelled parameter,
+too many values for a parameter, an op with no position. Six of the nineteen
+checks in `wz4t_read` are about rejection.
+
+The general point for the phases that follow: for a format whose purpose is
+testing, **the error paths are part of the contract**, not an afterthought.
+
+### A32 · A fresh `wDocument` already owns a page — standing hazard
+
+*Phase 3.1b.* `wDocument`'s constructor calls `DefaultDoc()` (`doc.cpp:2514`,
+`:2609`), which appends one default-named page and connects. So a document is
+never empty, and reading a two-page file naively yields three pages.
+
+Caught in the reader; it matters for the **writer**. Unaddressed, a
+`.wz4` → `.wz4t` → `.wz4` round trip would gain a stray empty page on every pass
+— a slow corruption that a single round trip would not reveal. The reader now
+takes the default page over for the file's first `page`, provided it is still
+empty and untouched.
+
+Worth generalising: when a round trip is the acceptance criterion, **look for
+state the constructor creates**, not just state the format carries.
+
 ---
 
 ## Part 3 — where inference lost to measurement
@@ -785,6 +816,8 @@ adopted because of this list.
 | Altona's `%g` exists | It does not. An unknown format falls through to PrintInt, so `0.125` printed as `0` (A18) |
 | `wClass` describes its own parameters | It carries a word budget and nothing else (A28) |
 | `sArray::AddMany` constructs its elements | Raw memory. `AddManyInit` assigns into raw memory. Both crash on element types owning storage (A30) |
+| A hex colour literal is one token | `#08ff0000` is INT+NAME, `#1e500000` is a FLOAT. Reassembled from exact source text (3.1b) |
+| A fresh `wDocument` is empty | Its constructor calls `DefaultDoc()` and it already owns a page (A32) |
 | `doc.cpp` has 16 GUI-touching lines | It contains all ~840 lines of `wPaintInfo`. Third time a line count understated coupling (A22) |
 | Extracting a declaration is enough to decouple | It compiles; it does not link. The definitions needed extracting too (A23) |
 | `script.cpp` might be excludable | `wExecutive::Execute` drives `ScriptContext` directly (A19) |

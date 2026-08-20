@@ -1,0 +1,54 @@
+wz4t 1
+
+// Stage 3.1b gate: a hand-written case whose derived connections must be right.
+//
+// Nothing here states a connection. The geometry does it:
+//
+//        x: 0    3    6
+//     y=0    [ Text A ][ Text B ]     two 3-wide producers
+//     y=1    [    TextAdd     ]       6 wide, so it consumes both
+//     y=3    [    orphan      ]       a row's gap: connected to nothing
+//
+// `basic` is the only module registered, so these are TextObject operators —
+// the texture generators arrive in phase 4.
+
+page "gate"
+
+op TextObject.Text at 0,0 size 3x1 {
+  name = alpha
+  Text = "first"
+}
+
+op TextObject.Text at 3,0 size 3x1 {
+  name = beta
+  Text = "second"
+}
+
+// 6 wide, so it spans both producers above. Width is semantic.
+op TextObject.TextAdd at 0,1 size 6x1 {
+  name = joined
+}
+
+// One row below TextAdd's bottom edge, so nothing reaches it.
+op TextObject.Text at 0,3 size 3x1 {
+  name = orphan
+  Text = "unreachable"
+}
+
+// The sugar forms, on their own page. A stack chains top to bottom.
+page "sugar"
+
+stack at 2,0 {
+  op TextObject.Text { Text = "one" }
+  op TextObject.TextAdd { name = chained }
+}
+
+// And a row places operators side by side for a wide consumer below.
+row at 2,4 {
+  op TextObject.Text { Text = "left" }
+  op TextObject.Text { Text = "right" }
+}
+
+op TextObject.TextAdd at 2,5 size 6x1 {
+  name = rowsink
+}

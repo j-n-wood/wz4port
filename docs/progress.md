@@ -4,13 +4,13 @@ Read this first when picking the project up cold. It records where things
 stand, what has been decided and why, and what would otherwise have to be
 rediscovered the hard way.
 
-**Last updated:** phase 3, stage 3.1a.
+**Last updated:** phase 3, stage 3.1b.
 **Status:** Phases 1 and 2 complete and verified; the operator runtime links and
 runs headless. Phase 3: **3.3 done** (all six bundled `.wz4` documents load —
-7,090 operators), **the destructive-write bug fixed** (`patches/07`), and
-**3.1a done** — the operator metadata is readable at runtime and validated from
-the consumer side (370 classes, 2,728 parameters, 0 problems). Next is 3.1b, the
-`.wz4t` reader itself.
+7,090 operators), **the destructive-write bug fixed** (`patches/07`), **3.1a
+done** (metadata readable at runtime, validated from the consumer side), and
+**3.1b done — the `.wz4t` reader works**: a hand-written case parses and its
+connections are derived correctly from geometry alone. Next is 3.2, the writer.
 
 ---
 
@@ -52,7 +52,7 @@ about the build.
 | 0 — Documentation (`docs/00`–`02`) | **Done**, reviewed and approved |
 | 1 — Toolchain and portable base | **Done**, gate passed |
 | 2 — Headless op runtime + metadata | **Done**, phase gate passed |
-| 3 — Text graph format + CLI | **In progress.** 3.3 and 3.1a done. 3.1b (the reader) next |
+| 3 — Text graph format + CLI | **In progress.** 3.3, 3.1a, 3.1b done. 3.2 (writer) next |
 | 4 — Texture library + tests | Not started |
 | 5 — Texture GUI | Not started |
 | 6 — Geometry | Not started |
@@ -83,7 +83,8 @@ Clean build from scratch: **0 errors**. Warnings are expected and benign
 | `headless_ops_gate` | Generates and compiles both op modules `-headless`, GUI poisoned |
 | `opsmeta_gate` | Emits + validates metadata for all 33 `.ops` modules into `build/meta/` |
 | **`wz4core`** | **The operator runtime, GUI-free: doc, build, basic, script, generated basic_ops** |
-| `wz4t` | **Ours.** JSON reader + the runtime metadata model. `.wz4t` read/write to come |
+| `wz4t` | **Ours.** JSON reader, the runtime metadata model, and the `.wz4t` reader |
+| `wz4t_read` | Stage 3.1b gate: a hand-written case parses and connects (`ctest`) |
 | `wz4gen` | The headless CLI: `list`, `identity`, `describe`, `checkmeta`. `convert`/`render` to come |
 | `core_connect` | Phase 2 gate: links `wz4core`, derives a graph from geometry (`ctest`) |
 | `load_*` (6 tests) | Every bundled `.wz4` document must load and be non-empty (`ctest`) |
@@ -126,9 +127,11 @@ wz4port/
     main.cpp  emit.cpp  json.cpp
     opsmeta.hpp  json.hpp
   tools/wz4gen/main.cpp        phase 3 — the CLI: list, identity, describe, checkmeta
-  wz4t/                        phase 3 — ours: JSON + runtime metadata
+  wz4t/                        phase 3 — ours: JSON, metadata, the text format
     json.hpp  json.cpp         a small general JSON reader, plus wFormatFloat
     meta.hpp  meta.cpp         wMetaLibrary — what wClass cannot tell you
+    wz4t.hpp  wz4t_read.cpp    the .wz4t reader
+  tests/cases/three_ops.wz4t   the stage 3.1b case, hand-written
   tests/
     simd_parity.cpp
     headless_core.cpp          phase 2 stage 2.1 gate
@@ -670,6 +673,35 @@ Findings for 3.1b: exactly **one** storage-bearing parameter in the whole corpus
 has no symbol (`TextObject.TextExport`'s `fileout`), so the reader needs a label
 fallback for a single bounded case; and 9 classes leave words unaccounted for,
 which is `padding` reserving them and is expected.
+
+### Done: 3.1b — the `.wz4t` reader
+
+`wz4t/wz4t_read.cpp`. Resolves classes through the metadata, runs `SetDefaults`
+before applying settings so a file states only what it changes, and writes into
+whichever of the three offset spaces the parameter lives in.
+
+**Gate passed:** 19 checks, 0 failures. It checks the *derived graph*, not just
+that parsing worked — and it checks that the reader **refuses** a missing header,
+unknown version, unknown class, misspelled parameter, too many values, and an op
+with no position. A parser that accepts anything would let a hand-written case
+quietly test the defaults.
+
+**Two grammar decisions the spec left open**, both now recorded in `02` §4.2:
+
+- **Comments are `//`, not `#`.** The §4.2 example uses `#` as a trailing
+  comment marker on one line and as the colour prefix two lines later. Only one
+  can hold, and sScanner really does offer `#` comments, so the conflict was
+  live. Colours keep `#`.
+- **`#aarrggbb` works only because a hex run can be reassembled.** Measured:
+  `#ff8040c0` lexes as one NAME, `#08ff0000` as INT + NAME, `#1e500000` as a
+  **FLOAT**. All expose exact source text, so concatenating to eight hex digits
+  reconstructs the literal. Had that failed, the fallback was a quoted form.
+
+**Round-trip hazard found and closed early:** a freshly constructed `wDocument`
+already owns one empty page, because the constructor calls `DefaultDoc()`
+(`doc.cpp:2514`). Reading a two-page file gave *three* pages — which in 3.2
+would have meant a round trip gaining a stray page every pass. The reader now
+takes that default page over for the file's first `page`.
 
 ### Still to use from phase 2
 

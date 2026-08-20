@@ -211,15 +211,52 @@ mask would have the editor writing bits belonging to a neighbouring control.
   failures. All four were legitimate DSL usage — `label "Edit";`, `action "Invert" (1);` and
   the `fileout` above. **The check was wrong, not the metadata.**
 
-#### 3.1b — the `.wz4t` reader itself
+#### 3.1b — the `.wz4t` reader itself — **done**
 
-Parse into a `wDocument`, resolving class names through `wMetaLibrary` and validating
-parameter names and value kinds against it. Errors must name the line and the parameter.
+`wz4port/wz4t/wz4t_read.cpp`. Resolves classes through `wMetaLibrary` and `Doc->FindClass`,
+runs each operator's `SetDefaults` before applying settings — so a file only states what it
+changes — and writes values into the right one of the three offset spaces.
 
-This is a format humans write, so diagnostics matter more than usual: an error must say which
-line and which parameter, and a misspelled parameter name must not be silently ignored.
+**Gate — passed.** `wz4t_read` (a `ctest` case): 19 checks, 0 failures, over
+`tests/cases/three_ops.wz4t`. It checks the derived graph, not just that parsing succeeded —
+a 6-wide consumer under two 3-wide producers takes both in left-to-right order, a row's gap
+connects nothing, `stack{}` chains, `row{}` places side by side — and it checks that the
+reader **refuses** a missing header, an unknown version, an unknown class, a misspelled
+parameter, too many values, and an op with no position. A parser that accepts anything is
+worse than none here: a hand-written case would quietly test the defaults.
 
-**Gate:** a hand-written three-operator case parses and its derived connections are correct.
+#### Two grammar decisions the spec left open
+
+**Comments are `//`, not `#`.** §4.2's example uses `#` for a trailing comment on one line
+and for a colour literal (`#ff8040c0`) two lines later; both cannot hold. sScanner offers `#`
+comments as `sSF_NUMBERCOMMENT`, so the conflict is real rather than theoretical. The colour
+syntax is in §4.2's normative bullet list and comments are not mentioned at all, so `#`
+belongs to colours and comments are C-style.
+
+**`#aarrggbb` survives, but only because a hex run can be reassembled.** A colour is not one
+token. Measured, rather than assumed:
+
+| Written | Tokenises as |
+|---|---|
+| `#ff8040c0` | `#`, NAME `ff8040c0` |
+| `#08ff0000` | `#`, INT `08`, NAME `ff0000` |
+| `#00112233` | `#`, INT `00112233` |
+| `#1e500000` | `#`, **FLOAT** `1e500000` |
+
+All three token kinds expose their exact source text (`Name`, `ValueString`), so concatenating
+until eight hex digits are collected reconstructs the literal in every case. Had that not held,
+the fallback was a quoted `"#ff8040c0"`; it was not needed. `3x1` splits into INT and NAME
+`x1` and is handled the same way, with `3 x 1` also accepted.
+
+#### A round-trip hazard found and closed early
+
+**A freshly constructed `wDocument` already owns one empty page**: the constructor calls
+`DefaultDoc()` (`doc.cpp:2514`, `:2609`), which appends a default-named page and connects.
+Reading a two-page file therefore produced *three* pages.
+
+Left alone, that would have shown up in 3.2 as a round trip gaining a stray empty page on
+every pass. The reader now takes the default page over for the first `page` in the file rather
+than appending, provided it is still empty and untouched.
 
 ### 3.2 — Writer
 

@@ -1,0 +1,720 @@
+/****************************************************************************/
+/***                                                                      ***/
+/***   Reading .wz4t                                                      ***/
+/***                                                                      ***/
+/****************************************************************************/
+
+#include "wz4t.hpp"
+#include "json.hpp"               // wFormatFloat
+#include "wz4lib/doc_core.hpp"
+#include "util/scanner.hpp"
+#include "base/system.hpp"
+
+/****************************************************************************/
+
+enum
+{
+  TOK_HASH = sTOK_USER,           // '#' starts a colour literal
+};
+
+// Grammar decision, recorded because docs/02-target-model.md §4.2 is ambiguous
+// about it: comments are `//` and `/* */`, NOT `#`.
+//
+// The example in §4.2 uses `#` for a trailing comment on one line and for a
+// colour literal (`#ff8040c0`) two lines later. Both cannot be true.
+// sScanner offers `#` comments as sSF_NUMBERCOMMENT, so the choice is real —
+// and the colour syntax is in §4.2's normative bullet list while comments are
+// not mentioned at all. So `#` belongs to colours and comments are C-style.
+
+/****************************************************************************/
+
+// A parsed right-hand side. Kept deliberately loose: which of these fields
+// matters depends on the parameter's kind, and the metadata decides that, not
+// the syntax.
+struct wValue
+{
+  sBool IsString;
+  sBool IsFloat;
+  sF32 F;
+  sInt I;
+  sPoolString S;
+
+  wValue() { IsString = 0; IsFloat = 0; F = 0; I = 0; }
+};
+
+/****************************************************************************/
+
+class wWz4tReader
+{
+  sScanner Scan;
+  const wMetaLibrary *Meta;
+
+  wPage *Page;                    // current page, created on demand
+  sBool TookDefault;              // see AddPage
+  sInt Errors;
+
+  void Fail(const sChar *msg);
+
+  wPage *AddPage(sPoolString name);
+  wPage *NeedPage();
+  sBool Coord(sInt &x,sInt &y);
+  sBool Size(sInt &w,sInt &h);
+  sBool Colour(sU32 &out);
+  sBool Value(wValue &out);
+
+  sBool Op(sInt *stackx,sInt *stacky,sInt *rowx,sInt rowy);
+  sBool Settings(wStackOp *op,const wMetaClass *mc);
+  sBool Apply(wStackOp *op,const wMetaClass *mc,const wMetaParam *p,
+    sArray<wValue> &values);
+  sBool Block(const sChar *what);
+
+public:
+  wWz4tReader(const wMetaLibrary &meta);
+  sBool Run(const sChar *text,const sChar *sourcename);
+};
+
+/****************************************************************************/
+
+wWz4tReader::wWz4tReader(const wMetaLibrary &meta)
+{
+  Meta = &meta;
+  Page = 0;
+  TookDefault = 0;
+  Errors = 0;
+}
+
+void wWz4tReader::Fail(const sChar *msg)
+{
+  Scan.Error(L"%s",msg);
+  Errors++;
+}
+
+// A freshly constructed wDocument ALREADY OWNS one empty page: the constructor
+// calls DefaultDoc() (doc.cpp:2514, :2609), which appends one and connects.
+//
+// So the first page in a file takes that one over instead of appending. Without
+// this, reading a two-page file yields three pages, and a .wz4t round trip would
+// gain a stray empty page on every pass.
+wPage *wWz4tReader::AddPage(sPoolString name)
+{
+  if(!TookDefault
+    && Doc->Pages.GetCount()==1
+    && Doc->Pages[0]->Ops.GetCount()==0
+    && Doc->Pages[0]->Tree.GetCount()==0)
+  {
+    TookDefault = 1;
+    Page = Doc->Pages[0];
+  }
+  else
+  {
+    Page = new wPage;
+    Doc->Pages.AddTail(Page);
+  }
+
+  Page->Name = name;
+  Page->IsTree = 0;
+  if(!Doc->CurrentPage)
+    Doc->CurrentPage = Page;
+  return Page;
+}
+
+// A file with no explicit `page` still gets one, so a two-line case works.
+wPage *wWz4tReader::NeedPage()
+{
+  if(!Page)
+    AddPage(L"main");
+  return Page;
+}
+
+/****************************************************************************/
+
+sBool wWz4tReader::Coord(sInt &x,sInt &y)
+{
+  x = Scan.ScanInt();
+  Scan.Match(',');
+  y = Scan.ScanInt();
+  return !Scan.Errors;
+}
+
+// "3x1". The tokeniser splits that into INT(3) and NAME("x1") — verified, not
+// assumed — so the height arrives glued to an 'x'. "3 x 1" works too.
+sBool wWz4tReader::Size(sInt &w,sInt &h)
+{
+  w = Scan.ScanInt();
+
+  if(Scan.Token==sTOK_NAME)
+  {
+    sPoolString name;
+    Scan.ScanName(name);
+    const sChar *s = name;
+    if(*s!='x' && *s!='X')
+    {
+      Fail(L"expected <width>x<height>");
+      return 0;
+    }
+    s++;
+    if(*s==0)                     // "3 x 1"
+    {
+      h = Scan.ScanInt();
+    }
+    else                          // "3x1"
+    {
+      sInt v = 0;
+      if(!sScanInt(s,v))
+      {
+        Fail(L"expected <width>x<height>");
+        return 0;
+      }
+      h = v;
+    }
+  }
+  else
+  {
+    Fail(L"expected <width>x<height>");
+    return 0;
+  }
+
+  return !Scan.Errors;
+}
+
+// #aarrggbb. A hex run does not survive as one token: "08ff0000" lexes as
+// INT("08") + NAME("ff0000") and "1e500000" as a single FLOAT. All three token
+// kinds expose their exact source text, so the run is reassembled from that.
+// Measured against sScanner rather than assumed.
+sBool wWz4tReader::Colour(sU32 &out)
+{
+  sString<64> hex;
+  hex = L"";
+
+  while(sGetStringLen(hex)<8)
+  {
+    if(Scan.Token==sTOK_NAME)
+    {
+      hex.Add(Scan.Name);
+      Scan.Scan();
+    }
+    else if(Scan.Token==sTOK_INT || Scan.Token==sTOK_FLOAT)
+    {
+      hex.Add(Scan.ValueString);
+      Scan.Scan();
+    }
+    else
+    {
+      break;
+    }
+  }
+
+  if(sGetStringLen(hex)!=8)
+  {
+    Fail(L"a colour is '#' and exactly 8 hex digits, as #aarrggbb");
+    return 0;
+  }
+
+  sU32 v = 0;
+  for(sInt i=0;i<8;i++)
+  {
+    sChar c = hex[i];
+    sInt d = -1;
+    if(c>='0' && c<='9') d = c-'0';
+    if(c>='a' && c<='f') d = c-'a'+10;
+    if(c>='A' && c<='F') d = c-'A'+10;
+    if(d<0)
+    {
+      Fail(L"a colour is '#' and exactly 8 hex digits, as #aarrggbb");
+      return 0;
+    }
+    v = v*16 + sU32(d);
+  }
+
+  out = v;
+  return 1;
+}
+
+sBool wWz4tReader::Value(wValue &out)
+{
+  if(Scan.IfToken(TOK_HASH))
+  {
+    sU32 c = 0;
+    if(!Colour(c))
+      return 0;
+    out.I = sInt(c);
+    out.F = sF32(c);
+    return 1;
+  }
+
+  sBool negative = Scan.IfToken('-');
+
+  if(Scan.Token==sTOK_INT)
+  {
+    out.I = Scan.ScanInt();
+    out.F = sF32(out.I);
+    if(negative)
+    {
+      out.I = -out.I;
+      out.F = -out.F;
+    }
+    return 1;
+  }
+
+  if(Scan.Token==sTOK_FLOAT)
+  {
+    out.IsFloat = 1;
+    out.F = Scan.ScanFloat();
+    if(negative)
+      out.F = -out.F;
+    out.I = sInt(out.F);
+    return 1;
+  }
+
+  if(negative)
+  {
+    Fail(L"expected a number after '-'");
+    return 0;
+  }
+
+  if(Scan.Token==sTOK_STRING)
+  {
+    out.IsString = 1;
+    Scan.ScanString(out.S);
+    return 1;
+  }
+
+  if(Scan.Token==sTOK_NAME)
+  {
+    out.IsString = 1;
+    Scan.ScanName(out.S);
+    return 1;
+  }
+
+  Fail(L"expected a value");
+  return 0;
+}
+
+/****************************************************************************/
+
+// Writes one parsed right-hand side into the operator's storage. Everything it
+// needs to know — which space, which offset, how many words — comes from the
+// metadata, because wClass does not carry it (docs/architecture.md A28).
+sBool wWz4tReader::Apply(wStackOp *op,const wMetaClass *mc,const wMetaParam *p,
+  sArray<wValue> &values)
+{
+  // How many slots does this parameter actually have?
+  sInt slots = 1;
+  if(p->Layout==wML_VECTOR || p->Layout==wML_ARRAY)
+    slots = p->Count;
+
+  if(p->Kind==L"string" || p->Kind==L"filein" || p->Kind==L"fileout"
+    || p->Kind==L"char" || p->Kind==L"link")
+    slots = 1;
+
+  if(values.GetCount()>slots)
+  {
+    sString<256> msg;
+    msg.PrintF(L"%s takes %d value(s), got %d",p->Symbol,slots,values.GetCount());
+    Fail(msg);
+    return 0;
+  }
+
+  // Strings
+  if(p->Kind==L"string" || p->Kind==L"filein" || p->Kind==L"fileout")
+  {
+    if(p->Offset<0 || p->Offset>=op->EditStringCount)
+    {
+      Fail(L"string parameter is outside the operator's string storage");
+      return 0;
+    }
+    op->EditString[p->Offset]->Clear();
+    op->EditString[p->Offset]->Print(values[0].S);
+    return 1;
+  }
+
+  // Link names. The link is resolved later by Connect(), by name.
+  if(p->Kind==L"link")
+  {
+    if(p->Offset<0 || p->Offset>=op->Links.GetCount())
+    {
+      Fail(L"link parameter is outside the operator's link storage");
+      return 0;
+    }
+    op->Links[p->Offset].LinkName = values[0].S;
+    return 1;
+  }
+
+  if(p->Space!=wMS_WORDS)
+  {
+    sString<256> msg;
+    msg.PrintF(L"%s has no storage and cannot be assigned",p->Symbol);
+    Fail(msg);
+    return 0;
+  }
+
+  if(p->Offset<0 || p->Offset+p->Words>mc->ParaWords)
+  {
+    Fail(L"parameter offset is outside the operator's word storage");
+    return 0;
+  }
+
+  // char[n] is an sString<n> living inline in the parameter words.
+  if(p->Kind==L"char")
+  {
+    sChar *dest = (sChar *)(op->EditU()+p->Offset);
+    sInt max = p->Capacity>0 ? p->Capacity : 1;
+    sInt i = 0;
+    const sChar *src = values[0].S;
+    while(i<max-1 && src[i])
+    {
+      dest[i] = src[i];
+      i++;
+    }
+    dest[i] = 0;
+    return 1;
+  }
+
+  // flags / radio / strobe: an identifier names a choice, and several choices
+  // from different widgets combine into one integer. An integer is accepted
+  // too, because not every choice has a name.
+  if(p->Widgets.GetCount()>0)
+  {
+    sInt acc = 0;
+    for(sInt vi=0;vi<values.GetCount();vi++)
+    {
+      if(!values[vi].IsString)
+      {
+        acc |= values[vi].I;
+        continue;
+      }
+
+      sBool found = 0;
+      for(sInt wi=0;wi<p->Widgets.GetCount() && !found;wi++)
+      {
+        const wMetaWidget *w = p->Widgets[wi];
+        for(sInt k=0;k<w->Choices.GetCount() && !found;k++)
+        {
+          if(w->Choices[k].Label==values[vi].S)
+          {
+            acc |= (w->Choices[k].Value << w->Shift) & w->Mask;
+            found = 1;
+          }
+        }
+      }
+
+      if(!found)
+      {
+        sString<512> msg;
+        msg.PrintF(L"%s has no choice called \"%s\"; options are \"%s\"",
+          p->Symbol,values[vi].S,p->Options);
+        Fail(msg);
+        return 0;
+      }
+    }
+    op->EditS()[p->Offset] = acc;
+    return 1;
+  }
+
+  // Plain numbers. A single value fills every slot, which is how the DSL's own
+  // defaults behave (`float31 Scale = 1` means 1,1,1).
+  sBool isfloat = (p->Kind==L"float");
+  for(sInt i=0;i<slots;i++)
+  {
+    const wValue &v = values[values.GetCount()==1 ? 0 : i];
+    if(i>=values.GetCount() && values.GetCount()!=1)
+      break;
+
+    if(isfloat)
+      op->EditF()[p->Offset+i] = v.F;
+    else
+      op->EditS()[p->Offset+i] = v.I;
+  }
+
+  return 1;
+}
+
+/****************************************************************************/
+
+sBool wWz4tReader::Settings(wStackOp *op,const wMetaClass *mc)
+{
+  Scan.Match('{');
+
+  while(!Scan.Errors && Scan.Token!='}' && Scan.Token!=sTOK_END)
+  {
+    // Bare flags first: they have no '=' and would otherwise look like a
+    // parameter name.
+    if(Scan.IfName(L"hide"))
+    {
+      op->Hide = 1;
+      continue;
+    }
+    if(Scan.IfName(L"bypass"))
+    {
+      op->Bypass = 1;
+      continue;
+    }
+
+    sPoolString key;
+    if(!Scan.ScanName(key))
+      break;
+    Scan.Match('=');
+
+    // `name = ` is the store name, not a parameter.
+    if(key==L"name")
+    {
+      sPoolString n;
+      if(Scan.Token==sTOK_STRING)
+        Scan.ScanString(n);
+      else
+        Scan.ScanName(n);
+      op->Name = n;
+      continue;
+    }
+
+    const wMetaParam *p = mc->FindParam(key);
+    if(!p)
+    {
+      // A misspelled parameter must not be silently ignored: in a hand-written
+      // test case that would mean the case quietly tests the default.
+      sString<512> msg;
+      msg.PrintF(L"%s.%s has no parameter called \"%s\"",
+        mc->OutputType,mc->Name,key);
+      Fail(msg);
+
+      // Skip the value so one typo does not cascade.
+      wValue discard;
+      while(!Scan.Errors && Value(discard) && Scan.IfToken(','))
+        ;
+      continue;
+    }
+
+    sArray<wValue> values;
+    for(;;)
+    {
+      wValue v;
+      if(!Value(v))
+        break;
+      values.AddTail(v);
+      if(!Scan.IfToken(',') && !Scan.IfToken('|'))
+        break;
+    }
+
+    if(!Scan.Errors && values.GetCount())
+      Apply(op,mc,p,values);
+  }
+
+  Scan.Match('}');
+  return !Scan.Errors;
+}
+
+/****************************************************************************/
+
+// One `op`. In a stack or row block the position comes from the block's
+// running cursor instead of from `at`.
+sBool wWz4tReader::Op(sInt *stackx,sInt *stacky,sInt *rowx,sInt rowy)
+{
+  sPoolString type,name;
+  if(!Scan.ScanName(type))
+    return 0;
+  Scan.Match('.');
+  if(!Scan.ScanName(name))
+    return 0;
+
+  const wMetaClass *mc = Meta->Find(type,name);
+  wClass *cl = Doc->FindClass(name,type);
+
+  if(!cl)
+  {
+    sString<512> msg;
+    msg.PrintF(L"no registered operator %s.%s",type,name);
+    Fail(msg);
+    return 0;
+  }
+  if(!mc)
+  {
+    sString<512> msg;
+    msg.PrintF(L"no metadata for %s.%s — is build/meta up to date?",type,name);
+    Fail(msg);
+    return 0;
+  }
+
+  sInt x = 0,y = 0,w = 3,h = 1;
+  sBool placed = 0;
+
+  if(stackx)
+  {
+    x = *stackx;
+    y = *stacky;
+    placed = 1;
+  }
+  else if(rowx)
+  {
+    x = *rowx;
+    y = rowy;
+    placed = 1;
+  }
+
+  if(Scan.IfName(L"at"))
+  {
+    if(!Coord(x,y))
+      return 0;
+    placed = 1;
+  }
+  if(Scan.IfName(L"size"))
+  {
+    if(!Size(w,h))
+      return 0;
+  }
+
+  if(!placed)
+  {
+    Fail(L"an op needs 'at X,Y', or to sit inside a stack or row block");
+    return 0;
+  }
+
+  wStackOp *op = new wStackOp;
+  op->Init(cl);
+  op->PosX = x;
+  op->PosY = y;
+  op->SizeX = w;
+  op->SizeY = h;
+
+  // Defaults first, so a file only has to state what it changes. This is the
+  // same SetDefaults the editor runs when you place an operator.
+  if(cl->SetDefaults)
+    cl->SetDefaults(op);
+
+  NeedPage()->Ops.AddTail(op);
+
+  if(Scan.Token=='{')
+  {
+    if(!Settings(op,mc))
+      return 0;
+  }
+
+  // Advance the block cursor. A stack grows downward by the operator's height,
+  // which is exactly what makes the next one connect to this one.
+  if(stackx)
+    *stacky = y + h;
+  if(rowx)
+    *rowx = x + w;
+
+  return !Scan.Errors;
+}
+
+sBool wWz4tReader::Block(const sChar *what)
+{
+  sBool isstack = sCmpString(what,L"stack")==0;
+
+  sInt x = 0,y = 0;
+  if(!Scan.IfName(L"at"))
+  {
+    Fail(L"a stack or row block needs 'at X,Y'");
+    return 0;
+  }
+  if(!Coord(x,y))
+    return 0;
+
+  Scan.Match('{');
+  while(!Scan.Errors && Scan.Token!='}' && Scan.Token!=sTOK_END)
+  {
+    if(!Scan.IfName(L"op"))
+    {
+      Fail(L"only 'op' is allowed inside a stack or row block");
+      return 0;
+    }
+    if(isstack)
+    {
+      if(!Op(&x,&y,0,0))
+        return 0;
+    }
+    else
+    {
+      if(!Op(0,0,&x,y))
+        return 0;
+    }
+  }
+  Scan.Match('}');
+
+  return !Scan.Errors;
+}
+
+/****************************************************************************/
+
+sBool wWz4tReader::Run(const sChar *text,const sChar *sourcename)
+{
+  Scan.Init();
+  Scan.DefaultTokens();
+  // C-style comments, not '#': see the note at the top of this file.
+  Scan.Flags = sSF_CPPCOMMENT|sSF_ESCAPECODES;
+  Scan.AddToken(L"#",TOK_HASH);
+  Scan.Start(text);
+  Scan.Stream->Filename = sourcename;
+
+  if(!Scan.IfName(L"wz4t"))
+  {
+    Fail(L"a .wz4t file starts with 'wz4t <version>'");
+    return 0;
+  }
+  sInt version = Scan.ScanInt();
+  if(version!=1)
+  {
+    sString<128> msg;
+    msg.PrintF(L"unknown .wz4t version %d, this build reads 1",version);
+    Fail(msg);
+    return 0;
+  }
+
+  while(!Scan.Errors && Scan.Token!=sTOK_END)
+  {
+    if(Scan.IfName(L"page"))
+    {
+      sPoolString n;
+      Scan.ScanString(n);
+      AddPage(n);
+    }
+    else if(Scan.IfName(L"op"))
+    {
+      if(!Op(0,0,0,0))
+        break;
+    }
+    else if(Scan.IfName(L"stack"))
+    {
+      if(!Block(L"stack"))
+        break;
+    }
+    else if(Scan.IfName(L"row"))
+    {
+      if(!Block(L"row"))
+        break;
+    }
+    else
+    {
+      Fail(L"expected 'page', 'op', 'stack' or 'row'");
+      break;
+    }
+  }
+
+  return !Scan.Errors && Errors==0;
+}
+
+/****************************************************************************/
+
+sBool wReadWz4tText(const sChar *text,const sChar *sourcename,
+  const wMetaLibrary &meta)
+{
+  sVERIFY(Doc);
+  wWz4tReader reader(meta);
+  return reader.Run(text,sourcename);
+}
+
+sBool wReadWz4t(const sChar *filename,const wMetaLibrary &meta)
+{
+  sChar *text = sLoadText(filename);
+  if(!text)
+  {
+    sPrintF(L"wz4t: could not read <%s>\n",filename);
+    return 0;
+  }
+  sBool ok = wReadWz4tText(text,filename,meta);
+  delete[] text;
+  return ok;
+}
+
+/****************************************************************************/

@@ -410,6 +410,7 @@ target_compile_options(headless_core_gate PRIVATE
 add_library(wz4t STATIC
   "${CMAKE_CURRENT_SOURCE_DIR}/wz4t/json.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/wz4t/meta.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/wz4t/wz4t_read.cpp"
 )
 target_include_directories(wz4t PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/wz4t")
 target_link_libraries(wz4t PUBLIC wz4core)
@@ -471,6 +472,20 @@ file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/roundtrip")
 # different question, and it is what proves the schema is actually usable.
 add_test(NAME checkmeta COMMAND wz4gen checkmeta -meta "${WZ4_META_DIR}")
 set_tests_properties(checkmeta PROPERTIES DEPENDS opsmeta_gate)
+
+#############################################################################
+##  wz4t_read — the stage 3.1b gate                                        ##
+#############################################################################
+
+add_executable(wz4t_read "${CMAKE_CURRENT_SOURCE_DIR}/tests/wz4t_read.cpp")
+target_link_libraries(wz4t_read PRIVATE wz4t)
+target_compile_options(wz4t_read PRIVATE
+  "SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/tests/gui_poison.h"
+)
+add_test(NAME wz4t_read COMMAND wz4t_read
+  "${WZ4_META_DIR}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/tests/cases/three_ops.wz4t")
+set_tests_properties(wz4t_read PROPERTIES DEPENDS opsmeta_gate)
 
 #############################################################################
 ##  core_connect — the phase 2 gate                                        ##

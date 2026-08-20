@@ -142,6 +142,12 @@ op GenBitmap.Color at 4,4 size 3x1 {
 }
 ```
 
+**Two clarifications from the reader (phase 3.1b), because the example above is ambiguous:**
+comments are `//` and `/* */`, **not** `#` — the example uses `#` both as a trailing comment
+marker and as the colour prefix, and only one can be true, so `#` belongs to colours. And a
+single value fills every slot of a vector (`Scale = 1` means `1,1,1`), matching how the `.ops`
+DSL's own defaults behave.
+
 - Operators are identified as `OutputType.ClassName`, matching how `.wz4` identifies them, so
   the mapping is exact and ambiguity is impossible.
 - **Connections are not written down.** They are derived from geometry by the same rule as the
