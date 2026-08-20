@@ -30,6 +30,7 @@
 // Never <imgui.h> directly: Altona macro-defines `new`, which mangles ImGui's
 // placement-new declaration. See the header for the whole story.
 #include "imgui_wz4.hpp"
+#include "canvas.hpp"
 
 #include <GLFW/glfw3.h>
 #include <stdio.h>                  // fflush, for the exit path at the bottom
@@ -97,13 +98,19 @@ struct wEditor
   sString<256> Status;
   sBool MetaOk;
 
-  // Which page and operator the panels are looking at. Selection proper arrives
-  // with the canvas in 5.2; for now this is what the list panel drives.
   sInt CurrentPage;
+
+  // Selection lives on wOp::Select, because that is what wPage::CheckDest and
+  // CheckMove read — the editor must not keep a parallel set that could drift
+  // from the rule the document format enforces. `Selected` is only the
+  // single-selection convenience the inspector needs.
   wOp *Selected;
+
+  wCanvas Canvas;
 
   // `bool`, not sBool: ImGui takes bool* for its toggles and sBool is an int.
   bool ShowDemo;
+  bool ShowList;
 
   wEditor()
   {
@@ -111,6 +118,7 @@ struct wEditor
     CurrentPage = 0;
     Selected = 0;
     ShowDemo = false;
+    ShowList = false;
     Status = L"no document";
   }
 
@@ -147,6 +155,7 @@ struct wEditor
 
     Doc->Connect();
     DocPath = path;
+    Canvas.FitPending = 1;          // frame the whole graph, not a corner of it
 
     sInt ops = 0;
     for(sInt p=0;p<Doc->Pages.GetCount();p++)
@@ -169,6 +178,9 @@ struct wEditor
         if(sCmpString(page->Ops[i]->Name,name)==0)
         {
           CurrentPage = p;
+          for(sInt k=0;k<page->Ops.GetCount();k++)
+            page->Ops[k]->Select = 0;
+          page->Ops[i]->Select = 1;
           Selected = page->Ops[i];
           return 1;
         }
@@ -359,6 +371,20 @@ static void DrawFrame(GLFWwindow *window,sBool &quit)
         quit = 1;
       ImGui::EndMenu();
     }
+    if(ImGui::BeginMenu("View"))
+    {
+      ImGui::MenuItem("Operator list",0,&Ed->ShowList);
+      sBool guides = Ed->Canvas.ShowGuides;
+      bool g = guides!=0;
+      if(ImGui::MenuItem("Connection guides",0,&g))
+        Ed->Canvas.ShowGuides = g ? 1 : 0;
+      ImGui::Separator();
+      if(ImGui::MenuItem("Fit page","Home"))
+        Ed->Canvas.FitPending = 1;
+      if(ImGui::MenuItem("Reset view (1:1)"))
+        Ed->Canvas.ResetView();
+      ImGui::EndMenu();
+    }
     if(ImGui::BeginMenu("Help"))
     {
       // The ImGui demo, kept in-tree at the pinned version. It is the reference
@@ -378,23 +404,63 @@ static void DrawFrame(GLFWwindow *window,sBool &quit)
     ImGui::EndMainMenuBar();
   }
 
-  const float listw = vp->Size.x*0.55f;
+  const float canvasw = vp->Size.x*0.70f;
+  const ImGuiWindowFlags paneflags = ImGuiWindowFlags_NoMove
+                                    |ImGuiWindowFlags_NoResize
+                                    |ImGuiWindowFlags_NoCollapse;
 
+  // The canvas is the editor. It gets the space, and the panels sit beside it —
+  // in this model the geometry IS the graph, so the canvas is not a view of the
+  // document, it is the document.
   ImGui::SetNextWindowPos(ImVec2(0,menuh));
-  ImGui::SetNextWindowSize(ImVec2(listw,vp->Size.y-menuh));
-  ImGui::Begin("Operators",0,ImGuiWindowFlags_NoMove
-                            |ImGuiWindowFlags_NoResize
-                            |ImGuiWindowFlags_NoCollapse);
-  DrawOperatorList();
+  ImGui::SetNextWindowSize(ImVec2(canvasw,vp->Size.y-menuh));
+  ImGui::Begin("Canvas",0,paneflags);
+  {
+    wPage *page = 0;
+    if(Doc && Doc->Pages.GetCount())
+    {
+      if(Ed->CurrentPage>=Doc->Pages.GetCount())
+        Ed->CurrentPage = 0;
+      page = Doc->Pages[Ed->CurrentPage];
+    }
+
+    if(page)
+    {
+      // Reconnect on any structural change. Moving a block one cell can make or
+      // break an input, so this is not cosmetic — Connect() is what turns the
+      // new geometry back into a graph.
+      if(Ed->Canvas.Draw(page))
+      {
+        Doc->Connect();
+        Ed->Status.PrintF(L"reconnected: %d operator(s)",page->Ops.GetCount());
+      }
+      Ed->Selected = Ed->Canvas.SingleSelection(page);
+    }
+    else
+    {
+      ImGui::TextDisabled("No document loaded.");
+      ImGui::TextDisabled("Pass a .wz4t on the command line.");
+    }
+  }
   ImGui::End();
 
-  ImGui::SetNextWindowPos(ImVec2(listw,menuh));
-  ImGui::SetNextWindowSize(ImVec2(vp->Size.x-listw,vp->Size.y-menuh));
-  ImGui::Begin("Inspector",0,ImGuiWindowFlags_NoMove
-                            |ImGuiWindowFlags_NoResize
-                            |ImGuiWindowFlags_NoCollapse);
+  ImGui::SetNextWindowPos(ImVec2(canvasw,menuh));
+  ImGui::SetNextWindowSize(ImVec2(vp->Size.x-canvasw,vp->Size.y-menuh));
+  ImGui::Begin("Inspector",0,paneflags);
   DrawInspector();
   ImGui::End();
+
+  // The list is now a secondary view rather than the main one. It is kept
+  // because it shows the derived input count per operator, which is the quickest
+  // way to check that a canvas edit changed the graph the way it looked like it
+  // did.
+  if(Ed->ShowList)
+  {
+    ImGui::SetNextWindowSize(ImVec2(560,420),ImGuiCond_FirstUseEver);
+    ImGui::Begin("Operator list",&Ed->ShowList);
+    DrawOperatorList();
+    ImGui::End();
+  }
 
   if(Ed->ShowDemo)
     ImGui::ShowDemoWindow(&Ed->ShowDemo);
@@ -409,6 +475,9 @@ static void DrawFrame(GLFWwindow *window,sBool &quit)
       Ed->LoadDoc(path);
     }
   }
+
+  if(ImGui::IsKeyPressed(ImGuiKey_Home,false))
+    Ed->Canvas.FitPending = 1;
 
   (void)window;
 }

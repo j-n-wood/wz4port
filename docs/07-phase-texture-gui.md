@@ -103,20 +103,73 @@ re-reads it, which is enough to work with and to test. A file dialog means eithe
 picker or an in-ImGui browser; it is UI work with no bearing on the model, so it waits until
 the canvas can create and modify documents worth saving (5.2 onwards).
 
-### 5.2 — Grid canvas
+### 5.2 — Grid canvas — **done**
 
 Draw blocks as rectangles filled with their output type's colour. Pan and zoom the page.
 Selection: click, shift-click to add, ctrl-click to toggle, rubber-band on empty space.
-Move, resize and duplicate by drag, with the projected destination framed while dragging.
+Move and resize by drag, with the projected destination framed while dragging.
 
 Collision via `CheckDest`/`CheckMove` semantics: **all-or-nothing, nothing is displaced**.
 
 Block decoration per `01-existing-model.md` §2.6: inverted bevel when selected, red when in
-error, the three status dots, `Hide` drawn with a red X, `Bypass` with a vertical red bar,
-comments painted last and click-through.
+error, `Hide` drawn with a red X, `Bypass` with a vertical red bar, comments painted last and
+click-through.
 
-**Gate:** a document's layout renders recognisably; blocks can be moved and resized within the
-original's collision rules.
+**Gate — passed**, in two halves, because a canvas has two kinds of claim and only one of them
+is visible.
+
+*It renders recognisably* — verified by screenshot on `ops_gen.wz4t` and `ops_merge.wz4t`. The
+layout matches the documents cell for cell: the two-operator stacks touch, `atlas` spans its
+three inputs at 9 cells wide, and the twelve `Merge` groups sit where the file puts them.
+
+*Blocks move and resize within the original's rules* — verified by `canvas_rules`, 30 checks
+with no window. **The canvas does not reimplement the collision rules**: it calls
+`wPage::CheckDest` and `wPage::CheckMove` directly, and they read `wOp::Select`, so the editor
+keeps no parallel selection that could drift from what the document format enforces. The test
+therefore drives exactly the code a drag drives.
+
+The checks that matter most are the ones about the model rather than the geometry:
+
+- **A legal move rewires the graph.** Sliding a block clear of its consumer's horizontal span
+  drops it as an input; sliding it back restores it. Moving a block up one row until its top
+  edge meets another's bottom edge creates an input. That is the whole point of this canvas —
+  a drag is a structural edit, not a cosmetic one.
+- **All-or-nothing really is all-or-nothing.** A two-block selection is refused entirely when
+  either member would collide or leave the page, and the same delta is then shown to be legal
+  for the innocent member alone — which is what proves the refusal was about the other block.
+- **A refused move displaces nothing.** Checked explicitly, because "nothing is nudged" is the
+  property that makes geometry trustworthy as a graph.
+- **`move=1` versus `move=0`.** With the flag set, a selected block may slide onto cells another
+  selected block is vacating; without it, the same move is refused.
+
+#### Two of my own assertions were wrong before the code was
+
+Worth recording because of how the second one hid:
+
+- A "the same move is refused with `move=0`" check moved both blocks four rows down into empty
+  space, where the two modes agree. The assertion was **vacuous**, and it failed. Fixed by
+  choosing a delta that actually lands one selected block on another.
+- A check that moving a block *down* would break its adjacency ignored that its consumer sits
+  directly below, so `CheckMove` refused the move — correctly. The assertion failed, but the
+  three assertions *after* it still passed, because the test helper applied the move anyway and
+  they were then measuring the wrong geometry. `ApplyMove` now re-checks and refuses to apply
+  an illegal move, so that class of mistake cannot recur.
+
+#### Deliberate departures
+
+- **Fit-on-load.** Landing at 1:1 on the top-left of a 192 × 128 cell page shows a corner of a
+  wide graph with no hint the rest exists. `View > Fit page` (Home) frames everything, and a
+  document is fitted when it loads. Never magnifies past 1:1.
+- **Rubber-band selects touched blocks, not enclosed ones.** A 3-wide block in a dense stack is
+  hard to fully enclose without catching its neighbours.
+- **Middle-drag pans, wheel zooms about the cursor.** The original uses scrollbars.
+- **Connection guides** are a `View` toggle, off by default. The original draws none — geometry
+  is meant to be self-evident — but a faint hint of what feeds what helps while learning it.
+- **Duplicate-by-drag is not implemented.** The original folds it into the same handler as move
+  and resize as `mode 2`. It needs operator cloning, which belongs with insert and paste in 5.4.
+- **Two of the three status dots are absent**, deliberately: "shown in a viewport" and "open in
+  the parameter panel" have nothing to report until 5.6 and 5.5 exist. The cache dot is drawn.
+  Adding the other two now would mean inventing state to display.
 
 ### 5.3 — Connection derivation
 

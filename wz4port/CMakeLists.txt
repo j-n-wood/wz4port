@@ -582,7 +582,10 @@ if(EXISTS "${WZ4_IMGUI_DIR}/imgui.cpp" AND EXISTS "${WZ4_GLFW_DIR}/CMakeLists.tx
     # explicit converter in editor/main.cpp rather than being assigned across.
     target_compile_options(imgui PRIVATE -Wno-unused-function)
 
-    add_executable(wz4ed "${CMAKE_CURRENT_SOURCE_DIR}/editor/main.cpp")
+    add_executable(wz4ed
+      "${CMAKE_CURRENT_SOURCE_DIR}/editor/main.cpp"
+      "${CMAKE_CURRENT_SOURCE_DIR}/editor/canvas.cpp"
+    )
     target_link_libraries(wz4ed PRIVATE wz4t wz4tex imgui)
     target_compile_options(wz4ed PRIVATE
       "SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/tests/gui_poison.h"
@@ -1044,6 +1047,24 @@ target_compile_options(core_connect PRIVATE
   "SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/tests/gui_poison.h"
 )
 add_test(NAME core_connect COMMAND core_connect)
+
+#############################################################################
+##  canvas_rules — the stage 5.2 gate that a screenshot cannot cover       ##
+#############################################################################
+
+# The canvas calls wPage::CheckDest and CheckMove directly rather than
+# reimplementing them, so this drives exactly the code a drag drives, with the
+# same inputs. It also checks the part that makes the model what it is: that a
+# legal move REWIRES the graph, because the geometry is the graph.
+#
+# No window, so it runs everywhere — including the headless x86-64 parity build.
+
+add_executable(canvas_rules "${CMAKE_CURRENT_SOURCE_DIR}/tests/canvas_rules.cpp")
+target_link_libraries(canvas_rules PRIVATE wz4core)
+target_compile_options(canvas_rules PRIVATE
+  "SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/tests/gui_poison.h"
+)
+add_test(NAME canvas_rules COMMAND canvas_rules)
 
 #############################################################################
 ##  SIMD parity test                                                       ##
