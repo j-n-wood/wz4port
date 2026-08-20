@@ -33,9 +33,16 @@
    declared in base/graphics.hpp, not in util/shaders.hpp, so poisoning it
    fails the gate on a header we legitimately need. Found by this tripwire.
 
-   gui/theme.hpp and gui/treeinfo.hpp are deliberately NOT represented: they
-   are the two pure-data extractions doc_core.hpp is allowed to use, and they
-   include nothing but base/. See wz4port/patches/04-doc-headless-split.md.
+   gui/theme.hpp, gui/treeinfo.hpp, gui/palette.hpp and gui/guicolor.hpp are
+   deliberately NOT represented. They are the pure-data extractions headless
+   code is allowed to use, and they include nothing but base/ — or, for
+   guicolor.hpp, nothing at all. See patches 04, 06 and 09.
+
+   base/windows.hpp is also allowed, and does not trip this: it declares
+   sWindowModeCodes and sHasWindowFocus but never sWindow, and whole-identifier
+   matching is what makes the difference. wz4tex includes it when the FreeType
+   font backend is enabled, because Altona's 2D software drawing layer lives
+   there and needs no GUI. See patch 09.
 
    Nothing else in the build sees this file. */
 

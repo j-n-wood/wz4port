@@ -14,6 +14,16 @@
 // See wz4port/compat/include/simd_compat.hpp and wz4port/patches/08.
 #include "simd_compat.hpp"
 
+// GenBitmap::Text drives Altona's 2D software drawing layer, which needs no GUI
+// but is declared in base/windows.hpp. The original build reached it through
+// gui/gui.hpp, whose include the headless code generator suppresses (patch 05),
+// so it is included directly here. The colour indices it takes come from the
+// header extracted in patch 09. Implementations: wz4port/compat/font_freetype.cpp.
+#if WZ4PORT_HAVE_SFONT2D
+#include "base/windows.hpp"
+#include "gui/guicolor.hpp"
+#endif
+
 /****************************************************************************/
 
 sInt GenBitmapTextureSizeOffset;         // 0 = normal, -1 = smaller, 1 = large

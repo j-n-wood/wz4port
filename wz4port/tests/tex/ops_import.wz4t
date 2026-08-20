@@ -1,0 +1,60 @@
+wz4t 1
+
+// Stage 4.5 — the image import paths, through stb_image.
+//
+// The filenames are relative, and the test runner pins the working directory to
+// build/tex-png/, into which CMake copies everything in tests/tex/data/ at
+// configure time. That keeps the documents portable — an absolute path could not
+// be committed — and keeps generated output out of the source tree.
+//
+// The data is checked in and reproducible: import_test.png is the same brick wall
+// as ops_io.wz4t's src_bricks, and data/make_anim.wz4t regenerates the anim
+// frames. import_test.jpg is that PNG at JPEG quality 85.
+//
+// Import requires POWER-OF-TWO dimensions and reports "Image dimensions not
+// power of two" otherwise (wz3_bitmap_ops.ops:337), which is why the test image
+// is 128x128 rather than some arbitrary size.
+
+page "import"
+
+// ---------------------------------------------------------------- Import, PNG
+// PNG is lossless, so this is the strongest of the three cases: the result must
+// be the brick wall exactly as src_bricks produced it. Compare with
+// ops_io_src_bricks — if this differs, either the write or the read is lossy.
+//
+// Correct: the brick wall, byte-identical to ops_io's src_bricks. Verified with
+// `wz4gen diff`: "identical, every byte" — so GenBitmap -> sImage -> PNG ->
+// stb_image -> GenBitmap loses nothing at 8 bits.
+op GenBitmap.Import at 0,0 size 3x1 {
+  name = import_png
+  Filename = "import_test.png"
+}
+
+// ---------------------------------------------------------------- Import, JPEG
+// The same image through a lossy codec, which is the point: it proves stb_image's
+// JPEG decoder is reached and working, and it must NOT be byte-identical to
+// import_png.
+//
+// Correct: recognisably the same brick wall, visibly softer, with JPEG ringing
+// around the mortar lines where the contrast is highest. Measured against
+// import_png: 15893 of 16384 pixels differ, worst channel delta 41 of 255 — so
+// the JPEG decoder really ran, and it really is the lossy path.
+op GenBitmap.Import at 4,0 size 3x1 {
+  name = import_jpg
+  Filename = "import_test.jpg"
+}
+
+// ---------------------------------------------------------------- ImportAnim
+// LoadAtlas takes the filename it is given, finds the last digits in it, and
+// keeps loading and incrementing until a file is missing — so naming anim0.png
+// here loads anim0 through anim3 and stops. It then packs them into a
+// power-of-two atlas and records each frame's rectangle.
+//
+// Correct: four 32x32 squares — red, green, blue, yellow, in that order — packed
+// into a 64x64 sheet, so a 2x2 grid with no empty space. Four flat colours make
+// both the packing order and the frame boundaries obvious; a photograph would
+// hide an off-by-one in either.
+op GenBitmap.ImportAnim at 8,0 size 3x1 {
+  name = import_anim
+  Filename = "anim0.png"
+}

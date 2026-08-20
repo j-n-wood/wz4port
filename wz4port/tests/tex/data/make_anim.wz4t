@@ -1,0 +1,42 @@
+wz4t 1
+
+// Generates the test data for the ImportAnim case. Not a test itself — it is
+// checked in so the data can be regenerated rather than being an opaque blob:
+//
+//   wz4gen render data/make_anim.wz4t -op anim0 -out data/anim0.png
+//   ... and the same for anim1, anim2, anim3
+//
+// LoadAtlas (wz3_bitmap_code.cpp:3534) finds the last digits in the filename it
+// is given, loads that file, then increments the digits and keeps going until a
+// file is missing. So the names must be a contiguous run from the one the
+// operator names, and four frames means anim0 through anim3 with no anim4.
+//
+// Four flat 32x32 colours, deliberately: an atlas of four distinguishable
+// squares makes the packing order and the frame boundaries obvious at a glance,
+// which a photograph or noise would not.
+
+page "anim"
+
+op GenBitmap.Flat at 0,0 size 3x1 {
+  name = anim0
+  Size = 32, 32
+  Color = #ffe04040
+}
+
+op GenBitmap.Flat at 4,0 size 3x1 {
+  name = anim1
+  Size = 32, 32
+  Color = #ff40e040
+}
+
+op GenBitmap.Flat at 8,0 size 3x1 {
+  name = anim2
+  Size = 32, 32
+  Color = #ff4040e0
+}
+
+op GenBitmap.Flat at 12,0 size 3x1 {
+  name = anim3
+  Size = 32, 32
+  Color = #ffe0e040
+}

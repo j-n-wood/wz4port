@@ -47,12 +47,14 @@ foreach(_case ${_cases})
   set(_png "${_golden}/${_doc}_${_op}.png")
   set(_txt "${_golden}/${_doc}_${_op}.txt")
 
-  # cwd pinned to the build dir: the Export operator writes a relative path and
-  # would otherwise drop files wherever this script was invoked from.
+  # cwd pinned to build/tex-png, the SAME directory the test runner uses, because
+  # relative filenames in a .wz4t resolve against it: Export writes one and
+  # Import reads three. Using the build root here instead made the lock step fail
+  # to find the test data that the tests could see perfectly well.
   execute_process(
     COMMAND "${_wz4gen}" render "${_here}/${_doc}.wz4t" -op "${_op}"
             -meta "${BUILD}/meta" -out "${_png}"
-    WORKING_DIRECTORY "${BUILD}"
+    WORKING_DIRECTORY "${BUILD}/tex-png"
     RESULT_VARIABLE _rc
     OUTPUT_VARIABLE _out
     ERROR_VARIABLE _err)

@@ -74,32 +74,10 @@ struct sWindowMessage
 
 /****************************************************************************/
 
-enum sGuiColor
-{
-  sGC_BACK = 1,                   // standard background color
-  sGC_DOC,                        // document background color (brighter)
-  sGC_BUTTON,                     // button background color (darker)
-  sGC_TEXT,                       // text color
-  sGC_DRAW,                       // color for drawing, usually black
-  sGC_SELECT,                     // selected text
-  sGC_HIGH,                       // high edge, outer
-  sGC_LOW,                        // low edge, outer
-  sGC_HIGH2,                      // hight edge, inner
-  sGC_LOW2,                       // low edge, inner
-
-  sGC_RED,                        // the color, with contrast to sGC_TEXT and sGC_DRAW
-  sGC_YELLOW,                     // the color, with contrast to sGC_TEXT and sGC_DRAW
-  sGC_GREEN,                      // the color, with contrast to sGC_TEXT and sGC_DRAW
-  sGC_BLUE,                       // the color, with contrast to sGC_TEXT and sGC_DRAW
-  sGC_BLACK,                      // 0x000000
-  sGC_WHITE,                      // 0xffffff
-  sGC_DARKGRAY,                   // 0x404040
-  sGC_GRAY,                       // 0x808080
-  sGC_LTGRAY,                     // 0xc0c0c0
-  sGC_PINK,                       // better contrast than red to sGC_TEXT
-
-  sGC_MAX,
-};
+// wz4port: moved to gui/guicolor.hpp so headless code can name sGC_BLACK and
+// sGC_MAX — GenBitmap::Text needs them — without pulling in sWindow.
+// See wz4port/patches/09-guicolor-header.md.
+#include "gui/guicolor.hpp"
 
 enum sWindowDragMode
 {

@@ -75,8 +75,9 @@ Clean build must be 0 errors. Warnings from Altona are expected.
 - **`error: attempt to use a poisoned identifier` is the `headless_core_gate`
   tripwire doing its job.** `wz4port/tests/gui_poison.h` poisons `sWindow`,
   `sGui_` and `sSimpleMaterial` so `wz4lib/doc_core.hpp` can never reacquire a
-  GUI dependency. Fix the include, do not weaken the poison. `gui/theme.hpp`
-  and `gui/treeinfo.hpp` are ours and are allowed.
+  GUI dependency. Fix the include, do not weaken the poison. `gui/theme.hpp`,
+  `gui/treeinfo.hpp`, `gui/palette.hpp` and `gui/guicolor.hpp` are ours and are
+  allowed, as is `base/windows.hpp` (it never names `sWindow`).
 
 ## Out of scope
 

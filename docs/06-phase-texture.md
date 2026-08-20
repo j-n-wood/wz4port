@@ -356,18 +356,100 @@ One pair is documented as **not** reviewable by eye: `gradient_linear` and `grad
 differ by checksum but not visibly, because three stops compress each span to 30% of the width.
 Saying so protects the next reviewer from concluding the mode is broken.
 
-### 4.5 — Font and image import
+### 4.5 — Font and image import — **done**
 
-- **`Text`** — implement `sFont2D`'s glyph rasterisation on FreeType (already installed on
-  this host, and available everywhere). Confine to `wz4port/compat/font_freetype.cpp`; do not
-  patch Altona's font layer.
+- **`Text`** — implement `sFont2D`'s glyph rasterisation on FreeType. Confine to
+  `wz4port/compat/font_freetype.cpp`; do not patch Altona's font layer.
 - **`Import`/`LoadAtlas`** — verify the `stb_image` path works on both platforms.
 
-Both get test cases. `Text` output will not be pixel-identical to GDI output, so its golden is
-established fresh here rather than treated as a port of existing behaviour — noted explicitly
-in the test comment.
+**Gate — passed.** `Text` renders legible glyphs; `Import` loads PNG and JPG; `ImportAnim`
+packs a numbered sequence. `ctest` is **125 tests** on arm64, **122 on x86-64** (the three
+`Text` cases are absent there, correctly — see below), and all **90 goldens** are bit-identical
+between the two.
 
-**Gate:** `Text` renders legible glyphs; `Import` loads PNG and JPG.
+#### `Text`, on FreeType
+
+**Altona's font layer needed no patch at all.** `sFont2D` keeps its state behind an opaque
+`struct sFont2DPrivate *prv`, which is exactly the seam needed to implement the class from
+another translation unit. Altona declares the whole 2D software drawing layer in
+`base/windows.hpp` and defines it only in `base/windows.cpp` (GDI) and `base/windows_xlib.cpp`
+(X11), neither of which this build compiles — so the symbols were simply absent, and
+`compat/font_freetype.cpp` supplies them: the offscreen surface, `sRect2D`, `sSetColor2D`,
+`sRender2DGet`, and the six `sFont2D` entry points `GenBitmap::Text` actually calls.
+
+Only two upstream changes were needed, and neither is in the font layer — recorded as
+`patches/09`:
+
+- **`enum sGuiColor` moved to `gui/guicolor.hpp`.** `Text` names `sGC_BLACK` and `sGC_MAX`,
+  which lived in `gui/window.hpp` next to `sWindow` — unreachable headlessly. The enum has no
+  GUI dependency; it is 22 integers. Relocated rather than duplicated, because **phase 5 puts a
+  GUI on the texture library**, so a second definition would collide in one translation unit —
+  a guaranteed future error, not a hypothetical one. Same shape as patches 04 and 06.
+- **Two guarded includes** in `wz3_bitmap_code.cpp`, so the drawing layer is reachable without
+  `gui/gui.hpp` (whose include patch 05 suppresses). `base/windows.hpp` pulls only `types.hpp`
+  and `serialize.hpp`, and never names `sWindow`, so the poison tripwire is untroubled.
+
+Only what `Text` uses is implemented, plus the cheap metric queries. The GUI text layer's
+`PrintMarked`, `PrintBasic`, `sGetLetterDimensions` and friends are left undefined on purpose:
+referencing one gives a clear undefined-symbol error pointing at the file, which beats a stub
+that silently draws nothing.
+
+Three cases in `ops_text.wz4t`, all reviewed: `"wz4"` legible and centred; a two-line
+`"port\n4.5"` exercising newline handling and `Leading`; and a styled variant that is visibly
+oblique and heavier, confirming the flags reach `FT_Set_Transform` and `FT_Outline_Embolden`.
+
+#### `Text` is the one case that is not golden-locked
+
+Its `Font` parameter is a family **name** (`"arial"`), so the glyphs come from whatever font
+the machine happens to have — a different file on macOS than on Linux, and a different file
+after an OS update. A byte-exact golden would be a false-failure generator rather than a test.
+
+So these three assert structurally instead — right size, real structure, opaque alpha, not
+blank — via `wz4_tex_case_nolock`, and they are excluded from `tex-cases.txt` so the lock step
+cannot pick them up by accident. That is enough to catch what matters: no font found, the
+target never cleared, glyphs rasterised but never blended, or the operator doing nothing as it
+did before 4.5.
+
+**Vendoring a font (DejaVu Sans is the usual choice) is the one change that would upgrade them
+to goldens.** It is a repository decision rather than a technical obstacle, so it is left open
+rather than taken unilaterally.
+
+#### "Found" is not "links"
+
+`find_package(Freetype)` succeeds when cross-compiling the x86-64 slice and returns Homebrew's
+**arm64-only** dylib, and the link then fails with a wall of undefined `FT_` symbols. Detection
+now compiles and links a two-line program with the found library, which is the only check that
+can tell the difference. The x86-64 parity build falls back to the 4.1 stub cleanly, which is
+why it runs 122 tests rather than 125.
+
+Same lesson as the golden runner and A39: assert the thing you actually need, not a proxy for
+it. A found path is a proxy.
+
+#### `Import`, `ImportAnim`
+
+Three cases, all golden-locked — stb_image's decoders are deterministic and the test data is
+committed, so nothing here depends on the machine.
+
+- **`import_png`** is **byte-identical** to `ops_io`'s `src_bricks`. So
+  `GenBitmap → sImage → PNG → stb_image → GenBitmap` loses nothing at 8 bits, which is worth
+  knowing as a property of the whole I/O path and not just of `Import`.
+- **`import_jpg`** differs from it in 15,893 of 16,384 pixels, worst channel delta 41 of 255 —
+  the JPEG decoder genuinely runs, and genuinely is the lossy path.
+- **`import_anim`** packs four 32×32 frames into a 64×64 atlas, 2×2, in order. `LoadAtlas`
+  finds the last digits in the filename it is given and keeps incrementing until a file is
+  missing, so the frames must be a contiguous run; `tests/tex/data/make_anim.wz4t` regenerates
+  them, so the data is reproducible rather than an opaque blob.
+
+`Import` requires **power-of-two** dimensions and errors otherwise, which is why the test image
+is 128×128.
+
+#### One working directory, not two
+
+The `Import` cases read relative paths and `Export` writes one, so the tool's working directory
+is now pinned to `build/tex-png` for **both** the test runner and the lock step, with CMake
+copying `tests/tex/data/` in at configure time. It had been the build root in the lock step and
+`tex-png` in the tests, which worked until a case needed to *read* data — then the lock step
+could not find files the tests saw perfectly well.
 
 ---
 
@@ -405,12 +487,15 @@ project. Worth doing once; not worth blocking on.
 
 ---
 
-## Deliverables
+## Deliverables — all delivered
 
-- `wz4port/libwz4tex/`
-- `wz4port/compat/font_freetype.cpp`
-- `wz4port/tests/tex/` — cases, goldens, runner
-- `wz4gen render` complete for bitmaps
+- `wz4tex` — the texture engine, all 34 operators registered
+- `wz4port/compat/font_freetype.cpp` — `sFont2D` and the 2D surface, on FreeType
+- `wz4port/tests/tex/` — 93 cases, 90 goldens, the runner, and the parity script
+- `wz4gen render` complete for bitmaps, plus `wz4gen diff`
+
+**Phase 4 is complete.** 34 of 34 operators run; 33 have golden-locked cases and `Text` has
+structurally-asserted ones. `ctest`: 125 on arm64, 122 on x86-64, bit-identical goldens.
 
 ## Risks
 

@@ -423,10 +423,61 @@ target_compile_options(headless_core_gate PRIVATE
 # backends and none for macOS. Define WZ4PORT_HAVE_SFONT2D=1 once
 # compat/font_freetype.cpp exists (stage 4.5).
 
+#############################################################################
+##  the font backend — stage 4.5                                           ##
+#############################################################################
+
+# GenBitmap::Text is the one texture operator that needs an OS font. Altona
+# declares sFont2D and its 2D software drawing layer in base/windows.hpp but
+# implements them only for GDI and X11, so wz4port supplies them on FreeType in
+# compat/font_freetype.cpp. Nothing in Altona's font layer is patched — sFont2D
+# keeps its state behind an opaque pointer, which is the seam that makes an
+# out-of-tree implementation possible.
+#
+# FreeType is optional. Without it Text keeps the stub from 4.1, which leaves the
+# bitmap untouched so a graph containing a Text operator still evaluates; the
+# other 33 operators are unaffected either way.
+
+find_package(Freetype)
+
+set(WZ4_FONT_SOURCES "")
+
+if(FREETYPE_FOUND)
+  # "Found" is not good enough — it has to LINK for the target architecture.
+  #
+  # Homebrew's libfreetype on Apple silicon is arm64-only, so find_package
+  # happily returns it when cross-compiling the x86-64 slice for the SIMD parity
+  # check and the link then fails with a wall of undefined FT_ symbols. Compiling
+  # and linking a two-line program is the only check that can tell the
+  # difference, and it is the same lesson as the golden runner: assert the thing
+  # you actually need, not a proxy for it.
+  include(CheckCXXSourceCompiles)
+  set(CMAKE_REQUIRED_INCLUDES ${FREETYPE_INCLUDE_DIRS})
+  set(CMAKE_REQUIRED_LIBRARIES ${FREETYPE_LIBRARIES})
+  check_cxx_source_compiles("
+    #include <ft2build.h>
+    #include FT_FREETYPE_H
+    int main() { FT_Library lib; return FT_Init_FreeType(&lib); }
+  " WZ4_FREETYPE_LINKS)
+  unset(CMAKE_REQUIRED_INCLUDES)
+  unset(CMAKE_REQUIRED_LIBRARIES)
+endif()
+
+if(WZ4_FREETYPE_LINKS)
+  set(WZ4_FONT_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/compat/font_freetype.cpp")
+  message(STATUS "FreeType links: GenBitmap.Text is enabled")
+elseif(FREETYPE_FOUND)
+  message(STATUS "FreeType found but does not link for this target"
+                 " (wrong architecture?): GenBitmap.Text stays stubbed")
+else()
+  message(STATUS "FreeType not found: GenBitmap.Text stays stubbed")
+endif()
+
 add_library(wz4tex STATIC
   "${WZ4_DIR}/wz4frlib/wz3_bitmap_code.cpp"
   "${WZ4_DIR}/wz4frlib/genvector.cpp"
   "${GENHL_BITMAP}"
+  ${WZ4_FONT_SOURCES}
 )
 target_include_directories(wz4tex PUBLIC
   "${WZ4_GENHL_DIR}"
@@ -438,6 +489,15 @@ target_link_libraries(wz4tex PUBLIC wz4core)
 target_compile_options(wz4tex PRIVATE
   "SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/tests/gui_poison.h"
 )
+
+if(WZ4_FONT_SOURCES)
+  # WZ4PORT_HAVE_SFONT2D switches on the real body of GenBitmap::Text, which was
+  # stubbed in 4.1. PUBLIC because the flag has to agree between the library and
+  # anything that includes wz3_bitmap_code.hpp.
+  target_compile_definitions(wz4tex PUBLIC WZ4PORT_HAVE_SFONT2D=1)
+  target_include_directories(wz4tex PRIVATE ${FREETYPE_INCLUDE_DIRS})
+  target_link_libraries(wz4tex PUBLIC ${FREETYPE_LIBRARIES})
+endif()
 
 #############################################################################
 ##  wz4gen — headless CLI (phase 3)                                        ##
@@ -624,6 +684,17 @@ set_tests_properties(tex_smoke_flat PROPERTIES
 
 set(WZ4_TEX_PNG_DIR "${CMAKE_BINARY_DIR}/tex-png")
 
+# The Import cases read relative paths, and the runner pins the tool's working
+# directory to WZ4_TEX_PNG_DIR, so the checked-in test data has to be there.
+# Copied at configure time rather than referenced in place, so that nothing the
+# suite writes can land in the source tree.
+file(GLOB WZ4_TEX_DATA "${CMAKE_CURRENT_SOURCE_DIR}/tests/tex/data/*.png"
+                       "${CMAKE_CURRENT_SOURCE_DIR}/tests/tex/data/*.jpg")
+foreach(_f ${WZ4_TEX_DATA})
+  get_filename_component(_n "${_f}" NAME)
+  configure_file("${_f}" "${WZ4_TEX_PNG_DIR}/${_n}" COPYONLY)
+endforeach()
+
 # The cases themselves are declared below, with the rest of the texture suite,
 # because they use the same wz4_tex_case helper and so get goldens too.
 
@@ -658,6 +729,34 @@ set(WZ4_TEX_PNG_DIR "${CMAKE_BINARY_DIR}/tex-png")
 # construction.
 set_property(GLOBAL PROPERTY WZ4_TEX_CASES "")
 
+# wz4_tex_case_nolock(<doc> <op> <expect> [reject])
+#
+# Same checks, minus the golden. For cases whose output legitimately depends on
+# something the repository does not ship — currently only GenBitmap.Text, whose
+# Font parameter is a family name and so resolves to whatever font the machine
+# happens to have. A byte-exact golden there would fail on a different OS or
+# after a font update, which is a false-failure generator rather than a test.
+#
+# These are also left out of tex-cases.txt, so the lock step cannot pick them up
+# by accident.
+function(wz4_tex_case_nolock doc op expect)
+  set(_reject "renders blank")
+  if(ARGC GREATER 3)
+    set(_reject "${ARGV3}")
+  endif()
+  add_test(NAME tex_${doc}_${op} COMMAND "${CMAKE_COMMAND}"
+    "-DWZ4GEN=$<TARGET_FILE:wz4gen>"
+    "-DDOC=${CMAKE_CURRENT_SOURCE_DIR}/tests/tex/${doc}.wz4t"
+    "-DMETA=${WZ4_META_DIR}"
+    "-DOP=${op}"
+    "-DOUT=${WZ4_TEX_PNG_DIR}/${doc}_${op}.png"
+    "-DEXPECT=${expect}"
+    "-DREJECT=${_reject}"
+    "-DWORKDIR=${WZ4_TEX_PNG_DIR}"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/tex/golden_png.cmake")
+  set_tests_properties(tex_${doc}_${op} PROPERTIES DEPENDS opsmeta_gate)
+endfunction()
+
 function(wz4_tex_case doc op expect)
   set(_reject "renders blank")
   if(ARGC GREATER 3)
@@ -673,6 +772,7 @@ function(wz4_tex_case doc op expect)
     "-DDIFF=${WZ4_TEX_PNG_DIR}/${doc}_${op}.diff.png"
     "-DEXPECT=${expect}"
     "-DREJECT=${_reject}"
+    "-DWORKDIR=${WZ4_TEX_PNG_DIR}"
     -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/tex/golden_png.cmake")
   set_tests_properties(tex_${doc}_${op} PROPERTIES DEPENDS opsmeta_gate)
   set_property(GLOBAL APPEND PROPERTY WZ4_TEX_CASES "${doc}|${op}")
@@ -788,6 +888,28 @@ wz4_tex_case(ops_merge merge_sub "structured, alpha 0000..0000" "")
 foreach(_op export makewz3bitmap)
   wz4_tex_case(ops_io ${_op} "128 x 128, structured")
 endforeach()
+
+#############################################################################
+##  stage 4.5 — fonts and image import                                     ##
+#############################################################################
+
+# Import reads the checked-in test data copied into WZ4_TEX_PNG_DIR above. These
+# ARE golden-locked: stb_image's PNG and JPEG decoders are deterministic, and the
+# data is committed, so nothing here depends on the machine.
+wz4_tex_case(ops_import import_png "128 x 128, structured")
+wz4_tex_case(ops_import import_jpg "128 x 128, structured")
+
+# Four 32x32 frames packed into one atlas.
+wz4_tex_case(ops_import import_anim "64 x 64, structured")
+
+# Text is the one case that cannot be golden-locked: its Font parameter is a
+# family name, so the glyphs come from whatever font the machine has. Asserted
+# structurally instead — see ops_text.wz4t for what that does and does not catch.
+if(WZ4_FONT_SOURCES)
+  foreach(_op text text_lines text_styled)
+    wz4_tex_case_nolock(ops_text ${_op} "128 x 128, structured")
+  endforeach()
+endif()
 
 # Hand the case list to lock_goldens.cmake. One "doc|op" per line, in
 # declaration order.

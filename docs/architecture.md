@@ -1052,6 +1052,51 @@ fail.** Both paths were tested — a one-hex-digit edit to a checksum, and a
 swapped image — before the lock was trusted. A golden that cannot fail is worth
 nothing, and nothing else in a green suite tells you which kind you have.
 
+### A44 · An opaque private pointer is an implementation seam — standing
+
+*Phase 4.5.* `sFont2D` was the last platform blocker in the texture library:
+GDI and X11 backends, none for macOS. The expectation was a patch to Altona's
+font layer.
+
+It needed none. The class is declared as
+
+```cpp
+class sFont2D { struct sFont2DPrivate *prv; public: /* methods */ };
+```
+
+and its methods are *defined* only in `base/windows.cpp` and
+`base/windows_xlib.cpp` — neither of which this build compiles. So the symbols
+were simply absent, and `wz4port/compat/font_freetype.cpp` defines them,
+including `sFont2DPrivate` itself. The header is untouched; the whole backend
+lives outside `altona_wz4/`.
+
+Worth generalising, because this codebase uses the idiom widely: **a
+forward-declared private struct plus out-of-line methods is a substitutable
+backend, whether or not anyone intended it as one.** Before patching a platform
+layer, check whether its implementation is merely *missing* rather than *wrong* —
+missing is much easier to replace than wrong.
+
+The two upstream changes 4.5 did need were about *reaching declarations*, not
+implementing anything: relocating `enum sGuiColor` out of a GUI header, and two
+guarded includes. Recorded as `patches/09`.
+
+### A45 · A dependency is "present" only if it links — standing
+
+*Phase 4.5.* `find_package(Freetype)` succeeds when cross-compiling the x86-64
+slice and returns Homebrew's **arm64-only** dylib. Configuration reports success,
+compilation succeeds, and the link fails with a wall of undefined `FT_` symbols.
+
+Detection now compiles *and links* a two-line program against the found library.
+That is the only check that can tell "a header and a file exist" from "this
+dependency works for this target", and it makes the optional-dependency fallback
+actually function: the parity build drops to the stubbed `Text` cleanly instead
+of failing to build at all.
+
+Third instance of one shape, after A39 (assert the artefact, not the exit code)
+and A43 (assert the pipeline's precision, not the artefact's): **assert the thing
+you need, never a proxy for it.** A found path is a proxy. An exit code is a
+proxy. A lower-precision artefact is a proxy.
+
 ---
 
 ## Part 3 — where inference lost to measurement

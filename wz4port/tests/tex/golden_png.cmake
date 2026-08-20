@@ -19,13 +19,20 @@
 #         -DOUT=<file.png> -DGOLDEN=<file.png> [-DDIFF=<file.png>]
 #         -P golden_png.cmake
 
-foreach(_var WZ4GEN DOC OP OUT GOLDEN)
+foreach(_var WZ4GEN DOC OP OUT)
   if(NOT DEFINED ${_var})
     message(FATAL_ERROR "golden_png.cmake: -D${_var}= is required")
   endif()
 endforeach()
 
-if(NOT EXISTS "${GOLDEN}")
+# No GOLDEN means the case is deliberately not locked — see
+# wz4_tex_case_nolock in CMakeLists.txt. EXPECT and REJECT still apply, so the
+# case still asserts size, structure and that it is not blank.
+if(NOT DEFINED GOLDEN OR GOLDEN STREQUAL "")
+  set(WZ4_SKIP_GOLDEN 1)
+endif()
+
+if(NOT WZ4_SKIP_GOLDEN AND NOT EXISTS "${GOLDEN}")
   message(FATAL_ERROR
     "no golden for ${OP} at <${GOLDEN}>.\n"
     "A new case needs its golden reviewed and locked — see 06-phase-texture.md "
@@ -36,15 +43,25 @@ file(REMOVE "${OUT}")
 get_filename_component(_dir "${OUT}" DIRECTORY)
 file(MAKE_DIRECTORY "${_dir}")
 
-# WORKING_DIRECTORY is set deliberately. The Export operator writes to whatever
-# path its Filename parameter holds, which is relative in a checked-in .wz4t
-# because an absolute one would not be portable — so without this it lands in
-# whichever directory the caller happened to be in, and littered two copies into
-# the repository before this was pinned. Every path passed in above is absolute,
-# so moving the cwd is safe.
+# WORKING_DIRECTORY is pinned, and it has to be the SAME directory for the test
+# runner and for the lock step, because relative filenames inside a .wz4t resolve
+# against it in both directions:
+#
+#   Export writes one    — it littered two PNGs into the repository before this
+#                          was pinned at all.
+#   Import reads three   — and failed to find them when the lock step used a
+#                          different cwd from the tests.
+#
+# So it is build/tex-png, where CMake also copies tests/tex/data. Every path
+# passed in above is absolute, so moving the cwd is safe.
+if(NOT DEFINED WORKDIR OR WORKDIR STREQUAL "")
+  set(WORKDIR "${_dir}")
+endif()
+file(MAKE_DIRECTORY "${WORKDIR}")
+
 execute_process(
   COMMAND "${WZ4GEN}" render "${DOC}" -op "${OP}" -meta "${META}" -out "${OUT}"
-  WORKING_DIRECTORY "${_dir}"
+  WORKING_DIRECTORY "${WORKDIR}"
   RESULT_VARIABLE _rc
   OUTPUT_VARIABLE _out
   ERROR_VARIABLE _err)
@@ -70,6 +87,11 @@ endif()
 string(REGEX MATCH "[0-9]+ x [0-9]+, [^\n]*checksum [0-9a-f]+" _report "${_out}")
 if(NOT _report)
   message(FATAL_ERROR "could not find a report line in wz4gen's output")
+endif()
+
+if(WZ4_SKIP_GOLDEN)
+  message("ok: ${OP} rendered and checked, not golden-locked by design")
+  return()
 endif()
 
 get_filename_component(_gdir "${GOLDEN}" DIRECTORY)

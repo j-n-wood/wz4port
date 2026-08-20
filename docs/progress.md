@@ -4,12 +4,15 @@ Read this first when picking the project up cold. It records where things
 stand, what has been decided and why, and what would otherwise have to be
 rediscovered the hard way.
 
-**Last updated:** phase 4, stage 4.4 — **the phase 4 gate is passed.**
-**Status:** Phases 1–3 complete and verified. **Phase 4 stages 4.1–4.4 done: the
-texture engine runs, and its output is locked and verified bit-identical on two
-architectures.** 87 cases cover **31 of the 34** `GenBitmap` operators —
-`Import`, `ImportAnim` and `Text` are 4.5's. `ctest` is **119 tests**, green on
-arm64 and on x86-64, with the same goldens.
+**Last updated:** end of phase 4. **Phase 4 is COMPLETE.**
+**Status:** Phases 1–4 complete and verified. **All 34 `GenBitmap` operators run
+on macOS arm64**, with 93 reviewed test cases and 90 byte-exact goldens that are
+bit-identical between the NEON and SSE2 builds. `ctest` is **125 tests** on
+arm64, **122** on x86-64 (the three `Text` cases need FreeType, which does not
+link for that slice — correct graceful degradation).
+
+Priority 1 — procedural texture generation — is done. Next is **phase 5**, a
+Dear ImGui editor on top of it, or **phase 6**, geometry.
 
 **SSE2-vs-NEON parity is real and was runnable here**, contrary to the plan's
 assumption that it needed a Linux box: `sh wz4port/tests/tex/parity_x86_64.sh`
@@ -20,7 +23,14 @@ divergences on its first run — all caused by **FMA contraction**, not sse2neon
 The renders land in `build/tex-png/`; the goldens are `tests/tex/golden/`, an
 image plus a `.txt` checksum line each.
 
-Next: **4.5**, `Text` on FreeType and the `Import`/`LoadAtlas` image paths.
+**Two rules that came out of phase 4 and apply to any test added later:**
+
+- **Assert what the viewer will show, not what the buffer holds.** Four
+  operators zero the alpha channel, and a transparent PNG displays as plain
+  white — indistinguishable from success. `architecture.md` A40.
+- **A golden must cover the pipeline's precision, not the artefact's.** The
+  pipeline is 16-bit and a PNG is 8-bit, so every golden stores a checksum too.
+  7 of the 8 parity divergences had byte-identical images. A43.
 
 **Read `06-phase-texture.md` before touching the texture tests.** 4.3 found four
 operators that zero the alpha channel, which makes their PNG render as plain
@@ -69,7 +79,7 @@ about the build.
 | 1 — Toolchain and portable base | **Done**, gate passed |
 | 2 — Headless op runtime + metadata | **Done**, phase gate passed |
 | 3 — Text graph format + CLI | **Done**, phase gate passed |
-| 4 — Texture library + tests | **Phase gate passed.** 4.1–4.4 done; 4.5 (fonts, image import) outstanding |
+| 4 — Texture library + tests | **Done**, phase gate passed. All 34 operators run |
 | 5 — Texture GUI | Not started |
 | 6 — Geometry | Not started |
 | 7 — Animated geometry | Not started |
@@ -102,7 +112,7 @@ Clean build from scratch: **0 errors**. Warnings are expected and benign
 | **`wz4tex`** | **The texture engine: wz3_bitmap_code + genvector + generated ops** |
 | `tex_smoke_*` (5) | Stage 4.1 gate: five operators evaluate; `Flat` uniform, rest structured |
 | `tex_chain_*` (4) | **Stage 4.2 gate:** a four-step chain renders to real PNG files (`ctest`) |
-| `tex_ops_*` (83) | **Stages 4.3/4.4:** one reviewed, golden-locked case per operator (`ctest`) |
+| `tex_ops_*` (89) | **Stages 4.3–4.5:** a reviewed case per operator, 90 golden-locked (`ctest`) |
 | `tex_merge_identity` | `Merge`'s brightness and hardlight are one algorithm; assert they agree |
 | `wz4t` | **Ours.** JSON, the runtime metadata model, and the `.wz4t` reader + writer |
 | `wz4t_read` | Stage 3.1b gate: a hand-written case parses and connects (`ctest`) |
@@ -146,6 +156,7 @@ wz4port/
     06-doc-cpp-headless.md     phase 2 stage 2.4
     07-retain-foreign-class.md phase 3 — stop writes destroying unknown ops
     08-texture-library.md      phase 4 stage 4.1
+    09-guicolor-header.md      phase 4 stage 4.5 — reach the 2D layer headlessly
   compat/altona_missing.cpp    sCheckBreakKey — an upstream POSIX gap
   tools/opsmeta/               phase 2 stage 2.3 — .ops -> metadata JSON
     main.cpp  emit.cpp  json.cpp
@@ -164,7 +175,11 @@ wz4port/
   tests/tex/same_png.cmake     asserts two renders are byte-identical
   tests/tex/lock_goldens.cmake the deliberate re-lock step
   tests/tex/parity_x86_64.sh   SSE2-vs-NEON bit parity, via Rosetta
-  tests/tex/golden/            87 locked .png + .txt pairs
+  tests/tex/golden/            90 locked .png + .txt pairs
+  tests/tex/ops_text.wz4t      stage 4.5: Text, the one un-lockable case
+  tests/tex/ops_import.wz4t      Import (PNG, JPG) and ImportAnim
+  tests/tex/data/              checked-in test images + make_anim.wz4t
+  compat/font_freetype.cpp     stage 4.5 — sFont2D and the 2D surface
   tests/tex/ops_gen.wz4t       stage 4.3: the generators
   tests/tex/ops_color.wz4t       the pointwise colour operators
   tests/tex/ops_merge.wz4t       Merge, all 12 blend modes
@@ -605,11 +620,17 @@ handler reporting through it is how Ctrl+C should interrupt a long generation.
   for meshes, and visually diagnostic per-operator cases. Generating true
   reference output on a Windows machine remains worthwhile as a one-off; the
   `.wz4t` text format (phase 3) exists partly to make that cheap.
-- **x86-64 side of SIMD parity unverified.** `simd_parity` passes on arm64.
-  It should also be run on x86-64 Linux, where it exercises native SSE2 — the
-  two must agree.
-- **`Text` / `Text3D` / `Path3D` operators** need FreeType (and a tessellator
-  for the 3D ones). Deferred; 3 operators out of 84.
+- ~~x86-64 side of SIMD parity unverified.~~ **Resolved in 4.4:** an x86-64 slice
+  cross-compiles here and runs under Rosetta 2, compiling the real
+  `<emmintrin.h>` path rather than sse2neon. All 90 goldens match byte for byte.
+  Residual caveat: the instructions are executed by Rosetta's translation, not by
+  Intel silicon, so running it once on a real x86-64 Linux box is still worth
+  doing.
+- ~~`Text` needs FreeType.~~ **Resolved in 4.5:** `compat/font_freetype.cpp`
+  implements `sFont2D` and Altona's 2D software surface on FreeType, with no
+  patch to Altona's font layer — the opaque `prv` pointer is the seam. `Text3D`
+  and `Path3D` still need it *and* a tessellator; they are phase 6/7's, 2
+  operators out of 84.
 - ~~The runtime has never executed an operator.~~ **Resolved in 4.1/4.2:**
   `wDocument::CalcOp` runs real operator bodies and produces `wObject`s, and as
   of 4.2 the result is written out as a PNG and has been checked by eye. The
@@ -1011,6 +1032,72 @@ lock was trusted: a one-hex-digit checksum edit, and a swapped golden image. A
 golden that cannot fail is worth nothing, and a green suite cannot tell you which
 kind you have. `wz4gen diff` reports differing-pixel count, worst delta per
 channel, and writes an amplified difference image.
+
+### Done: 4.5 — Text on FreeType, and the image import paths
+
+**Altona's font layer needed no patch.** `sFont2D` keeps its state behind an
+opaque `sFont2DPrivate *prv`, which is exactly the seam needed to implement the
+class from outside its own translation unit. Altona declares the whole 2D
+software drawing layer in `base/windows.hpp` and defines it only in
+`windows.cpp` (GDI) and `windows_xlib.cpp` (X11) — neither of which this build
+compiles — so the symbols were simply absent and
+`compat/font_freetype.cpp` supplies them.
+
+Two upstream changes, both about *reaching declarations*, neither in the font
+layer (`patches/09`):
+
+- **`enum sGuiColor` → `gui/guicolor.hpp`.** `Text` names `sGC_BLACK` and
+  `sGC_MAX`, which sat in `gui/window.hpp` beside `sWindow`. The enum has no GUI
+  dependency — 22 integers. Relocated, not duplicated, because **phase 5 puts a
+  GUI on the texture library** and two definitions would then collide in one
+  translation unit. Same shape as patches 04 and 06.
+- **Two guarded includes** in `wz3_bitmap_code.cpp`. `base/windows.hpp` pulls
+  only `types.hpp` and `serialize.hpp` and never names `sWindow`, so the poison
+  tripwire is untroubled — whole-identifier matching is what makes that safe.
+
+`Text` renders legible glyphs first try. Three cases: `"wz4"` centred, a
+two-line `"port\n4.5"` for newline handling and `Leading`, and a styled variant
+that is visibly oblique and heavier.
+
+**`Text` is the one case in the suite that is not golden-locked.** Its `Font`
+parameter is a family *name*, so the glyphs come from whatever font the machine
+has — a different file on Linux, and a different file after an OS update. A
+byte-exact golden there is a false-failure generator, not a test. It asserts
+structurally instead (`wz4_tex_case_nolock`) and is excluded from
+`tex-cases.txt` so the lock step cannot pick it up. Vendoring a font would
+upgrade it; that is a repository decision, left open rather than taken.
+
+### "Found" is not "links"
+
+`find_package(Freetype)` succeeds when cross-compiling the x86-64 slice and
+hands back Homebrew's **arm64-only** dylib; the link then fails with a wall of
+undefined `FT_` symbols. Detection now compiles *and links* a two-line program
+with the found library, which is the only check that distinguishes the two. The
+parity build falls back to the 4.1 stub cleanly — which is why it runs 122 tests
+and arm64 runs 125.
+
+Third instance of the same lesson, after A39 and A43: **assert the thing you
+need, not a proxy for it.** A path that exists is a proxy.
+
+### Import, and one working directory rather than two
+
+Three golden-locked cases; stb_image is deterministic and the data is committed.
+
+- `import_png` is **byte-identical** to `ops_io`'s `src_bricks`, so
+  `GenBitmap → sImage → PNG → stb_image → GenBitmap` loses nothing at 8 bits.
+- `import_jpg` differs in 15,893 of 16,384 pixels, worst delta 41 of 255 — the
+  JPEG decoder really runs, and really is lossy.
+- `import_anim` packs four 32×32 frames into a 64×64 atlas. `LoadAtlas` finds the
+  last digits in the filename and increments until a file is missing, so frames
+  must be a contiguous run; `data/make_anim.wz4t` regenerates them.
+
+`Import` requires **power-of-two** dimensions, which is why the test image is
+128×128.
+
+The tool's working directory is now pinned to `build/tex-png` for **both** the
+runner and the lock step. It had been the build root in one and `tex-png` in the
+other, which went unnoticed until a case needed to *read* data — then the lock
+step could not find files the tests saw perfectly well.
 
 ### What the review pass changed
 

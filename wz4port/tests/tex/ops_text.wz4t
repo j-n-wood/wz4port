@@ -1,0 +1,93 @@
+wz4t 1
+
+// Stage 4.5 — GenBitmap.Text, on FreeType.
+//
+// This is the only file in the suite that is NOT golden-locked, and the reason
+// is that its output depends on a font file the repository does not ship. The
+// Font parameter is a family NAME ("arial"), so it resolves to whatever the
+// machine happens to have — a different file on macOS than on Linux, and a
+// different file after an OS update. A byte-exact golden would be a
+// false-failure generator rather than a test.
+//
+// So these cases assert what holds regardless of which font was found: the right
+// size, real structure, opaque alpha, and glyph ink actually present. That is
+// enough to catch the failures that matter — no font found, the render target
+// never cleared, glyphs rasterised but never blended in, or the operator
+// silently doing nothing as it did before 4.5.
+//
+// Vendoring a font (DejaVu Sans is the usual choice) is the one change that
+// would upgrade these to goldens. It is a repository decision, not a technical
+// obstacle, so it is left open.
+
+page "text"
+
+// ---------------------------------------------------------------- Text
+// White text over a dark field. Height is a fraction of the bitmap, so 0.3
+// gives glyphs about 38 pixels tall at 128x128 — big enough to read in a
+// thumbnail, which matters for a case reviewed by eye.
+//
+// Correct: the word "wz4" in white, legible, roughly centred, with antialiased
+// edges. Not a blank field, not a solid block.
+stack at 0,0 {
+  op GenBitmap.Flat {
+    Size = 128, 128
+    Color = #ff101828
+  }
+  op GenBitmap.Text {
+    name = text
+    Position = 0.5, 0.35
+    Height = 0.3
+    Leading = 1
+    Stretch = 0
+    Color = #ffffffff
+    Flags = x, y
+    Font = "arial"
+    Text = "wz4"
+  }
+}
+
+// Two lines, to exercise the newline handling and Leading. GenBitmap::Text
+// splits on '\n' itself and steps y by Leading * the font's line height.
+//
+// Correct: two centred lines, "port" above "4.5", with a clear gap between them
+// and neither clipped at the edges.
+stack at 4,0 {
+  op GenBitmap.Flat {
+    Size = 128, 128
+    Color = #ff101828
+  }
+  op GenBitmap.Text {
+    name = text_lines
+    Position = 0.5, 0.25
+    Height = 0.22
+    Leading = 1
+    Stretch = 0
+    Color = #ffffe0a0
+    Flags = x, y
+    Font = "arial"
+    Text = "port\n4.5"
+  }
+}
+
+// The style flags, which select a synthetic oblique and an emboldened outline
+// rather than a different face.
+//
+// Correct: visibly slanted and heavier than `text` above. If it looks identical
+// to `text`, the flags are not reaching FT_Set_Transform / FT_Outline_Embolden.
+stack at 8,0 {
+  op GenBitmap.Flat {
+    Size = 128, 128
+    Color = #ff101828
+  }
+  op GenBitmap.Text {
+    name = text_styled
+    Position = 0.5, 0.35
+    Height = 0.3
+    Leading = 1
+    Stretch = 0
+    Color = #ffffffff
+    Flags = x, y, italics, bold
+    Font = "arial"
+    Text = "wz4"
+  }
+}
