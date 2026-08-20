@@ -1097,6 +1097,29 @@ and A43 (assert the pipeline's precision, not the artefact's): **assert the thin
 you need, never a proxy for it.** A found path is a proxy. An exit code is a
 proxy. A lower-precision artefact is a proxy.
 
+### A48 · A working build is not evidence that the commit builds — standing
+
+*Phase 5.4.* A new file was named `editor/edit_ops.cpp`. `.gitignore` excludes
+`*_ops.cpp` and `*_ops.hpp`, because that is what `wz4ops` and `opsmeta` generate
+and they land in several directories. So `git add -A` **silently dropped it**.
+
+Everything kept working: the file was on disk, the build compiled it, all 130
+tests passed. The commit would have been broken for everyone else, and nothing in
+the local loop could have said so — the build reads the working tree, not the
+index.
+
+Two habits from it:
+
+- **After staging new files, check the index and not the disk.** `git status`
+  showing a clean tree is the *symptom* here, not the reassurance:
+  `git ls-files <dir>` is what actually answers "will this build after a clone".
+- **Rename rather than add a negation.** The ignore pattern is broad on purpose;
+  a source file whose name trips it is a trap for the next person too. The file
+  is now `docedit.cpp`, and the reason is written at the top of it.
+
+Same shape as A39 and A45 once more: the local build is a *proxy* for the
+committed build, and this is the case where the proxy and the thing disagree.
+
 ### A46 · Altona macro-defines `new`, so third-party headers need a shield — standing
 
 *Phase 5.1.* `base/types.hpp:1763` ends with

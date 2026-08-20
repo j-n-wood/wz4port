@@ -4,12 +4,12 @@ Read this first when picking the project up cold. It records where things
 stand, what has been decided and why, and what would otherwise have to be
 rediscovered the hard way.
 
-**Last updated:** phase 5, stage 5.3.
-**Status:** Phases 1–4 complete and verified; **phase 5 has a working canvas and
-the connection rule is fully exercised.** All 34 `GenBitmap` operators run on
-macOS arm64, with 93 reviewed test cases and 90 byte-exact goldens that are
-bit-identical between the NEON and SSE2 builds. `ctest` is **129 tests** on
-arm64.
+**Last updated:** phase 5, stage 5.4.
+**Status:** Phases 1–4 complete and verified; **phase 5 can now build a graph
+from scratch** — palette, insert, delete, move, resize, Hide, Bypass. All 34
+`GenBitmap` operators run on macOS arm64, with 93 reviewed test cases and 90
+byte-exact goldens that are bit-identical between the NEON and SSE2 builds.
+`ctest` is **130 tests** on arm64.
 
 **`wz4ed` is the editor.** It has a window, a menu bar, a metadata-driven
 inspector, and the stacking canvas: blocks coloured by output type, selection,
@@ -35,7 +35,14 @@ shared edge and renders as nothing. That is the real reason the original draws n
 wires. The overlap span along the shared edge is the informative thing, and it is
 what a sideways drag destroys.
 
-Next: **5.4**, the operator palette.
+**The palette comes from the live class registry, not the metadata** — only a
+registered class can be inserted, so the registry is the authoritative palette
+and cannot offer something uncreatable. Insert and delete live in
+`editor/edit_ops.cpp` with no UI attached, so `palette_insert` drives the same
+code the palette drives rather than a copy of it.
+
+Next: **5.5**, the parameter panel — the big one, and the real payoff for the
+phase-2 metadata.
 
 **SSE2-vs-NEON parity is real and was runnable here**, contrary to the plan's
 assumption that it needed a Linux box: `sh wz4port/tests/tex/parity_x86_64.sh`
@@ -103,7 +110,7 @@ about the build.
 | 2 — Headless op runtime + metadata | **Done**, phase gate passed |
 | 3 — Text graph format + CLI | **Done**, phase gate passed |
 | 4 — Texture library + tests | **Done**, phase gate passed. All 34 operators run |
-| 5 — Texture GUI | **In progress.** 5.1–5.3 done, all gates passed |
+| 5 — Texture GUI | **In progress.** 5.1–5.4 done, all gates passed |
 | 6 — Geometry | Not started |
 | 7 — Animated geometry | Not started |
 
@@ -153,6 +160,7 @@ Clean build from scratch: **0 errors**. Warnings are expected and benign
 | `canvas_rules` | Stage 5.2 gate: canvas edits obey `CheckMove`, and rewire the graph |
 | `connect_passes` | Stage 5.3 gate: the Hide, Sort and Bypass post-passes |
 | `connect_inputs` | And that `wz4gen list -inputs` agrees with the editor's inspector |
+| `palette_insert` | Stage 5.4 gate: all 67 offerable classes insert, connect and delete |
 
 `simd_parity`: **70,184 checks, 0 failures** on arm64 via sse2neon.
 
@@ -223,10 +231,13 @@ wz4port/
     gui_poison.h               tripwire, force-included into every headless target
   editor/main.cpp              phase 5 — wz4ed: window, panes, menus, panels
   editor/canvas.hpp/.cpp       stage 5.2 — the stacking canvas
+  editor/palette.hpp/.cpp      stage 5.4 — the operator palette
+  editor/edit_ops.hpp/.cpp       insert and delete, with no UI attached
   editor/imgui_wz4.hpp         include ImGui through this, never directly (A46)
   tests/editor_shot.cmake      run the editor, screenshot it, check the PNG
   tests/canvas_rules.cpp       stage 5.2 gate, without a window
   tests/connect_passes.cpp     stage 5.3 gate: Hide, Sort, Bypass
+  tests/palette_insert.cpp     stage 5.4 gate: every class inserts for real
   third_party/sse2neon.h       pinned v1.9.1, MIT, 11,222 lines
   third_party/imgui/           pinned v1.92.9b, MIT — core + glfw/gl3 backends
   third_party/glfw/            pinned 3.5.1, zlib — src/include/CMake only

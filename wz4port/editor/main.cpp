@@ -31,6 +31,8 @@
 // placement-new declaration. See the header for the whole story.
 #include "imgui_wz4.hpp"
 #include "canvas.hpp"
+#include "palette.hpp"
+#include "docedit.hpp"
 
 #include <GLFW/glfw3.h>
 #include <stdio.h>                  // fflush, for the exit path at the bottom
@@ -107,6 +109,7 @@ struct wEditor
   wOp *Selected;
 
   wCanvas Canvas;
+  wPalette Palette;
 
   // `bool`, not sBool: ImGui takes bool* for its toggles and sBool is an int.
   bool ShowDemo;
@@ -162,6 +165,54 @@ struct wEditor
       ops += Doc->Pages[p]->Ops.GetCount();
     Status.PrintF(L"%d page(s), %d operator(s)",Doc->Pages.GetCount(),ops);
     return 1;
+  }
+
+  // Insertion, following the original (gui.cpp:5165-5197 via
+  // docs/01-existing-model.md §2.5):
+  //
+  //   place a 3 x 1 block at the cursor IF CheckDest allows
+  //   apply the class's defaults
+  //   reconnect
+  //   select it, and ADVANCE THE CURSOR DOWN ONE ROW
+  //
+  // That last step is what makes the palette usable: pressing the same key
+  // repeatedly builds a stack top to bottom, because each new block lands
+  // touching the one before and so becomes its consumer. If the cells are
+  // occupied the insert is refused and nothing moves — the same all-or-nothing
+  // rule as a drag.
+  //
+  // Width is hardcoded to 3, as upstream. It is not sized to the input count;
+  // widening a consumer is a manual act, because width is semantic.
+  sBool Insert(wPage *page,wClass *cl)
+  {
+    if(!page || !cl)
+      return 0;
+
+    wStackOp *op = wInsertOp(page,cl,Canvas.CursorX,Canvas.CursorY);
+    if(!op)
+    {
+      Status.PrintF(L"no room at %d,%d",Canvas.CursorX,Canvas.CursorY);
+      return 0;
+    }
+
+    Selected = op;
+    Canvas.CursorY += op->SizeY;    // so repeated insertion builds a stack
+    Status.PrintF(L"inserted %s",cl->Name);
+    return 1;
+  }
+
+  // Delete is not in stage 5.4's brief, but an editor that can only add is not
+  // usable enough to test the palette with — you would have to restart to undo a
+  // mistake. §2.5 lists it as one of the basic operations, so it is here.
+  sBool DeleteSelection(wPage *page)
+  {
+    const sInt n = wDeleteSelection(page);
+    if(n)
+    {
+      Selected = 0;
+      Status.PrintF(L"deleted %d operator(s)",n);
+    }
+    return n!=0;
   }
 
   // Selects by store name. Exists for -select, which is what lets the
@@ -466,7 +517,8 @@ static void DrawFrame(GLFWwindow *window,sBool &quit)
     ImGui::EndMainMenuBar();
   }
 
-  const float canvasw = vp->Size.x*0.70f;
+  const float palw = vp->Size.x*0.16f;
+  const float canvasw = vp->Size.x*0.54f;
   const ImGuiWindowFlags paneflags = ImGuiWindowFlags_NoMove
                                     |ImGuiWindowFlags_NoResize
                                     |ImGuiWindowFlags_NoCollapse;
@@ -476,20 +528,35 @@ static void DrawFrame(GLFWwindow *window,sBool &quit)
   // point of the edit so that two edits in one frame cost one rebuild.
   sBool reconnect = 0;
 
-  // The canvas is the editor. It gets the space, and the panels sit beside it —
-  // in this model the geometry IS the graph, so the canvas is not a view of the
-  // document, it is the document.
+  wPage *page = 0;
+  if(Doc && Doc->Pages.GetCount())
+  {
+    if(Ed->CurrentPage>=Doc->Pages.GetCount())
+      Ed->CurrentPage = 0;
+    page = Doc->Pages[Ed->CurrentPage];
+  }
+
+  // Palette on the left, canvas in the middle, inspector on the right: what you
+  // can add, what you have, what it is set to.
   ImGui::SetNextWindowPos(ImVec2(0,menuh));
+  ImGui::SetNextWindowSize(ImVec2(palw,vp->Size.y-menuh));
+  ImGui::Begin("Palette",0,paneflags);
+  {
+    wClass *pick = Ed->Palette.Draw();
+    if(pick && page)
+    {
+      if(Ed->Insert(page,pick))
+        reconnect = 1;
+    }
+  }
+  ImGui::End();
+
+  // The canvas is the editor. In this model the geometry IS the graph, so the
+  // canvas is not a view of the document, it is the document.
+  ImGui::SetNextWindowPos(ImVec2(palw,menuh));
   ImGui::SetNextWindowSize(ImVec2(canvasw,vp->Size.y-menuh));
   ImGui::Begin("Canvas",0,paneflags);
   {
-    wPage *page = 0;
-    if(Doc && Doc->Pages.GetCount())
-    {
-      if(Ed->CurrentPage>=Doc->Pages.GetCount())
-        Ed->CurrentPage = 0;
-      page = Doc->Pages[Ed->CurrentPage];
-    }
 
     if(page)
     {
@@ -507,8 +574,8 @@ static void DrawFrame(GLFWwindow *window,sBool &quit)
   }
   ImGui::End();
 
-  ImGui::SetNextWindowPos(ImVec2(canvasw,menuh));
-  ImGui::SetNextWindowSize(ImVec2(vp->Size.x-canvasw,vp->Size.y-menuh));
+  ImGui::SetNextWindowPos(ImVec2(palw+canvasw,menuh));
+  ImGui::SetNextWindowSize(ImVec2(vp->Size.x-palw-canvasw,vp->Size.y-menuh));
   ImGui::Begin("Inspector",0,paneflags);
   if(DrawInspector())
     reconnect = 1;
@@ -547,9 +614,8 @@ static void DrawFrame(GLFWwindow *window,sBool &quit)
   // per-block graph edits and are usually applied to several blocks at once.
   // Guarded on no text field having focus, or typing an H in a name would toggle
   // Hide on everything selected.
-  if(!ImGui::GetIO().WantTextInput && Doc && Doc->Pages.GetCount())
+  if(!ImGui::GetIO().WantTextInput && page)
   {
-    wPage *page = Doc->Pages[Ed->CurrentPage];
     const sBool h = ImGui::IsKeyPressed(ImGuiKey_H,false);
     const sBool b = ImGui::IsKeyPressed(ImGuiKey_B,false);
     if(h || b)
@@ -563,16 +629,46 @@ static void DrawFrame(GLFWwindow *window,sBool &quit)
         reconnect = 1;
       }
     }
+
+    if(ImGui::IsKeyPressed(ImGuiKey_Delete,false) ||
+       ImGui::IsKeyPressed(ImGuiKey_Backspace,false))
+    {
+      if(Ed->DeleteSelection(page))
+        reconnect = 1;
+    }
+
+    // Class shortcuts, as the original has them: one key inserts one operator
+    // at the cursor. Only unmodified presses, so Ctrl+R stays a reload.
+    //
+    // H and B are checked first and are not available as class shortcuts here.
+    // Upstream resolves that collision through a data-driven binding file
+    // (werkkzeug4.wire.txt) which this port does not read; the palette's click
+    // path reaches every operator regardless, so nothing is unreachable.
+    if(!ImGui::GetIO().KeyCtrl && !ImGui::GetIO().KeyAlt &&
+       !ImGui::GetIO().KeySuper && !h && !b)
+    {
+      for(sInt i=0;i<Doc->Classes.GetCount() && !reconnect;i++)
+      {
+        wClass *cl = Doc->Classes[i];
+        if(!cl->Shortcut || (cl->Flags & wCF_HIDE))
+          continue;
+        // Letters only; the registry stores an ASCII code.
+        const sInt c = cl->Shortcut;
+        if(c<'a' || c>'z')
+          continue;
+        const ImGuiKey key = ImGuiKey(ImGuiKey_A + (c-'a'));
+        if(ImGui::IsKeyPressed(key,false) && !ImGui::GetIO().KeyShift)
+        {
+          if(Ed->Insert(page,cl))
+            reconnect = 1;
+        }
+      }
+    }
   }
 
   // One rebuild per frame, however many edits produced it.
   if(reconnect && Doc)
-  {
     Doc->Connect();
-    if(Doc->Pages.GetCount())
-      Ed->Status.PrintF(L"reconnected: %d operator(s)",
-        Doc->Pages[Ed->CurrentPage]->Ops.GetCount());
-  }
 
   (void)window;
 }

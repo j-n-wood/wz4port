@@ -585,6 +585,8 @@ if(EXISTS "${WZ4_IMGUI_DIR}/imgui.cpp" AND EXISTS "${WZ4_GLFW_DIR}/CMakeLists.tx
     add_executable(wz4ed
       "${CMAKE_CURRENT_SOURCE_DIR}/editor/main.cpp"
       "${CMAKE_CURRENT_SOURCE_DIR}/editor/canvas.cpp"
+      "${CMAKE_CURRENT_SOURCE_DIR}/editor/palette.cpp"
+      "${CMAKE_CURRENT_SOURCE_DIR}/editor/docedit.cpp"
     )
     target_link_libraries(wz4ed PRIVATE wz4t wz4tex imgui)
     target_compile_options(wz4ed PRIVATE
@@ -1085,6 +1087,34 @@ target_compile_options(connect_passes PRIVATE
   "SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/tests/gui_poison.h"
 )
 add_test(NAME connect_passes COMMAND connect_passes)
+
+#############################################################################
+##  palette_insert — the stage 5.4 gate                                    ##
+#############################################################################
+
+# "Every registered operator is reachable from the palette and can be inserted."
+# Reachability is three flag tests; insertability is the half that can break, so
+# this walks the whole registry and inserts every offerable class for real.
+#
+# It links editor/docedit.cpp — the same wInsertOp the palette calls. Copying
+# those twenty lines into the test would have tested the copy.
+#
+# docedit, not the obvious edit_ops: .gitignore excludes `*_ops.cpp` because that
+# is what wz4ops and opsmeta generate, so `edit_ops.cpp` was silently dropped by
+# `git add -A` while the build kept working off the untracked file. See the
+# comment at the top of docedit.hpp.
+
+add_executable(palette_insert
+  "${CMAKE_CURRENT_SOURCE_DIR}/tests/palette_insert.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/editor/docedit.cpp"
+)
+target_link_libraries(palette_insert PRIVATE wz4tex)
+target_include_directories(palette_insert PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}/editor")
+target_compile_options(palette_insert PRIVATE
+  "SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/tests/gui_poison.h"
+)
+add_test(NAME palette_insert COMMAND palette_insert)
 
 # The other half of 5.3's gate: the derived graph the editor's inspector shows
 # must be the one the headless library derives. They agree by construction — both

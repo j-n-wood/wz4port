@@ -243,16 +243,75 @@ edge, one per input.
 
 Still a `View` toggle, off by default, `-guides` to start with it on.
 
-### 5.4 — Operator palette
+### 5.4 — Operator palette — **done**
 
-Built from metadata: the type tabs, then classes grouped into columns 0–30 under their
-type's column headers (`generator`, `filter`, `merge`, `mix types`, `any type`), with keyboard
-shortcuts. Respects the `hide` flag.
+~~Built from metadata~~ — **built from the live class registry** (`Doc->Types`, `Doc->Classes`).
+A palette's job is to offer what can be inserted, and only a *registered* class can be, so
+driving it from the registry makes an unofferable entry impossible by construction. Driving it
+from metadata would let the palette and the runtime disagree, which is the class of bug metadata
+was introduced to prevent elsewhere. The registry also carries everything the layout needs —
+`wClass::Column`, `Shortcut`, `TabType`, and `wType::ColumnHeaders`. The plan's actual point,
+"no per-operator UI code", holds either way: there is none.
 
 Insertion follows the original: place at the cursor if `CheckDest` allows, apply defaults,
 **advance the cursor down one row** so repeated insertion builds a stack.
 
-**Gate:** every registered operator is reachable from the palette and can be inserted.
+**Gate — passed.** The palette shows all 34 `GenBitmap` operators grouped under the type's own
+column headers — `generator`, `filters`, `special`, `samplers`, read from the registry rather
+than invented — with each class's shortcut key shown beside it, plus a filter box.
+
+`palette_insert` is the gate proper: it walks the whole registry and **inserts every offerable
+class for real**, then reconnects. 67 of 74 offered, 67 inserted and connected. Reachability is
+three flag tests and could be eyeballed; insertability is the half that can break — a class
+whose `SetDefaults` crashed would look fine in a list and fail on click.
+
+It links `editor/edit_ops.cpp`, the same `wInsertOp` the palette calls. Insert and delete were
+factored out of the GUI for exactly that reason: copying twenty lines into the test would have
+tested the copy. Same reasoning as the canvas calling `wPage::CheckMove` rather than
+reimplementing it.
+
+The test also pins the two behaviours that make the palette usable rather than merely present:
+**repeated insertion at an advancing cursor builds a connected chain** — which is the entire
+reason the original advances the cursor by one row — and **an insert with no room is refused and
+displaces nothing.**
+
+#### The 7 exclusions are named, not counted
+
+`ConvertSceneNode`, `MakeCubeTex`, `MakeTexture`, `MakeTexture2` and `MakeWz3Bitmap` are
+conversions, which the editor inserts automatically to bridge a type mismatch; offering them by
+hand invites graphs that cannot be reasoned about. `Dummy` and our own `UnknownOp` placeholder
+carry `wCF_HIDE`, which `doc_core.hpp` documents as literally "hide in op palette".
+
+The test prints each one with the flag that excluded it. An exclusion list that is only a number
+cannot be audited, and "the palette is missing an operator" is the complaint this test exists to
+answer.
+
+#### `wType::Order` exists for tab ordering and no type sets it
+
+`doc_core.hpp` documents it as "sorting order, set to 1..9 to assign type keyboard shortcuts
+1..9" — exactly the field wanted. It is 0 for every type in both registered modules, so sorting
+by it changed nothing, which is how I found out.
+
+In registration order the bar opened on `AnyType`'s seventeen structural operators — `Call`,
+`Dummy`, `EndLoop`, `InjectGlobals` — and scrolled `GenBitmap`'s thirty-four off the end, which
+is backwards for a texture editor. `Order` is still honoured where set; the tie-break is
+insertable-class count, descending. **That tie-break is a judgement, not upstream behaviour**,
+and it is there because the alternative was leaving the useful tab hidden.
+
+#### Also in this stage, and not in its brief
+
+**Delete** (`Del`/`Backspace`, and `wDeleteSelection`). An editor that can only add is not usable
+enough to test a palette with — you would restart to undo a mistake. §2.5 lists it as one of the
+basic operations.
+
+**Class shortcut keys.** One unmodified key inserts one operator at the cursor. `H` and `B` are
+checked first and so are unavailable as class shortcuts; upstream resolves that collision through
+a data-driven binding file (`werkkzeug4.wire.txt`) this port does not read. The palette's click
+path reaches every operator regardless, so nothing is unreachable.
+
+**Not** done: copy/paste, and duplicate-by-drag (still deferred from 5.2). Both need clipboard
+serialisation of full blocks including geometry, which is a piece of work in its own right and
+belongs with undo in 5.7.
 
 ### 5.5 — Parameter panel
 
