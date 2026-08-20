@@ -29,6 +29,20 @@
 /****************************************************************************/
 
 // macOS has no *64 variants because the base functions are already 64-bit.
+//
+// sys/stat.h is included FIRST, deliberately, and the reason is x86-64 only:
+// `stat64` is a STRUCT name as well as a function name, and on x86-64 macOS the
+// SDK still declares `struct stat64` for the legacy 32-bit-inode ABI. Defining
+// the macro first rewrites that declaration into a second `struct stat` and the
+// SDK header fails to compile with "redefinition of 'stat'". On arm64 there is
+// no `struct stat64` in the SDK, so the collision does not arise — which is why
+// this only surfaced when an x86-64 slice was built for the SIMD parity check.
+//
+// Letting the SDK declare its own types before the macro exists fixes it: the
+// include guard stops the header being reprocessed later, and Altona's own
+// `struct stat64` / `stat64()` uses are still rewritten as intended.
+
+#include <sys/stat.h>
 
 #define lseek64      lseek
 #define mmap64       mmap

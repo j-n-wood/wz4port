@@ -21,35 +21,46 @@ op GenBitmap.Perlin at 0,0 size 15x1 {
   Seed = 2
 }
 
-// A normal map stores a direction per pixel in the colour channels, so all four
-// of these should be pale, low-contrast, mostly blue-violet images — that is
-// what "mostly pointing at the viewer" looks like. A normal map that comes out
-// looking like the greyscale height field means the operator did nothing.
+// A normal map stores a direction per pixel in the colour channels. All four of
+// these must be COLOUR images: one that comes out looking like the greyscale
+// height field means the operator did nothing.
 //
-// 2d: correct output has no blue variation to speak of, because a 2d normal
-// leaves Z constant.
+// The visible axis is 2d versus 3d, not tangent versus not:
+//
+//   2d modes leave Z alone, so R and G carry everything and the result is
+//     high-contrast and saturated — pink, green and cyan.
+//   3d modes vary Z as well, which dominates, giving the pale blue-violet of a
+//     conventional normal map.
+//
+// Tangent versus non-tangent is the subtle one, and measurably so: `wz4gen diff`
+// puts it at up to 215 of 255 in R and G with BLUE BYTE-IDENTICAL, which is
+// exactly right — tangent space is a rotation in the surface plane and cannot
+// touch Z. All four outputs are distinct.
+//
+// 2d: saturated pink/green/cyan, little blue variation.
 op GenBitmap.Normals at 0,1 size 3x1 {
   name = normals_2d
   Strength = 4
   Mode = "2d", normal
 }
 
-// 3d: correct output varies in all three channels and is the one that looks
-// like a conventional normal map.
+// 3d: the conventional pale blue-violet normal map.
 op GenBitmap.Normals at 3,1 size 3x1 {
   name = normals_3d
   Strength = 4
   Mode = "3d", normal
 }
 
-// tangent space, 2d and 3d. Correct: each visibly different from its non-tangent
-// counterpart above.
+// tangent 2d: saturated like normals_2d, with R and G rotated. Blue must match
+// normals_2d exactly.
 op GenBitmap.Normals at 6,1 size 3x1 {
   name = normals_tangent2d
   Strength = 4
   Mode = "tangent 2d", normal
 }
 
+// tangent 3d: pale like normals_3d, with R and G rotated. Blue must match
+// normals_3d exactly.
 op GenBitmap.Normals at 9,1 size 3x1 {
   name = normals_tangent3d
   Strength = 4
@@ -71,36 +82,43 @@ op GenBitmap.Normals at 12,1 size 3x1 {
 // ---------------------------------------------------------------- Light
 // Lighting a FLAT white surface, so what you see is the shape of the light
 // itself with nothing else mixed in. 9 wide for three consumers.
+//
+// The light sits CLOSE to the surface, at z = 0.15. Further out (0.6 was tried)
+// a point light's 1/r falloff barely varies across the plane and the result is a
+// near-flat grey — legible only as "not quite uniform", which is not a test.
+// All three cases share these numbers so that Mode is the only variable.
 op GenBitmap.Flat at 0,3 size 9x1 {
   name = src_white
   Size = 128, 128
   Color = #ffffffff
 }
 
-// spot: correct output is a bright elliptical pool towards Pos, falling off to
-// dark at the edges — a cone of light on a wall.
+// spot: correct output is an elongated CONE — bright at Pos and tapering away
+// along Dir, with the rest of the frame near-black. Unmistakably directional,
+// which is the whole distinction from `point` below.
 op GenBitmap.Light at 0,4 size 3x1 {
   name = light_spot
   Mode = spot
-  Pos = 0.35, 0.35, 0.6
+  Pos = 0.35, 0.35, 0.15
   Dir = 0.125, 0.25
   Diffuse = #ffffffff
-  Ambient = #ff303040
+  Ambient = #ff202028
   Outer = 0.75
-  Falloff = 1
+  Falloff = 2
   Amplify = 1
 }
 
-// point: correct output is a radially symmetric glow around Pos, with no cone
-// edge — obviously different from spot.
+// point: correct output is a radially SYMMETRIC bright pool centred on Pos,
+// falling off evenly in every direction with no cone and no preferred axis. Set
+// this beside light_spot: same numbers, entirely different shape.
 op GenBitmap.Light at 3,4 size 3x1 {
   name = light_point
   Mode = point
-  Pos = 0.35, 0.35, 0.6
+  Pos = 0.35, 0.35, 0.15
   Diffuse = #ffffffff
-  Ambient = #ff303040
+  Ambient = #ff202028
   Outer = 0.75
-  Falloff = 1
+  Falloff = 2
   Amplify = 1
 }
 
@@ -113,9 +131,9 @@ op GenBitmap.Light at 6,4 size 3x1 {
   Mode = directional
   Dir = 0.125, 0.25
   Diffuse = #ffffffff
-  Ambient = #ff303040
+  Ambient = #ff202028
   Outer = 0.75
-  Falloff = 1
+  Falloff = 2
   Amplify = 1
 }
 
@@ -130,6 +148,12 @@ op GenBitmap.Light at 6,4 size 3x1 {
 // Correct: the flat coloured surface now looks like an embossed, lit relief of
 // the noise — highlights on slopes facing the light, shadow on those facing
 // away. If it looks like flat colour the normal map is not reaching it.
+//
+// These use a BROADER light than the Light cases above — z = 0.6 and a gentler
+// Falloff — on purpose. The Light cases exist to show the shape of the light, so
+// they want it close and tight; these exist to show the relief, so they want the
+// whole frame lit. At the Light group's settings the relief was only visible
+// inside a small cone, which tests the light rather than the bump.
 
 op GenBitmap.Perlin at 3,6 size 3x1 {
   Size = 128, 128

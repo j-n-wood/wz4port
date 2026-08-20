@@ -45,6 +45,19 @@ target_compile_options(altona_flags INTERFACE
   -fno-rtti
   -fshort-wchar
   -fno-strict-aliasing
+  # Determinism across architectures, not performance. clang defaults to
+  # -ffp-contract=fast and will fuse a*b+c into a single FMA where the target
+  # has one — arm64 always does, this x86-64 target does not — and an FMA
+  # rounds once where the separate operations round twice. That is enough to
+  # move a float by one ULP, which the texture engine then quantises into a
+  # different 16-bit sample.
+  #
+  # Found by building an x86-64 slice and comparing it against arm64 goldens
+  # (stage 4.4): eight operators diverged, every one of them float-touching —
+  # Perlin's and GlowRect's sFPow gamma tables, Unwrap's coordinate maths, and
+  # all of the lighting. With contraction off the two architectures agree
+  # exactly. See docs/06-phase-texture.md.
+  -ffp-contract=off
   -Wno-invalid-offsetof
   -Wno-writable-strings
   # Altona predates C++11 user-defined literals and writes  "..."sTXT(x)
@@ -606,52 +619,45 @@ set_tests_properties(tex_smoke_flat PROPERTIES
 # asked for. An operator that ran but changed nothing therefore fails here
 # rather than being hidden by the rest of the chain.
 #
-# render_png.cmake checks the file on disk, not just the exit code — see the
+# golden_png.cmake checks the artefact on disk, not just the exit code — see the
 # comment at the top of it.
 
 set(WZ4_TEX_PNG_DIR "${CMAKE_BINARY_DIR}/tex-png")
 
-add_test(NAME tex_chain_field COMMAND "${CMAKE_COMMAND}"
-  "-DWZ4GEN=$<TARGET_FILE:wz4gen>"
-  "-DDOC=${CMAKE_CURRENT_SOURCE_DIR}/tests/tex/chain.wz4t"
-  "-DMETA=${WZ4_META_DIR}"
-  "-DOP=field"
-  "-DOUT=${WZ4_TEX_PNG_DIR}/field.png"
-  "-DEXPECT=256 x 256, uniform"
-  -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/tex/render_png.cmake")
-set_tests_properties(tex_chain_field PROPERTIES DEPENDS opsmeta_gate)
-
-foreach(_op rect twisted twisted_soft)
-  add_test(NAME tex_chain_${_op} COMMAND "${CMAKE_COMMAND}"
-    "-DWZ4GEN=$<TARGET_FILE:wz4gen>"
-    "-DDOC=${CMAKE_CURRENT_SOURCE_DIR}/tests/tex/chain.wz4t"
-    "-DMETA=${WZ4_META_DIR}"
-    "-DOP=${_op}"
-    "-DOUT=${WZ4_TEX_PNG_DIR}/${_op}.png"
-    "-DEXPECT=256 x 256, structured"
-    -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/tex/render_png.cmake")
-  set_tests_properties(tex_chain_${_op} PROPERTIES DEPENDS opsmeta_gate)
-endforeach()
+# The cases themselves are declared below, with the rest of the texture suite,
+# because they use the same wz4_tex_case helper and so get goldens too.
 
 #############################################################################
 ##  tex_ops — stage 4.3, one case per texture operator                     ##
 #############################################################################
 
-# Each named operator in a tests/tex/ops_*.wz4t file is one case: it renders to
-# build/tex-png/ and the PNG on disk is checked. `expect` is matched against the
-# tool's own report, so an operator that runs but returns a 1x1 bitmap, or a
-# flat fill where structure was expected, fails instead of passing quietly.
-#
-# 4.4 replaces `expect` with a byte-exact golden comparison. Until then these
-# assert only what can be asserted without a reviewed reference.
-
 # wz4_tex_case(<doc> <op> <expect> [reject])
 #
-# `reject` defaults to "renders blank", which is the assertion that matters most
-# before goldens exist: a bitmap with zero alpha writes a valid PNG of the right
-# size that displays as plain white, so every other check passes on it and a
-# reviewer cannot tell it from a white image. A case that is meant to be blank
-# passes its own reject value to opt out.
+# Each named operator in tests/tex/*.wz4t is one case. It renders to
+# build/tex-png/, and three things are checked:
+#
+#   EXPECT   the tool's own report must match — size, uniform/structured. Catches
+#            an operator that ran but returned 1x1, or a flat fill where
+#            structure was expected.
+#   REJECT   the report must NOT match this. Defaults to "renders blank", the
+#            assertion that earned its keep in 4.3: a zero-alpha bitmap writes a
+#            valid PNG of the right size that displays as plain white, and every
+#            positive check passes on it. A case meant to be blank opts out by
+#            passing its own reject value.
+#   golden   the image must match tests/tex/golden/ byte for byte, and so must
+#            the report line, checksum included. That is stage 4.4.
+#
+# EXPECT and REJECT are kept alongside the golden rather than replaced by it,
+# because they say WHY a case failed. A golden mismatch on its own tells you only
+# that something moved.
+#
+# Every case is also recorded into build/tex-cases.txt, which is what
+# lock_goldens.cmake reads. Deriving the list from the PNG filenames instead
+# would mean splitting "ops_gen_flat" into a document and an operator, which is
+# ambiguous; emitting it here keeps the lock step and the tests in step by
+# construction.
+set_property(GLOBAL PROPERTY WZ4_TEX_CASES "")
+
 function(wz4_tex_case doc op expect)
   set(_reject "renders blank")
   if(ARGC GREATER 3)
@@ -663,11 +669,36 @@ function(wz4_tex_case doc op expect)
     "-DMETA=${WZ4_META_DIR}"
     "-DOP=${op}"
     "-DOUT=${WZ4_TEX_PNG_DIR}/${doc}_${op}.png"
+    "-DGOLDEN=${CMAKE_CURRENT_SOURCE_DIR}/tests/tex/golden/${doc}_${op}.png"
+    "-DDIFF=${WZ4_TEX_PNG_DIR}/${doc}_${op}.diff.png"
     "-DEXPECT=${expect}"
     "-DREJECT=${_reject}"
-    -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/tex/render_png.cmake")
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/tex/golden_png.cmake")
   set_tests_properties(tex_${doc}_${op} PROPERTIES DEPENDS opsmeta_gate)
+  set_property(GLOBAL APPEND PROPERTY WZ4_TEX_CASES "${doc}|${op}")
 endfunction()
+
+# The stage 4.2 chain: Flat -> GlowRect -> Twirl -> Blur at 256x256, every step
+# named so each operator can be checked on its own rather than inferred from the
+# end of the chain.
+wz4_tex_case(chain field "256 x 256, uniform")
+foreach(_op rect twisted twisted_soft)
+  wz4_tex_case(chain ${_op} "256 x 256, structured")
+endforeach()
+
+# The shared source bitmaps are cases in their own right. Without them a
+# reviewer has nothing to compare a filtered result against, and the subtle
+# operators — ColorBalance especially — cannot be judged at all: "is the dark end
+# bluer than the source" is not answerable if the source was never rendered.
+wz4_tex_case(ops_color src_ramp   "128 x 128, structured")
+wz4_tex_case(ops_color src_gray   "128 x 128, structured")
+wz4_tex_case(ops_merge src_ramp   "128 x 128, structured")
+wz4_tex_case(ops_merge src_cells  "128 x 128, structured")
+wz4_tex_case(ops_filter src_bricks "128 x 128, structured")
+wz4_tex_case(ops_warp src_bricks   "128 x 128, structured")
+wz4_tex_case(ops_light src_height  "128 x 128, structured")
+wz4_tex_case(ops_light src_white   "128 x 128, uniform")
+wz4_tex_case(ops_io src_bricks     "128 x 128, structured")
 
 # Generators. Flat is the one case that must be uniform; if any other generator
 # comes out uniform it did nothing.
@@ -757,6 +788,37 @@ wz4_tex_case(ops_merge merge_sub "structured, alpha 0000..0000" "")
 foreach(_op export makewz3bitmap)
   wz4_tex_case(ops_io ${_op} "128 x 128, structured")
 endforeach()
+
+# Hand the case list to lock_goldens.cmake. One "doc|op" per line, in
+# declaration order.
+get_property(_cases GLOBAL PROPERTY WZ4_TEX_CASES)
+string(REPLACE ";" "\n" _caselist "${_cases}")
+file(WRITE "${CMAKE_BINARY_DIR}/tex-cases.txt" "${_caselist}\n")
+list(LENGTH _cases _ncases)
+message(STATUS "texture suite: ${_ncases} cases")
+
+#############################################################################
+##  merge_identity — brightness and hardlight must stay identical          ##
+#############################################################################
+
+# Merge's `brightness` and `hardlight` modes are the same algorithm written
+# twice (wz3_bitmap_code.cpp:995 and :1120): the mask is built with
+# _mm_srli_epi16 in one and _mm_and_si128 in the other, and everything after is
+# identical. So their outputs must be byte-identical.
+#
+# That is worth a test rather than a comment, because the two paths reach the
+# same answer through DIFFERENT intrinsics. If sse2neon mistranslated either of
+# those two, or a future change touched one kernel and not the other, they would
+# diverge — and nothing else in the suite would notice, since both would still
+# match their own goldens only if both were still correct.
+
+add_test(NAME tex_merge_identity COMMAND "${CMAKE_COMMAND}"
+  "-DWZ4GEN=$<TARGET_FILE:wz4gen>"
+  "-DA=${WZ4_TEX_PNG_DIR}/ops_merge_merge_brightness.png"
+  "-DB=${WZ4_TEX_PNG_DIR}/ops_merge_merge_hardlight.png"
+  -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/tex/same_png.cmake")
+set_tests_properties(tex_merge_identity PROPERTIES
+  DEPENDS "tex_ops_merge_merge_brightness;tex_ops_merge_merge_hardlight")
 
 #############################################################################
 ##  core_connect — the phase 2 gate                                        ##

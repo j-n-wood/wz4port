@@ -1,0 +1,1 @@
+128 x 128, structured, alpha 0000..0000 — renders blank, checksum 630cdc87e273d000

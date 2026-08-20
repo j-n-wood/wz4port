@@ -844,13 +844,123 @@ static void Usage()
   sPrint(L"  describe      the full parameter description of one operator\n");
   sPrint(L"  checkmeta     read all the metadata and check it hangs together\n");
   sPrint(L"  convert       .wz4 <-> .wz4t, direction from the extensions\n");
-  sPrint(L"  render        evaluate one operator — phase 4\n");
+  sPrint(L"  render        evaluate one operator, optionally to a PNG\n");
+  sPrint(L"  diff          compare two PNGs: how much, where, and a diff image\n");
   sPrint(L"\n");
   sPrint(L"Switches go after the filename: Altona's shell parser treats the\n");
   sPrint(L"token after a -switch as that switch's first parameter.\n");
-  sPrint(L"\n");
-  sPrint(L"describe, convert and render arrive later in phase 3.\n");
 }
+
+/****************************************************************************/
+/***   diff — why two renders differ, in numbers and as an image          ***/
+/****************************************************************************/
+
+// A byte comparison says "these files differ" and nothing else, which is not
+// enough to act on: one pixel off by one is a rounding difference to note, and
+// half the image off by fifty is a broken operator. This reports the shape of
+// the difference and writes an amplified image of it.
+
+static sBool LoadImage(const sChar *name,sImage &img)
+{
+  sDInt size = 0;
+  sU8 *bytes = sLoadFile(name,size);
+  if(!bytes)
+  {
+    sPrintF(L"wz4gen: could not read <%s>\n",name);
+    return 0;
+  }
+  // LoadPNG hands straight to stb_image, which sniffs the format itself.
+  sBool ok = img.LoadPNG(bytes,sInt(size));
+  delete[] bytes;
+  if(!ok)
+    sPrintF(L"wz4gen: <%s> is not an image stb_image can read\n",name);
+  return ok;
+}
+
+static void DiffImages(const sChar *namea,const sChar *nameb,const sChar *out)
+{
+  sImage a,b;
+  if(!LoadImage(namea,a) || !LoadImage(nameb,b))
+  {
+    sSetErrorCode();
+    return;
+  }
+
+  if(a.SizeX!=b.SizeX || a.SizeY!=b.SizeY)
+  {
+    sPrintF(L"  size differs: %d x %d vs %d x %d\n",
+      a.SizeX,a.SizeY,b.SizeX,b.SizeY);
+    sSetErrorCode();
+    return;
+  }
+
+  const sInt count = a.SizeX*a.SizeY;
+  sU8 *pa = (sU8 *) a.Data;
+  sU8 *pb = (sU8 *) b.Data;
+
+  sInt differing = 0;
+  sInt worst = 0;
+  sInt chan[4] = { 0,0,0,0 };
+
+  for(sInt i=0;i<count;i++)
+  {
+    sBool any = 0;
+    for(sInt c=0;c<4;c++)
+    {
+      sInt d = sAbs(sInt(pa[i*4+c])-sInt(pb[i*4+c]));
+      if(d)
+      {
+        any = 1;
+        if(d>chan[c]) chan[c] = d;
+        if(d>worst)   worst = d;
+      }
+    }
+    if(any)
+      differing++;
+  }
+
+  if(!differing)
+  {
+    sPrintF(L"  identical: %d x %d, every byte\n",a.SizeX,a.SizeY);
+    return;
+  }
+
+  sPrintF(L"  %d of %d pixels differ (%d%%), worst channel delta %d of 255\n",
+    differing,count,differing*100/count,worst);
+  sPrintF(L"  per channel, worst delta: b %d, g %d, r %d, a %d\n",
+    chan[0],chan[1],chan[2],chan[3]);
+
+  if(out)
+  {
+    // Amplified so a one-step difference is actually visible: black where the
+    // two agree, brightening towards white with the size of the disagreement.
+    // Scaled by the worst delta rather than a fixed factor, so the image is
+    // legible whether the difference is 1 or 200 — read the numbers above for
+    // the magnitude, and this image for WHERE.
+    sImage d;
+    d.Init(a.SizeX,a.SizeY);
+    sU8 *pd = (sU8 *) d.Data;
+    for(sInt i=0;i<count;i++)
+    {
+      sInt m = 0;
+      for(sInt c=0;c<4;c++)
+        m = sMax(m,sAbs(sInt(pa[i*4+c])-sInt(pb[i*4+c])));
+      sInt v = worst ? sMin(255,m*255/worst) : 0;
+      pd[i*4+0] = sU8(v);
+      pd[i*4+1] = sU8(v);
+      pd[i*4+2] = sU8(v);
+      pd[i*4+3] = 255;
+    }
+    if(!d.SavePNG(out))
+      sPrintF(L"wz4gen: could not write <%s>\n",out);
+    else
+      sPrintF(L"  wrote %s (normalised to the worst delta)\n",out);
+  }
+
+  sSetErrorCode();
+}
+
+/****************************************************************************/
 
 void sMain()
 {
@@ -1101,6 +1211,21 @@ void sMain()
           obj->Release();
         }
       }
+    }
+  }
+  else if(sCmpString(command,L"diff")==0)
+  {
+    const sChar *a = sGetShellParameter(0,1);
+    const sChar *b = sGetShellParameter(0,2);
+    const sChar *out = sGetShellParameter(L"out",0);
+    if(!a || !b)
+    {
+      sPrint(L"usage: wz4gen diff <a.png> <b.png> [-out <diff.png>]\n");
+      sSetErrorCode();
+    }
+    else
+    {
+      DiffImages(a,b,out);
     }
   }
   else if(sCmpString(command,L"identity")==0)

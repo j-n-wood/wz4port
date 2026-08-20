@@ -10,10 +10,28 @@ wz4t 1
 // two outputs that match mean a mode is being ignored:
 //
 //   input 0 — a horizontal black-to-white ramp
-//   input 1 — greyscale Voronoi cells
+//   input 1 — greyscale Voronoi cells, peaking at 0x90 rather than white
+//
+// The cells stop short of white deliberately. With both inputs reaching full
+// brightness, `add` and `addsmooth` saturated across most of the frame and read
+// as flat white — correct arithmetic, useless as a review image. Leaving
+// headroom in one input keeps every mode legible, and costs nothing for `mul`,
+// `min` or `max`.
 //
 // A ramp against a pattern is the standard way to read a blend mode: you can see
 // what happened at every input level at once, along the horizontal axis.
+//
+// WHICH OPERAND IS WHICH. The blend kernels are written in terms of `a` and `b`,
+// and the mapping is not the obvious one. `out->Loop(mode,in,out)` calls
+// `Bitmap_Inner(dst, srca, size, mode, srcb)`, and inside it `b` is loaded from
+// the 2nd argument while `a` is loaded from the 5th. So for Merge:
+//
+//   a = out = input 0 = the ramp        (the bottom layer)
+//   b = in  = input 1 = the cells       (the top layer, and where `over` and
+//                                        `alpha` take their alpha from)
+//
+// Worked out by following BI_MULCOL, whose `a` is unambiguously the image. Worth
+// having written down before reading any of the mode comments below.
 //
 // Merge is varargs and takes both operators above it, sorted left to right, so
 // each group is two 3-wide sources with a 6-wide Merge under them. The groups
@@ -21,16 +39,22 @@ wz4t 1
 
 page "merge"
 
+// The first group's two sources are named, so they render as cases too. Every
+// group's pair is identical, and having the pair on the sheet is what makes the
+// individual modes checkable — `merge_over` in particular claims to reproduce
+// input 1 exactly, which is only verifiable if input 1 is also rendered.
 op GenBitmap.Gradient at 0,0 size 3x1 {
+  name = src_ramp
   Size = 128, 128
   Flags = linear
   element { Pos = 0  Color = #ff000000 }
   element { Pos = 1  Color = #ffffffff }
 }
 op GenBitmap.Cell at 3,0 size 3x1 {
+  name = src_cells
   Size = 128, 128
   Color0 = #ff000000
-  Color1 = #ffffffff
+  Color1 = #ff909090
   Max = 16
   Seed = 3
   Mode = inner
@@ -51,7 +75,7 @@ op GenBitmap.Gradient at 7,0 size 3x1 {
 op GenBitmap.Cell at 10,0 size 3x1 {
   Size = 128, 128
   Color0 = #ff000000
-  Color1 = #ffffffff
+  Color1 = #ff909090
   Max = 16
   Seed = 3
   Mode = inner
@@ -83,7 +107,7 @@ op GenBitmap.Gradient at 14,0 size 3x1 {
 op GenBitmap.Cell at 17,0 size 3x1 {
   Size = 128, 128
   Color0 = #ff000000
-  Color1 = #ffffffff
+  Color1 = #ff909090
   Max = 16
   Seed = 3
   Mode = inner
@@ -104,13 +128,19 @@ op GenBitmap.Gradient at 21,0 size 3x1 {
 op GenBitmap.Cell at 24,0 size 3x1 {
   Size = 128, 128
   Color0 = #ff000000
-  Color1 = #ffffffff
+  Color1 = #ff909090
   Max = 16
   Seed = 3
   Mode = inner
 }
-// Correct: dark where the two inputs agree, bright where they differ — so there
-// is a dark band running through it wherever ramp and cells happen to match.
+// Not an absolute difference: `((a - b) + 0x7fff) >> 1`
+// (wz3_bitmap_code.cpp:781) — a SIGNED difference, biased to mid-grey and
+// halved.
+//
+// Correct: mid-grey wherever the two inputs agree, lighter where the ramp
+// exceeds the cells, darker where the cells exceed the ramp. The halving means
+// the whole image sits in a narrow band around mid-grey, so it is inherently
+// LOW CONTRAST — that is the operator, not a washed-out render.
 op GenBitmap.Merge at 21,1 size 6x1 {
   name = merge_diff
   Mode = diff
@@ -125,7 +155,7 @@ op GenBitmap.Gradient at 28,0 size 3x1 {
 op GenBitmap.Cell at 31,0 size 3x1 {
   Size = 128, 128
   Color0 = #ff000000
-  Color1 = #ffffffff
+  Color1 = #ff909090
   Max = 16
   Seed = 3
   Mode = inner
@@ -147,14 +177,30 @@ op GenBitmap.Gradient at 35,0 size 3x1 {
 op GenBitmap.Cell at 38,0 size 3x1 {
   Size = 128, 128
   Color0 = #ff000000
-  Color1 = #ffffffff
+  Color1 = #ff909090
   Max = 16
   Seed = 3
   Mode = inner
 }
-// Correct: the cells keep their bright-centred shape but are lifted by the
-// ramp, so the right-hand side washes out towards white while the left stays
-// dark. Close to `add` in character but visibly gentler.
+// `brightness` and `hardlight` are THE SAME OPERATION. Not a port bug and not a
+// mode being ignored — the two kernels are algorithmically identical, written
+// twice:
+//
+//   BI_BRIGHTNESS (wz3_bitmap_code.cpp:995) builds its mask with
+//     `_mm_srli_epi16(cmpgt(b,0x3fff), 1)`  -> 0x7fff or 0
+//   BI_HARDLIGHT  (wz3_bitmap_code.cpp:1120) builds it with
+//     `_mm_and_si128(cmpgt(b,0x3fff), 0x7fff)` -> 0x7fff or 0
+//
+// and both then do xor / mulhi / <<2 / xor in exactly the same order. So Merge
+// has 12 labels but only 11 distinct behaviours.
+//
+// The two outputs must be BYTE-IDENTICAL, and `tex_merge_identity` asserts that.
+// It is worth asserting rather than merely noting: the two paths reach the same
+// result through DIFFERENT intrinsics, so if sse2neon mistranslated either
+// `_mm_srli_epi16` or `_mm_and_si128` they would diverge. A free parity check.
+//
+// Correct: identical to merge_hardlight, and the pair reads as multiply on the
+// dark side, screen on the bright side.
 op GenBitmap.Merge at 35,1 size 6x1 {
   name = merge_brightness
   Mode = brightness
@@ -169,13 +215,16 @@ op GenBitmap.Gradient at 42,0 size 3x1 {
 op GenBitmap.Cell at 45,0 size 3x1 {
   Size = 128, 128
   Color0 = #ff000000
-  Color1 = #ffffffff
+  Color1 = #ff909090
   Max = 16
   Seed = 3
   Mode = inner
 }
-// Correct: the classic hard-light look — the left half behaves like multiply and
-// the right half like screen, so the contrast increases towards both ends.
+// The classic hard-light look: multiply where the top layer is dark, screen
+// where it is bright, so contrast increases towards both ends.
+//
+// Correct: byte-identical to merge_brightness — see the note there. If these two
+// ever differ, something in the SIMD translation has broken.
 op GenBitmap.Merge at 42,1 size 6x1 {
   name = merge_hardlight
   Mode = hardlight
@@ -190,19 +239,26 @@ op GenBitmap.Gradient at 49,0 size 3x1 {
 op GenBitmap.Cell at 52,0 size 3x1 {
   Size = 128, 128
   Color0 = #ff000000
-  Color1 = #ffffffff
+  Color1 = #ff909090
   Max = 16
   Seed = 3
   Mode = inner
 }
-// `over` is alpha compositing, and BOTH inputs here are fully opaque, so the top
-// one covers the bottom one completely.
+// `over` is alpha compositing, taking alpha from operand b — which is input 1,
+// the cells (see the operand note in the header). Both inputs are opaque, so the
+// cells cover the ramp completely.
 //
-// Correct: the cells alone, with no trace of the ramp — identical in appearance
-// to input 1 by itself. That is the right answer, not a sign the merge was
-// skipped, and it is the one mode in this file whose output looks like it did
-// nothing. Testing it against a translucent input would need a source with an
-// alpha ramp; merge_premul below is the related case.
+// Correct: visually the cells alone, with no trace of the ramp. Looking like it
+// did nothing is the right answer here.
+//
+// But it is NOT byte-identical to src_cells, and do not expect `cmp` to say it
+// is. The alpha multiply is `mulhi_epi16(d,0x7fff) << 1`
+// (wz3_bitmap_code.cpp:1168), a factor of 0.99997 rather than exactly 1, so the
+// result is `ramp + 0.99997*(cells - ramp)`.
+//
+// Measured with `wz4gen diff`: 78 of 16384 pixels differ, by exactly 1 of 255,
+// in RGB only. A fixed-point rounding characteristic, not a port bug — and the
+// reason this comment does not claim equality.
 op GenBitmap.Merge at 49,1 size 6x1 {
   name = merge_over
   Mode = over
@@ -217,7 +273,7 @@ op GenBitmap.Gradient at 56,0 size 3x1 {
 op GenBitmap.Cell at 59,0 size 3x1 {
   Size = 128, 128
   Color0 = #ff000000
-  Color1 = #ffffffff
+  Color1 = #ff909090
   Max = 16
   Seed = 3
   Mode = inner
@@ -238,7 +294,7 @@ op GenBitmap.Gradient at 63,0 size 3x1 {
 op GenBitmap.Cell at 66,0 size 3x1 {
   Size = 128, 128
   Color0 = #ff000000
-  Color1 = #ffffffff
+  Color1 = #ff909090
   Max = 16
   Seed = 3
   Mode = inner
@@ -259,7 +315,7 @@ op GenBitmap.Gradient at 70,0 size 3x1 {
 op GenBitmap.Cell at 73,0 size 3x1 {
   Size = 128, 128
   Color0 = #ff000000
-  Color1 = #ffffffff
+  Color1 = #ff909090
   Max = 16
   Seed = 3
   Mode = inner
@@ -280,12 +336,22 @@ op GenBitmap.Gradient at 77,0 size 3x1 {
 op GenBitmap.Cell at 80,0 size 3x1 {
   Size = 128, 128
   Color0 = #ff000000
-  Color1 = #ffffffff
+  Color1 = #ff909090
   Max = 16
   Seed = 3
   Mode = inner
 }
 // Quoted: the label contains a space.
+//
+// This mode maps to the SAME constant as `alpha` in the mode table
+// (wz3_bitmap_ops.ops:683 — BI_ALPHA appears twice, at index 4 and index 11), so
+// the table alone suggests the two are duplicates. They are not: index 11 gets a
+// trailing `out->PreMulAlpha()` after the merge (:706), and the checksums
+// confirm they differ.
+//
+// Worth knowing before reading the table as a bug, and worth knowing when
+// judging "two modes match means one is ignored" — for this pair the difference
+// is real but small.
 op GenBitmap.Merge at 77,1 size 6x1 {
   name = merge_premul
   Mode = "premul alpha"

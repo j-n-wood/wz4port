@@ -1,0 +1,1 @@
+32 x 32, structured, alpha 7fff..7fff, checksum c2ffb641666336aa

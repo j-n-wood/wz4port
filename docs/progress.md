@@ -4,17 +4,23 @@ Read this first when picking the project up cold. It records where things
 stand, what has been decided and why, and what would otherwise have to be
 rediscovered the hard way.
 
-**Last updated:** phase 4, stage 4.3.
-**Status:** Phases 1–3 complete and verified. **Phase 4 stages 4.1–4.3 done: the
-texture engine runs, writes PNGs, and has a reviewed case for every operator it
-can reach.** 74 cases over seven `.wz4t` files cover **31 of the 34** `GenBitmap`
-operators — `Import`, `ImportAnim` and `Text` are 4.5's. All render, all have
-been looked at. `ctest` is **109 tests**, all passing on a clean build.
+**Last updated:** phase 4, stage 4.4 — **the phase 4 gate is passed.**
+**Status:** Phases 1–3 complete and verified. **Phase 4 stages 4.1–4.4 done: the
+texture engine runs, and its output is locked and verified bit-identical on two
+architectures.** 87 cases cover **31 of the 34** `GenBitmap` operators —
+`Import`, `ImportAnim` and `Text` are 4.5's. `ctest` is **119 tests**, green on
+arm64 and on x86-64, with the same goldens.
 
-The renders land in `build/tex-png/`, one PNG per case.
+**SSE2-vs-NEON parity is real and was runnable here**, contrary to the plan's
+assumption that it needed a Linux box: `sh wz4port/tests/tex/parity_x86_64.sh`
+cross-compiles an x86-64 slice and runs the suite under Rosetta 2. It found 8
+divergences on its first run — all caused by **FMA contraction**, not sse2neon.
+`-ffp-contract=off` is now set project-wide *for determinism*; do not remove it.
 
-Next: **4.4**, the golden lock — review pass, byte-exact comparison, and
-SSE2-vs-NEON bit parity.
+The renders land in `build/tex-png/`; the goldens are `tests/tex/golden/`, an
+image plus a `.txt` checksum line each.
+
+Next: **4.5**, `Text` on FreeType and the `Import`/`LoadAtlas` image paths.
 
 **Read `06-phase-texture.md` before touching the texture tests.** 4.3 found four
 operators that zero the alpha channel, which makes their PNG render as plain
@@ -63,7 +69,7 @@ about the build.
 | 1 — Toolchain and portable base | **Done**, gate passed |
 | 2 — Headless op runtime + metadata | **Done**, phase gate passed |
 | 3 — Text graph format + CLI | **Done**, phase gate passed |
-| 4 — Texture library + tests | **In progress.** 4.1, 4.2 and 4.3 done, all gates passed |
+| 4 — Texture library + tests | **Phase gate passed.** 4.1–4.4 done; 4.5 (fonts, image import) outstanding |
 | 5 — Texture GUI | Not started |
 | 6 — Geometry | Not started |
 | 7 — Animated geometry | Not started |
@@ -96,7 +102,8 @@ Clean build from scratch: **0 errors**. Warnings are expected and benign
 | **`wz4tex`** | **The texture engine: wz3_bitmap_code + genvector + generated ops** |
 | `tex_smoke_*` (5) | Stage 4.1 gate: five operators evaluate; `Flat` uniform, rest structured |
 | `tex_chain_*` (4) | **Stage 4.2 gate:** a four-step chain renders to real PNG files (`ctest`) |
-| `tex_ops_*` (74) | **Stage 4.3 gate:** one reviewed case per operator, 31 of 34 (`ctest`) |
+| `tex_ops_*` (83) | **Stages 4.3/4.4:** one reviewed, golden-locked case per operator (`ctest`) |
+| `tex_merge_identity` | `Merge`'s brightness and hardlight are one algorithm; assert they agree |
 | `wz4t` | **Ours.** JSON, the runtime metadata model, and the `.wz4t` reader + writer |
 | `wz4t_read` | Stage 3.1b gate: a hand-written case parses and connects (`ctest`) |
 | `wz4t_round_*` (4) | Stage 3.2 gate: read→write→read preserves every word (`ctest`) |
@@ -153,7 +160,11 @@ wz4port/
   tests/cases/values.wz4t      stage 3.2: value kinds, escapes, non-ASCII text
   tests/tex/smoke.wz4t         stage 4.1: does the texture engine execute?
   tests/tex/chain.wz4t         stage 4.2: a chain whose every step is checkable
-  tests/tex/render_png.cmake   renders one op and asserts the PNG on disk
+  tests/tex/golden_png.cmake   renders one case, checks image AND checksum
+  tests/tex/same_png.cmake     asserts two renders are byte-identical
+  tests/tex/lock_goldens.cmake the deliberate re-lock step
+  tests/tex/parity_x86_64.sh   SSE2-vs-NEON bit parity, via Rosetta
+  tests/tex/golden/            87 locked .png + .txt pairs
   tests/tex/ops_gen.wz4t       stage 4.3: the generators
   tests/tex/ops_color.wz4t       the pointwise colour operators
   tests/tex/ops_merge.wz4t       Merge, all 12 blend modes
@@ -950,6 +961,90 @@ packs one tile.
 `wz4gen describe` now prints array blocks. Without it the tool implied that an
 operator with array rows had none — which is how a `Gradient` came to be written
 with no stops in 4.1.
+
+### Done: 4.4 — goldens locked, and SSE2/NEON parity actually measured
+
+87 goldens in `tests/tex/golden/`, each an image plus a `.txt` report line.
+`ctest` is 119 tests, green on **both** architectures against the same goldens.
+
+**The parity check did not need a Linux box.** An x86-64 slice cross-compiles on
+Apple silicon and runs under Rosetta 2, and `simd_compat.hpp` already routes
+x86-64 to the real `<emmintrin.h>`. No new harness was needed either — the
+checked-in goldens *are* the cross-platform contract. `parity_x86_64.sh`.
+
+**First run: 8 of 87 diverged, and it was not sse2neon.** It was **FMA
+contraction**: clang's default `-ffp-contract=fast` fuses `a*b+c` into one FMA
+where the target has one (arm64 always; that x86-64 target not), and an FMA
+rounds once where two operations round twice. One ULP of float, quantised into a
+different 16-bit sample. Every divergent case was float-touching — Perlin's and
+GlowRect's `sFPow` gamma tables, `Unwrap`'s coordinates, all the lighting.
+
+`-ffp-contract=off` is in `altona_flags` **for determinism, not speed**. The
+comment there says so; without it, it reads like a stray optimisation flag.
+
+`simd_parity` passed on both architectures the whole time. It checks 43
+intrinsics against scalar models and structurally could not see this, because
+none of it was in the intrinsics. A unit-level parity test does not subsume an
+end-to-end one. `architecture.md` A42.
+
+Building the second architecture also found a real bug in our own compat header:
+`#define stat64 stat` collides with the x86-64 macOS SDK's `struct stat64`, which
+arm64 never declares. Fixed by including `<sys/stat.h>` before the alias.
+
+### A golden must cover the pipeline's precision, not the artefact's
+
+The pipeline is 16 bits per channel; a PNG is 8. So an image-only golden is blind
+to anything in the low half of every pixel — and that is not hypothetical:
+
+- `MakeWz3Bitmap` requantises through an 8-bit `sImage`, moving its checksum
+  while leaving the PNG **byte-identical** to its source. Image-only, it would
+  read as a permanent no-op.
+- **7 of the 8 parity divergences had byte-identical images.** Image-only, the
+  suite would have reported full parity and the FMA problem would have shipped.
+
+So each golden is `<case>.png` plus `<case>.txt` holding size,
+uniform/structured, alpha range and a checksum over all 16 bits — report checked
+first. `architecture.md` A43.
+
+**Both failure paths were verified by deliberately breaking them** before the
+lock was trusted: a one-hex-digit checksum edit, and a swapped golden image. A
+golden that cannot fail is worth nothing, and a green suite cannot tell you which
+kind you have. `wz4gen diff` reports differing-pixel count, worst delta per
+channel, and writes an amplified difference image.
+
+### What the review pass changed
+
+4.4 exists to establish correctness by eye and it earned the slot. Five cases
+were not testing anything:
+
+- **`ColorBalance` was invisible** on the shared saturated ramp — every channel
+  already clipped at 0 or max, so a per-band lift/gain had nowhere to move. It
+  changed the checksum and nothing else. Own greyscale source now. *A test case
+  is not a preset.*
+- **`Merge`'s pair was blowing out**, so `add` and `addsmooth` read as flat
+  white. Cells now peak at `0x90`; costs `mul`/`min`/`max` nothing.
+- **`light_point` was a white blob**, then over-corrected to flat grey. A point
+  light on a flat plane only varies when it is close to it.
+- **`bump_*` wanted the opposite** — a broad light, to show relief rather than
+  the light's shape. The two groups deliberately differ.
+- **The shared sources were never rendered**, so nothing could be compared to
+  them. Six are cases now.
+
+And four descriptions were wrong in ways only the images showed:
+
+- **`brightness` and `hardlight` are the same operation**, written twice with
+  different ways of building the same mask — 12 labels, 11 behaviours. Now
+  asserted byte-identical by `tex_merge_identity`, which is a free consistency
+  check across two different intrinsics.
+- **`over` does not reproduce its top layer exactly**: `mulhi_epi16(d,0x7fff)<<1`
+  is 0.99997, so 78 of 16384 pixels sit one step off. Measured.
+- **`premul alpha` shares `alpha`'s constant** in the mode table; the difference
+  is a trailing `PreMulAlpha()`.
+- **`scale` is `mul` shifted 11 instead of 15** — 16× the gain, so mid-grey means
+  ×8 and saturation.
+
+`gradient_linear` vs `gradient_smooth` is documented as **not** separable by eye,
+to stop the next reviewer calling the mode broken.
 
 ### Assert on the artefact, not the exit code
 

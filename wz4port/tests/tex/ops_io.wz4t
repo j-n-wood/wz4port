@@ -30,11 +30,15 @@ op GenBitmap.Bricks at 0,0 size 6x1 {
 // result of the save — so a failed write fails the operator, and this case
 // asserts that the file really can be written.
 //
-// The path is relative, so it lands in whatever directory the tool was run from;
-// under ctest that is the build directory.
+// The path is relative, because an absolute one could not be committed. That
+// means it lands in whatever directory the tool was run from, so the test runner
+// pins the working directory to build/tex-png/ — before it did, running the lock
+// step from the repository root dropped a stray PNG into the source tree.
 //
-// Correct: output identical to the source wall, plus a readable
-// wz4gen_export_test.png in the build directory.
+// Correct: output identical to the source wall — same image AND same checksum,
+// a7af9504d91e1410, because `out->CopyFrom(in0)` is an exact 16-bit copy — plus
+// a readable wz4gen_export_test.png in the build directory. The pass-through
+// being bit-exact is worth asserting: this operator's job is to be invisible.
 op GenBitmap.Export at 0,1 size 3x1 {
   name = export
   Filename = "wz4gen_export_test.png"
@@ -46,8 +50,17 @@ op GenBitmap.Export at 0,1 size 3x1 {
 // but it is a registered class so a case can place it explicitly.
 //
 // Because it goes through sImage it is a 16-bit → 8-bit → 16-bit round trip, so
-// the result is the source QUANTISED, not bit-identical to it. Correct: visually
-// the same wall; any visible difference means more than quantisation happened.
+// the 16-bit result is the source REQUANTISED.
+//
+// Correct: an image byte-identical to src_bricks, and a checksum that differs
+// from it. Both parts matter. The requantisation is real — the checksum moves
+// from a7af9504d91e1410 to dbb910e7e4b14596 — but it lives entirely in the low
+// bits that `CopyTo` discards on the way to the PNG, so the picture cannot show
+// it and `wz4gen diff` reports "identical, every byte".
+//
+// This is the clearest case in the suite for why the golden lock stores the
+// checksum as well as the image: a PNG golden is blind to any change confined to
+// the bottom half of the 16-bit pipeline.
 op GenBitmap.MakeWz3Bitmap at 3,1 size 3x1 {
   name = makewz3bitmap
 }

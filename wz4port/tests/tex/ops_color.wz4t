@@ -32,7 +32,11 @@ op GenBitmap.Gradient at 0,0 size 36x1 {
 // Each mode combines the input with Color. The same Color throughout, so the
 // mode is the only variable.
 //
-// mul by mid-grey: correct output is the source at half brightness, hues intact.
+// mul by mid-grey. #80 becomes 0x4040 of 0x7fff, and mul is
+// `(a * 2col) >> 16` (wz3_bitmap_code.cpp:838), so this is a gain of about 0.5.
+//
+// Correct: the source at half brightness, hues intact — plainly darker than the
+// source but with the red/green/blue bands still in the same places.
 op GenBitmap.Color at 0,1 size 3x1 {
   name = color_mul
   Mode = mul
@@ -101,8 +105,13 @@ op GenBitmap.Color at 12,2 size 3x1 {
   Color = #ff000000
 }
 
-// scale: correct output differs from `mul` — that is the whole point of having
-// both. Compare the two side by side.
+// scale is mul with the descale shifted 11 instead of 15
+// (wz3_bitmap_code.cpp:956), so it is the SAME operation with 16x the gain —
+// about x8 for this mid-grey Color, where mul gives x0.5.
+//
+// Correct: the ramp driven hard into saturation, every channel clipping to its
+// maximum, so the smooth source becomes four hard-edged bands — red, yellow,
+// cyan, white. It is meant to look nothing like color_mul.
 op GenBitmap.Color at 15,1 size 3x1 {
   name = color_scale
   Mode = scale
@@ -168,16 +177,37 @@ op GenBitmap.Bitcrusher at 30,1 size 3x1 {
 }
 
 // ---------------------------------------------------------------- ColorBalance
-// Pushes shadows towards blue and highlights towards yellow, leaving midtones
-// alone — the standard "cool shadows, warm highlights" grade.
+// ColorBalance is the ONE operator in this file that the shared ramp cannot
+// exercise, so it gets its own source. A lift/gain per tonal band has no room to
+// move a channel that is already clipped at 0 or maximum, and src_ramp is fully
+// saturated primaries — every channel is at one end or the other almost
+// everywhere. Even at the extremes of the -1..1 range the result was
+// indistinguishable from the source by eye, while still changing the checksum:
+// a case that cannot be reviewed.
 //
-// Correct: the dark end of the ramp is bluer than the source and the bright end
-// warmer, with the middle close to unchanged.
-op GenBitmap.ColorBalance at 33,1 size 3x1 {
-  name = colorbalance
-  Shadows = -0.2, -0.1, 0.3
-  Midtones = 0, 0, 0
-  Highlights = 0.25, 0.15, -0.2
+// A greyscale ramp has shadows, midtones and highlights all present, which is
+// what a grade needs.
+stack at 24,3 {
+  op GenBitmap.Gradient {
+    name = src_gray
+    Size = 128, 128
+    Flags = linear
+    element { Pos = 0  Color = #ff000000 }
+    element { Pos = 1  Color = #ffffffff }
+  }
+
+  // Cool shadows, warm highlights, midtones untouched — the standard grade,
+  // driven hard so it is legible.
+  //
+  // Correct, next to src_gray: the dark half is clearly tinted BLUE and the
+  // bright half warm YELLOW, crossing over around the middle where Midtones
+  // leaves it alone.
+  op GenBitmap.ColorBalance {
+    name = colorbalance
+    Shadows = -0.6, -0.3, 0.8
+    Midtones = 0, 0, 0
+    Highlights = 0.8, 0.4, -0.6
+  }
 }
 
 // ---------------------------------------------------------------- PreMulAlpha

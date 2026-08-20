@@ -1,0 +1,1 @@
+128 x 128, structured, alpha ffff..ffff, checksum 08ed52f7ac9cec4e

@@ -239,7 +239,7 @@ overlaps only the first and silently packs one tile.
 `wz4gen describe` now prints array blocks. Without it the tool implied that an operator with
 array rows had none — which is how a `Gradient` came to be written with no stops in 4.1.
 
-### 4.4 — Golden lock and the runner
+### 4.4 — Golden lock and the runner — **done**
 
 Review every output by eye, once, carefully — this is the moment correctness is established
 and it deserves proper attention. Then lock the PNGs into `wz4port/tests/tex/golden/`.
@@ -248,10 +248,113 @@ Runner: render every case, compare byte-exact against its golden, report failure
 side-by-side diff image.
 
 Add the **SIMD parity check**: the same suite must produce **bit-identical** output on the
-SSE2 path (x86-64 Linux) and the NEON path (arm64 macOS). This is the sharpest correctness
-signal available to us and it is nearly free.
+SSE2 path and the NEON path. This is the sharpest correctness signal available to us and it
+is nearly free.
 
-**Gate — phase gate.** Full suite green on both platforms, bit-identical between them.
+**Gate — phase gate, passed.** 87 cases locked in `tests/tex/golden/`, **119 ctest tests**
+green on arm64 **and** on x86-64, bit-identical between them. The chain cases and the shared
+source bitmaps are now cases too, which is where 74 became 87.
+
+#### The parity check was runnable here after all, and it found real divergence
+
+The plan assumed x86-64 needed a Linux box. It does not: an x86-64 slice cross-compiles on
+Apple silicon and runs under Rosetta 2, and `compat/include/simd_compat.hpp` already resolves
+x86-64 to the real `<emmintrin.h>` rather than sse2neon. So the comparison is available on
+this machine — `tests/tex/parity_x86_64.sh`.
+
+No separate harness was needed. The goldens *are* the cross-platform contract: they are
+checked in, they were produced by the NEON path, and every case compares byte-for-byte. Build
+the other architecture, run the same suite.
+
+**First run: 8 of 87 cases diverged.** Every one was float-touching — Perlin's and GlowRect's
+`sFPow` gamma tables, `Unwrap`'s coordinate maths, and all five lighting cases.
+
+The cause was **not sse2neon**. It was **FMA contraction**: clang defaults to
+`-ffp-contract=fast` and fuses `a*b+c` into a single FMA where the target has one — arm64
+always does, this x86-64 target does not — and an FMA rounds once where two operations round
+twice. One ULP of float, quantised by the engine into a different 16-bit sample.
+`-ffp-contract=off` in `CMakeLists.txt` makes the two architectures agree exactly. It is there
+for determinism, not speed, and the comment says so.
+
+`simd_parity` passed throughout, on both architectures. It checks 43 intrinsics against scalar
+models and could not see any of this, because none of it was in the intrinsics. **The
+operator-level comparison caught what the intrinsic-level one structurally cannot.**
+
+Honest caveat: the SSE2 *code path* is genuine, which is the thing being verified, but the
+instructions are executed by Rosetta's translation rather than by Intel silicon. Running this
+once on a real x86-64 Linux box is still worth doing.
+
+Also found, and fixed, by building the second architecture: **`#define stat64 stat` in our own
+compat header collides with the x86-64 macOS SDK's own `struct stat64`**, which arm64 does not
+declare. The header now includes `<sys/stat.h>` before defining the alias.
+
+#### The golden is the image *and* the checksum
+
+`MakeWz3Bitmap` forced this. It requantises its input through an 8-bit `sImage`, so its
+checksum moves — `a7af9504d91e1410` to `dbb910e7e4b14596` — while the written PNG stays
+**byte-identical** to its source. An image-only golden would call that operator a no-op
+forever.
+
+So each golden is a `.png` plus a `.txt` holding the tool's report line: size,
+uniform/structured, alpha range, and a checksum over all 16 bits of every pixel. The report is
+checked first, because it is the stronger of the two.
+
+That mattered immediately: **7 of the 8 parity divergences had byte-identical images** and were
+caught only by the checksum. An image-only golden would have reported full parity.
+
+Both directions of the runner were verified by deliberately breaking them: a one-hex-digit edit
+to a locked checksum fails with both values printed, and a swapped golden image fails with
+`wz4gen diff` output — "16359 of 16384 pixels differ, worst channel delta 128 of 255" — plus a
+normalised difference image. A golden that cannot fail is worth nothing.
+
+`wz4gen diff <a> <b> [-out <c>]` is new: differing pixel count, worst delta per channel, and an
+amplified difference image scaled to the worst delta.
+
+Locking is `tests/tex/lock_goldens.cmake`, run deliberately and never as part of a build. It
+renders every case in `build/tex-cases.txt` — emitted by CMake, so the list cannot drift from
+the tests — straight into `golden/`.
+
+#### What the review pass changed
+
+The stage exists to establish correctness by eye, and it earned its place. Five cases were
+changed because looking at them showed they were not testing anything:
+
+- **`ColorBalance` was invisible.** The shared saturated ramp has every channel already clipped
+  at 0 or maximum, so a lift/gain per tonal band had nowhere to move — even at the extremes of
+  the range the output was indistinguishable from the source while still changing the checksum.
+  It now has its own greyscale source, and the grade is obvious. *A test case is not a preset.*
+- **`Merge`'s input pair was blowing out.** With both inputs reaching full brightness, `add` and
+  `addsmooth` saturated across most of the frame and read as flat white. The cells now peak at
+  `0x90`, which costs `mul`/`min`/`max` nothing and makes all twelve legible.
+- **`light_point` was a white blob**, then over-corrected to a near-flat grey. A point light on
+  a *flat* plane only varies strongly when it is close to it; the three Light cases now share
+  `z = 0.15` and read as three obviously different shapes.
+- **`bump_*` wanted the opposite** — a broad light, so the relief is visible across the frame
+  rather than inside a small cone. The two groups deliberately differ, and the file says why.
+- **The shared sources were not rendered at all**, so nothing could be compared against them.
+  `src_ramp`, `src_gray`, `src_cells`, `src_bricks`, `src_height` and `src_white` are cases now.
+
+And four descriptions were wrong in ways only the images revealed:
+
+- **`Merge`'s `brightness` and `hardlight` are the same operation**, written twice with two
+  different ways of building the same mask (`_mm_srli_epi16` versus `_mm_and_si128`). Twelve
+  labels, eleven behaviours. Their outputs must be byte-identical, and `tex_merge_identity`
+  asserts it — a free consistency check on two different intrinsics.
+- **`over` does not reproduce its top layer exactly.** The alpha multiply is
+  `mulhi_epi16(d,0x7fff) << 1`, a factor of 0.99997, so 78 of 16384 pixels land one 8-bit step
+  away. Measured, not guessed.
+- **`premul alpha` maps to the same `BI_ALPHA` constant as `alpha`** in the mode table, which
+  reads like a bug until you notice the trailing `out->PreMulAlpha()`.
+- **`Color`'s `scale` is `mul` with the descale shifted 11 instead of 15** — the same operation
+  with 16× the gain, so a mid-grey Color means ×8 and saturation, not ×0.5.
+
+The operand convention behind all the Merge comments is now written down in the case file:
+`Bitmap_Inner` loads `b` from its 2nd argument and `a` from its 5th, so input 0 is the bottom
+layer and input 1 is the top.
+
+One pair is documented as **not** reviewable by eye: `gradient_linear` and `gradient_smooth`
+differ by checksum but not visibly, because three stops compress each span to 30% of the width.
+Saying so protects the next reviewer from concluding the mode is broken.
 
 ### 4.5 — Font and image import
 
@@ -274,8 +377,26 @@ There is no reference build to diff against. The golden images capture **our** b
 the original's. A port bug that is plausible-looking, visually reasonable and stable would
 pass this suite.
 
-What the suite does catch, reliably: regressions from our own later changes, SIMD porting
-errors (via bit-parity), crashes, and anything that produces visibly wrong output.
+That limit is narrower after 4.4 than it looks, and it is worth being precise about which half
+closed:
+
+- **Still open.** Nothing here says our `Perlin` matches Farbrausch's `Perlin`. Every value in
+  the goldens is ours.
+- **Closed.** Whether the *arm64 translation* of the pixel kernels matches the *x86-64* original
+  semantics is no longer a matter of trust: 87 cases are bit-identical across the two
+  architectures, checksums included. The SSE2 path compiled from the real `<emmintrin.h>` and
+  the NEON path through sse2neon produce the same bytes. Since the algorithms are integer fixed
+  point, that is a strong statement — there is no tolerance being hidden anywhere.
+
+So the residual risk is concentrated in one place: an operator that was *always* being driven
+wrongly by us — a misread parameter, a wrong input order — rather than one that drifted in
+translation. 4.3 found four of exactly that kind by eye (`Mask`'s input order, `Perlin`'s
+`FadeOff`, `Unwrap`'s mode names, `Dots`' density), which is the argument for the review stage
+having been a stage.
+
+What the suite catches reliably: regressions from our own later changes, SIMD and
+floating-point porting errors (via bit-parity, which found FMA contraction), crashes, and
+anything that produces visibly wrong output.
 
 What would close the gap, if a Windows machine becomes available: build the original
 `werkkzeug4.exe`, load the same cases converted to `.wz4`, export, and diff. The `.wz4t`

@@ -1000,6 +1000,58 @@ Two habits followed, and both paid immediately:
 Related: A36's lesson about packed choice words, and the same "measure it"
 instinct as Part 3.
 
+### A42 · Determinism is a compiler flag, and the default is against you — standing
+
+*Phase 4.4.* Building an x86-64 slice and running the texture suite against the
+arm64-generated goldens diverged on 8 of 87 cases. The suspect was sse2neon. It
+was not sse2neon.
+
+clang defaults to `-ffp-contract=fast`, which fuses `a*b+c` into a single FMA
+wherever the target has one. **arm64 always has one; the x86-64 target did not.**
+An FMA rounds once where the two separate operations round twice, so the two
+architectures computed float results one ULP apart — and the texture engine
+quantises floats into 16-bit fixed point, which turns one ULP into a different
+sample. Every divergent case was float-touching: two `sFPow` gamma tables,
+`Unwrap`'s coordinate maths, all the lighting.
+
+`-ffp-contract=off` is now set project-wide in `altona_flags`, **for determinism
+rather than performance**, and the comment there says so — otherwise it reads
+like a stray optimisation flag and someone removes it.
+
+Two general points:
+
+- A cross-architecture bit-parity claim is a claim about the *compiler
+  configuration*, not only about the source. It cannot be inherited from "we use
+  the same code".
+- `simd_parity` — 43 intrinsics against scalar models — passed on both
+  architectures throughout. It structurally could not see this, because none of
+  it was in the intrinsics. **A unit-level parity test does not subsume an
+  end-to-end one**; here the end-to-end test was the only one that could fail.
+
+### A43 · A golden must cover the pipeline's precision, not the artefact's — standing
+
+*Phase 4.4.* The pipeline is 16 bits per channel; the PNG is 8. So a golden PNG
+is blind to any change confined to the low half of every pixel.
+
+`MakeWz3Bitmap` is the proof: it requantises its input through an 8-bit `sImage`,
+which moves the checksum from `a7af9504d91e1410` to `dbb910e7e4b14596` while
+leaving the written PNG **byte-identical** to its source. An image-only golden
+would have called that operator a permanent no-op.
+
+It was not a hypothetical. **7 of the 8 cross-architecture divergences above had
+byte-identical images** and were caught only by the checksum. An image-only
+golden would have reported full parity and the FMA problem would have shipped.
+
+So each golden is an image *plus* a locked report line carrying a checksum over
+all 16 bits, and the report is checked first. Generalisable: when the stored
+artefact is lower-precision than the computation, store a digest of the
+computation too.
+
+Corollary, learned by breaking it deliberately: **verify that a golden can
+fail.** Both paths were tested — a one-hex-digit edit to a checksum, and a
+swapped image — before the lock was trusted. A golden that cannot fail is worth
+nothing, and nothing else in a green suite tells you which kind you have.
+
 ---
 
 ## Part 3 — where inference lost to measurement

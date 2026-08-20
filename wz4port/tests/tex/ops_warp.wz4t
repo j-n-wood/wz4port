@@ -107,7 +107,11 @@ op GenBitmap.Unwrap at 15,1 size 3x1 {
   Mode = normal2polar, both
 }
 
-// rect2normal. Correct: different again from both of the above.
+// rect2normal is normal2polar's rectangular counterpart: it wraps the wall
+// around the centre using a square distance metric instead of a circular one.
+//
+// Correct: concentric SQUARE rings filling the frame corner to corner — the same
+// construction as the dartboard above with circles replaced by rectangles.
 op GenBitmap.Unwrap at 18,1 size 3x1 {
   name = unwrap_rect2normal
   Mode = rect2normal, both
