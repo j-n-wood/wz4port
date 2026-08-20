@@ -18,6 +18,7 @@
 #include "wz4lib/basic_ops.hpp"
 #include "wz4frlib/wz3_bitmap_ops.hpp"
 #include "wz4frlib/wz3_bitmap_code.hpp"    // GenBitmap, for render
+#include "util/image.hpp"                  // sImage::SavePNG
 #include "base/system.hpp"
 #include "meta.hpp"
 #include "json.hpp"               // wFormatFloat — Altona has no %g
@@ -1035,14 +1036,31 @@ void sMain()
               bm->XSize,bm->YSize,
               uniform ? L"uniform" : L"structured",
               sU32(sum>>32),sU32(sum));
+
+            if(out)
+            {
+              // GenBitmap is 16 bits per channel with 0x8000 = 1.0; CopyTo
+              // narrows that to 8-bit RGBA and sizes the sImage itself.
+              // sImage::SavePNG already handles the channel-order swizzle and
+              // already compiles stb_image_write, so there is nothing to add.
+              sImage img;
+              bm->CopyTo(&img);
+              if(!img.SavePNG(out))
+              {
+                sPrintF(L"wz4gen: could not write <%s>\n",out);
+                sSetErrorCode();
+              }
+              else
+              {
+                sPrintF(L"  wrote %s\n",out);
+              }
+            }
           }
           else
           {
             sPrintF(L"  produced a %s\n",obj->Type ? obj->Type->Symbol : L"?");
           }
 
-          if(out)
-            sPrintF(L"wz4gen: writing images arrives in stage 4.2\n");
           obj->Release();
         }
       }

@@ -1,0 +1,52 @@
+wz4t 1
+
+// Stage 4.2 gate: a three-operator chain that renders to a PNG whose
+// correctness is obvious by eye.
+//
+// Every step is named, so each operator's contribution can be rendered and
+// checked on its own rather than having to be inferred from the end of the
+// chain:
+//
+//   field       a solid dark blue field, nothing else
+//   rect        a hard-edged white rectangle centred on that field
+//   twisted     the same rectangle, visibly twisted about the centre
+//   twisted_soft  `twisted` with its edges softened
+//
+// Also checks channel order end to end: the field must be blue, not orange.
+
+page "chain"
+
+stack at 0,0 {
+  op GenBitmap.Flat {
+    name = field
+    Size = 256, 256
+    Color = #ff102040
+  }
+
+  // `rectangle` rather than the default ellipse, and a high Power, to keep the
+  // edges hard — the point is for the twist to be legible.
+  op GenBitmap.GlowRect {
+    name = rect
+    Center = 0.5, 0.5
+    Radius = 0.3, 0.3
+    Size = 0.3, 0.3
+    Color = #ffffffff
+    Power = 8
+    Flags = "-", rectangle
+  }
+
+  op GenBitmap.Twirl {
+    name = twisted
+    Strength = 1.5
+    Radius = 0.7, 0.7
+    Center = 0.5, 0.5
+    Flags = both
+  }
+
+  op GenBitmap.Blur {
+    name = twisted_soft
+    Passes = 2
+    Blur = 0.03, 0.03
+    Amplify = 1
+  }
+}

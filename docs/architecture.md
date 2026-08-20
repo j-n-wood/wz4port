@@ -929,6 +929,23 @@ The habit worth keeping: fix the *first* error and re-run before believing the
 rest. The same shape appeared in phase 2 — patch 02's five bogus "private
 member" errors all came from one rejected friend declaration.
 
+### A39 · A test asserts on the artefact, not on the exit code — standing
+
+*Phase 4.2.* The PNG tests could have been four `PASS_REGULAR_EXPRESSION`
+matches on `wz4gen`'s `wrote <path>` line. That would have been cheaper and
+wrong: `sImage::SavePNG` returning true is a statement about a function call,
+not about what is on the disk.
+
+`tests/tex/render_png.cmake` deletes any previous output first, runs the render,
+then checks the file exists, is over 256 bytes, and begins with the PNG
+signature. The extra checks are three lines of CMake and they immediately caught
+something a stdout match never would have: **`SavePNG` does not create the
+output directory**, so the first run of all four tests failed on a missing
+`build/tex-png/`. Real behaviour, found by asserting on the artefact.
+
+Same shape as A33, where a round trip passed while mangling text. Both times the
+test was checking the wrong end of the operation.
+
 ---
 
 ## Part 3 — where inference lost to measurement

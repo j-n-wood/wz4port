@@ -533,11 +533,14 @@ foreach(_case three_ops values)
   set_tests_properties(wz4t_round_${_case} PROPERTIES DEPENDS opsmeta_gate)
 endforeach()
 
-# And the texture smoke case, which is the only one with array rows.
-add_test(NAME wz4t_round_tex COMMAND wz4t_round
-  "${WZ4_META_DIR}"
-  "${CMAKE_CURRENT_SOURCE_DIR}/tests/tex/smoke.wz4t")
-set_tests_properties(wz4t_round_tex PROPERTIES DEPENDS opsmeta_gate)
+# And the texture cases: smoke is the only one with array rows, and chain is
+# the only one that assigns a flags word positionally (`Flags = "-", rectangle`).
+foreach(_case smoke chain)
+  add_test(NAME wz4t_round_tex_${_case} COMMAND wz4t_round
+    "${WZ4_META_DIR}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/tex/${_case}.wz4t")
+  set_tests_properties(wz4t_round_tex_${_case} PROPERTIES DEPENDS opsmeta_gate)
+endforeach()
 
 #############################################################################
 ##  wz4t_docround — the phase 3 gate                                       ##
@@ -568,9 +571,11 @@ endforeach()
 #############################################################################
 
 # libwz4tex compiles, links, and actually runs: four generators/filters
-# evaluate to a non-empty bitmap of the requested size. wz4gen render reports
-# how many pixels are non-zero, so an operator that runs but writes nothing
-# fails rather than looking the same as one that ran.
+# evaluate to a non-empty bitmap of the requested size.
+#
+# The metric is "uniform or structured", not "how many pixels are non-zero":
+# alpha is 0xffff almost everywhere, so every pixel is non-zero regardless of
+# whether the operator did anything.
 
 # Flat is a solid colour, so "uniform" is the correct answer for it and the
 # wrong answer for everything else. Both directions are asserted: an operator
@@ -590,6 +595,43 @@ add_test(NAME tex_smoke_flat COMMAND wz4gen render
 set_tests_properties(tex_smoke_flat PROPERTIES
   DEPENDS opsmeta_gate
   PASS_REGULAR_EXPRESSION "64 x 64, uniform")
+
+#############################################################################
+##  tex_chain — the stage 4.2 gate                                         ##
+#############################################################################
+
+# A three-operator chain rendered to PNG. Every step of tests/tex/chain.wz4t is
+# named, so each operator is rendered and checked on its own: Flat must be
+# uniform, and the three that follow it must be structured at the size Flat
+# asked for. An operator that ran but changed nothing therefore fails here
+# rather than being hidden by the rest of the chain.
+#
+# render_png.cmake checks the file on disk, not just the exit code — see the
+# comment at the top of it.
+
+set(WZ4_TEX_PNG_DIR "${CMAKE_BINARY_DIR}/tex-png")
+
+add_test(NAME tex_chain_field COMMAND "${CMAKE_COMMAND}"
+  "-DWZ4GEN=$<TARGET_FILE:wz4gen>"
+  "-DDOC=${CMAKE_CURRENT_SOURCE_DIR}/tests/tex/chain.wz4t"
+  "-DMETA=${WZ4_META_DIR}"
+  "-DOP=field"
+  "-DOUT=${WZ4_TEX_PNG_DIR}/field.png"
+  "-DEXPECT=256 x 256, uniform"
+  -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/tex/render_png.cmake")
+set_tests_properties(tex_chain_field PROPERTIES DEPENDS opsmeta_gate)
+
+foreach(_op rect twisted twisted_soft)
+  add_test(NAME tex_chain_${_op} COMMAND "${CMAKE_COMMAND}"
+    "-DWZ4GEN=$<TARGET_FILE:wz4gen>"
+    "-DDOC=${CMAKE_CURRENT_SOURCE_DIR}/tests/tex/chain.wz4t"
+    "-DMETA=${WZ4_META_DIR}"
+    "-DOP=${_op}"
+    "-DOUT=${WZ4_TEX_PNG_DIR}/${_op}.png"
+    "-DEXPECT=256 x 256, structured"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/tex/render_png.cmake")
+  set_tests_properties(tex_chain_${_op} PROPERTIES DEPENDS opsmeta_gate)
+endforeach()
 
 #############################################################################
 ##  core_connect — the phase 2 gate                                        ##

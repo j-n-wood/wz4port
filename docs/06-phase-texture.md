@@ -69,10 +69,14 @@ Also note `Bitmap_Inner` is declared `__stdcall` (`wz3_bitmap_code.cpp:17`) but 
 the calling convention is meaningless on both targets and is simply dropped.
 
 **Gate — passed.** Target is `wz4tex`; recorded as `wz4port/patches/08-texture-library.md`.
-It compiles, links, and **runs**: `wz4gen render` evaluates an operator and reports its size
-and non-zero pixel count. `Flat`, `Perlin`, `Cell` and `Blur` each produce a full 64×64 bitmap
-from `tests/tex/smoke.wz4t` — the first time this port has executed a generator. Four `ctest`
-cases, failing on `1 x 1` or `0 of` so an operator that runs but writes nothing cannot pass.
+It compiles, links, and **runs**: `wz4gen render` evaluates an operator and reports its size,
+whether the result is uniform or structured, and a checksum. `Flat`, `Perlin`, `Cell` and
+`Blur` each produce a full 64×64 bitmap from `tests/tex/smoke.wz4t` — the first time this port
+has executed a generator. Five `ctest` cases asserting `uniform` for `Flat` and `structured`
+for the rest, so an operator that ran but silently produced a flat fill cannot pass.
+
+("Non-zero pixels", the obvious metric, is useless here: alpha is `0xffff` almost everywhere,
+so every pixel is non-zero whatever happened.)
 
 All 34 `GenBitmap` operators register. `example.wz4`'s unknown-class count drops 4,687 → 3,854,
 and all six phase-3 document round trips still pass, now comparing far more real parameters.
@@ -114,12 +118,37 @@ Two related format bugs surfaced at the same time, both from `Size = 64, 64` fai
 `Size` is one word holding two controls, so comma-separated values are positional; and a
 numeric choice label beats a raw number. Both in `02` §4.2c.
 
-### 4.2 — `wz4gen render` for bitmaps
+### 4.2 — `wz4gen render` for bitmaps — **done**
 
 Complete the `render` command: evaluate a named operator, `CopyTo` an `sImage`, write PNG via
 the `stb_image_write.h` already vendored in `altona/main/util/`.
 
-**Gate:** a three-operator `.wz4t` chain renders to a PNG that looks correct.
+**Gate — passed.** `tests/tex/chain.wz4t` is `Flat` → `GlowRect` → `Twirl` → `Blur` at
+256×256, every step named so each operator can be rendered on its own instead of being
+inferred from the end of the chain. Reviewed by eye: a uniform dark blue field; a hard-edged
+white square composited over it; the square's corners dragged round into spiral arms; the
+same shape with its edges softened. Four `ctest` cases via `tests/tex/render_png.cmake`.
+
+This stage was much smaller than planned, because the survey of what needed writing was
+wrong in our favour: **`sImage::SavePNG` is already complete** (`util/image.cpp:2744` — it
+does the BGRA→RGBA swizzle and calls `stbi_write_png_to_mem`), `image.cpp:23` already
+compiles `stb_image_write.h`, and `GenBitmap::CopyTo(sImage*)` sizes the target itself. The
+change was confined to `tools/wz4gen/main.cpp`; no upstream change, no new patch.
+
+`Flat` rendering as blue rather than orange is the end-to-end check on channel order —
+`#aarrggbb` in the text through `GenBitmap`'s 16-bit fixed point to the PNG's byte order —
+which nothing before this stage could have caught.
+
+The output is byte-identical across runs. That is not yet asserted; 4.4 is where it becomes a
+golden, and asserting it here would pre-empt the review that stage exists to do.
+
+#### Found here: the tests must check the file, not the exit code
+
+The first run failed all four cases on a missing `build/tex-png/` — `SavePNG` does not create
+its output directory. A `PASS_REGULAR_EXPRESSION` on the tool's `wrote <path>` line would not
+have found it, and would equally have passed on a zero-byte or truncated file. The runner
+deletes any previous output, then checks existence, size and the PNG signature. Recorded as
+`architecture.md` A39, and it is the same lesson as A33.
 
 ### 4.3 — Per-operator test cases
 

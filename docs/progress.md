@@ -4,13 +4,17 @@ Read this first when picking the project up cold. It records where things
 stand, what has been decided and why, and what would otherwise have to be
 rediscovered the hard way.
 
-**Last updated:** phase 4, stage 4.1 (+ `.wz4t` array syntax).
-**Status:** Phases 1–3 complete and verified. **Phase 4 stage 4.1 done: the
-texture library builds, links and RUNS.** All 34 `GenBitmap` operators register
-and `wz4gen render` evaluates them — `Flat` (uniform, correctly), `Perlin`,
-`Cell`, `Gradient` and `Blur` all produce 64×64 output. First time this port has
-executed a generator. `.wz4t` gained array-row syntax so `Gradient` works.
-`ctest` is 30 tests. Next: 4.2, PNG output.
+**Last updated:** phase 4, stage 4.2.
+**Status:** Phases 1–3 complete and verified. **Phase 4 stages 4.1 and 4.2 done:
+the texture library builds, links, runs, and now writes PNGs you can look at.**
+All 34 `GenBitmap` operators register; `wz4gen render <doc> -op <name> -out
+<file.png>` evaluates an operator and writes the image. A `Flat` → `GlowRect` →
+`Twirl` → `Blur` chain was rendered step by step and checked by eye, which also
+confirms channel order end to end. `.wz4t` gained array-row syntax in 4.1 so
+`Gradient` works. `ctest` is 35 tests, all passing on a clean build.
+
+Next: **4.3**, one `.wz4t` case per operator — the bulk of the remaining work in
+this phase, and the input to 4.4's golden lock.
 
 ---
 
@@ -53,7 +57,7 @@ about the build.
 | 1 — Toolchain and portable base | **Done**, gate passed |
 | 2 — Headless op runtime + metadata | **Done**, phase gate passed |
 | 3 — Text graph format + CLI | **Done**, phase gate passed |
-| 4 — Texture library + tests | **In progress.** 4.1 done, gate passed |
+| 4 — Texture library + tests | **In progress.** 4.1 and 4.2 done, both gates passed |
 | 5 — Texture GUI | Not started |
 | 6 — Geometry | Not started |
 | 7 — Animated geometry | Not started |
@@ -85,11 +89,12 @@ Clean build from scratch: **0 errors**. Warnings are expected and benign
 | **`wz4core`** | **The operator runtime, GUI-free: doc, build, basic, script, generated basic_ops** |
 | **`wz4tex`** | **The texture engine: wz3_bitmap_code + genvector + generated ops** |
 | `tex_smoke_*` (5) | Stage 4.1 gate: five operators evaluate; `Flat` uniform, rest structured |
+| `tex_chain_*` (4) | **Stage 4.2 gate:** a four-step chain renders to real PNG files (`ctest`) |
 | `wz4t` | **Ours.** JSON, the runtime metadata model, and the `.wz4t` reader + writer |
 | `wz4t_read` | Stage 3.1b gate: a hand-written case parses and connects (`ctest`) |
-| `wz4t_round_*` (2) | Stage 3.2 gate: read→write→read preserves every word (`ctest`) |
+| `wz4t_round_*` (4) | Stage 3.2 gate: read→write→read preserves every word (`ctest`) |
 | `docround_*` (6) | **Phase 3 gate:** `.wz4`→`.wz4t`→`.wz4` over every document (`ctest`) |
-| `wz4gen` | The headless CLI: `list`, `identity`, `describe`, `checkmeta`. `convert`/`render` to come |
+| `wz4gen` | The headless CLI: `list`, `describe`, `checkmeta`, `convert`, `identity`, `render` |
 | `core_connect` | Phase 2 gate: links `wz4core`, derives a graph from geometry (`ctest`) |
 | `load_*` (6 tests) | Every bundled `.wz4` document must load and be non-empty (`ctest`) |
 | `identity_*` (6 tests) | And survive a load/save/reload with every class intact (`ctest`) |
@@ -131,7 +136,7 @@ wz4port/
   tools/opsmeta/               phase 2 stage 2.3 — .ops -> metadata JSON
     main.cpp  emit.cpp  json.cpp
     opsmeta.hpp  json.hpp
-  tools/wz4gen/main.cpp        phase 3 — the CLI: list, identity, describe, checkmeta
+  tools/wz4gen/main.cpp        phase 3 — the CLI; render/PNG completed in 4.2
   wz4t/                        phase 3 — ours: JSON, metadata, the text format
     json.hpp  json.cpp         a small general JSON reader, plus wFormatFloat
     meta.hpp  meta.cpp         wMetaLibrary — what wClass cannot tell you
@@ -140,6 +145,8 @@ wz4port/
   tests/cases/three_ops.wz4t   stage 3.1b: geometry and connections
   tests/cases/values.wz4t      stage 3.2: value kinds, escapes, non-ASCII text
   tests/tex/smoke.wz4t         stage 4.1: does the texture engine execute?
+  tests/tex/chain.wz4t         stage 4.2: a chain whose every step is checkable
+  tests/tex/render_png.cmake   renders one op and asserts the PNG on disk
   tests/
     simd_parity.cpp
     headless_core.cpp          phase 2 stage 2.1 gate
@@ -578,12 +585,12 @@ handler reporting through it is how Ctrl+C should interrupt a long generation.
   two must agree.
 - **`Text` / `Text3D` / `Path3D` operators** need FreeType (and a tessellator
   for the 3D ones). Deferred; 3 operators out of 84.
-- **The runtime has never executed an operator.** Phase 2 proved the runtime
-  *links* and that the graph is derived correctly, but `core_connect` never calls
-  `wDocument::CalcOp`, so no operator body has run and no `wObject` has been
-  produced. The `basic` module's operators are almost all structural (`Nop`,
-  `Group`, `Store`, `Load`), so the first real execution comes with the texture
-  library in phase 4 — that is where `wExecutive::Execute` gets exercised.
+- ~~The runtime has never executed an operator.~~ **Resolved in 4.1/4.2:**
+  `wDocument::CalcOp` runs real operator bodies and produces `wObject`s, and as
+  of 4.2 the result is written out as a PNG and has been checked by eye. The
+  prediction in this item held — `basic`'s operators are nearly all structural,
+  so the texture library was indeed where `wExecutive::Execute` first got
+  exercised.
 - ~~`.wz4` document loading is untested.~~ **Resolved in 3.3:** all six bundled
   documents load, 7,090 operators, and every one is a `ctest` case. The
   serialisation surgery preserved the format.
@@ -809,9 +816,13 @@ backend for macOS); it leaves the bitmap untouched so a graph containing it stil
 evaluates. Stage 4.5 implements it on FreeType.
 
 **The engine runs.** All 34 `GenBitmap` operators register; `wz4gen render`
-evaluates one and reports its size and non-zero pixel count. Registering the
-module also dropped `example.wz4`'s unknown-class count 4,687 → 3,854, and all
-six phase-3 round trips still pass — now comparing far more real parameters.
+evaluates one and reports its size, whether the result is uniform or structured,
+and a checksum. Registering the module also dropped `example.wz4`'s unknown-class
+count 4,687 → 3,854, and all six phase-3 round trips still pass — now comparing
+far more real parameters.
+
+"Non-zero pixels", the first metric tried, is worthless here: alpha is `0xffff`
+almost everywhere, so every pixel is non-zero whatever the operator did.
 
 ### Done: `.wz4t` array syntax
 
@@ -826,8 +837,38 @@ side-by-side placement at the top level. Grammar in `02` §4.2b.
 **Every field of a row is written**, unlike an operator's own parameters,
 because `SetDefaultsArray` *interpolates float fields between neighbouring rows*
 — so "the default" for a row field depends on its neighbours, and omitting one
-would make a file's meaning depend on row order. `wz4t_round_tex` covers it, and
-the round-trip snapshot now compares array rows word for word.
+would make a file's meaning depend on row order. `wz4t_round_tex_smoke` covers
+it, and the round-trip snapshot now compares array rows word for word.
+
+### Done: 4.2 — PNG output
+
+`wz4gen render <doc> -op <name> -out <file.png>`. **No upstream change and no
+new patch**: `sImage::SavePNG` was already complete (`util/image.cpp:2744`, doing
+the BGRA→RGBA swizzle and calling `stbi_write_png_to_mem`), `image.cpp:23`
+already compiles `stb_image_write.h`, and `GenBitmap::CopyTo(sImage*)` sizes the
+target itself. The whole stage was ~15 lines in `tools/wz4gen/main.cpp`.
+
+`tests/tex/chain.wz4t` is the gate: `Flat` → `GlowRect` → `Twirl` → `Blur` at
+256×256, with **every step named** so each operator renders on its own instead of
+being inferred from the end of the chain. Reviewed by eye — uniform dark blue
+field; hard-edged white square over it; corners dragged round into spiral arms;
+the same shape softened. Four `ctest` cases.
+
+Worth knowing for 4.4: the PNG bytes are reproducible across runs, so a
+byte-exact golden comparison will work. Not asserted yet — that is 4.4's job and
+asserting it now would pre-empt the review that stage exists to do.
+
+### Assert on the artefact, not the exit code
+
+The PNG tests could have matched `wz4gen`'s `wrote <path>` line on stdout.
+`tests/tex/render_png.cmake` instead deletes any previous output, renders, then
+checks the file exists, exceeds 256 bytes, and starts with the PNG signature —
+three extra lines of CMake that immediately found something a stdout match never
+would: **`SavePNG` does not create its output directory**, so all four tests
+failed their first run on a missing `build/tex-png/`.
+
+Same lesson as the phase-3 false pass, where a round trip was stable and wrong.
+Both times the test was watching the wrong end of the operation.
 
 ### Three diagnosis lessons from 4.1
 
