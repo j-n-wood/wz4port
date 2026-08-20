@@ -826,6 +826,7 @@ static void Usage()
   sPrint(L"  describe      the full parameter description of one operator\n");
   sPrint(L"  checkmeta     read all the metadata and check it hangs together\n");
   sPrint(L"  convert       .wz4 <-> .wz4t, direction from the extensions\n");
+  sPrint(L"  render        evaluate one operator — phase 4\n");
   sPrint(L"\n");
   sPrint(L"Switches go after the filename: Altona's shell parser treats the\n");
   sPrint(L"token after a -switch as that switch's first parameter.\n");
@@ -915,7 +916,9 @@ void sMain()
     sBool intext = sFindString(in,L".wz4t")>=0;
     sBool outtext = sFindString(out,L".wz4t")>=0;
 
-    sBool ok = intext ? wReadWz4t(in,meta) : Doc->Load(in);
+    // Converting, not validating: an operator from a subsystem this port does
+    // not build should survive as a placeholder rather than stop the job.
+    sBool ok = intext ? wReadWz4t(in,meta,wWZ4T_ALLOWUNKNOWN) : Doc->Load(in);
     if(!ok)
     {
       sPrintF(L"wz4gen: could not read <%s>\n",in);
@@ -933,6 +936,58 @@ void sMain()
       else
       {
         sPrintF(L"%s -> %s: %d operator(s)\n",in,out,Doc->AllOps.GetCount());
+      }
+    }
+  }
+  else if(sCmpString(command,L"render")==0)
+  {
+    // Stubbed until phase 4. Everything up to the evaluation is real, so this
+    // reports honestly how far it gets rather than pretending to be missing:
+    // the graph loads and the target operator resolves; what is absent is a
+    // texture library to evaluate and an image writer to save.
+    const sChar *file = sGetShellParameter(0,1);
+    const sChar *which = sGetShellParameter(L"op",0);
+    const sChar *dir = sGetShellParameter(L"meta",0);
+    if(!dir)
+      dir = WZ4GEN_META_DIR;
+
+    if(!file || !which)
+    {
+      sPrint(L"usage: wz4gen render <doc> -op <storename> -out <file>\n");
+      sSetErrorCode();
+      delete Doc;
+      return;
+    }
+
+    wMetaLibrary meta;
+    sBool ok = meta.LoadDirectory(dir);
+    if(ok)
+      ok = (sFindString(file,L".wz4t")>=0)
+        ? wReadWz4t(file,meta,wWZ4T_ALLOWUNKNOWN)
+        : Doc->Load(file);
+
+    if(!ok)
+    {
+      sPrintF(L"wz4gen: could not load <%s>\n",file);
+      sSetErrorCode();
+    }
+    else
+    {
+      Doc->Connect();
+      wOp *op = Doc->FindStore(which);
+      if(!op)
+      {
+        sPrintF(L"wz4gen: no store called \"%s\" in <%s>\n",which,file);
+        sPrintF(L"        wz4gen list %s -stores\n",file);
+        sSetErrorCode();
+      }
+      else
+      {
+        sPrintF(L"%s: %s.%s\n",which,
+          op->Class->OutputType->Symbol,op->Class->Name);
+        sPrintF(L"wz4gen: render arrives in phase 4 — this build has no "
+                L"texture library to evaluate and no image writer\n");
+        sSetErrorCode();
       }
     }
   }

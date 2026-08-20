@@ -83,6 +83,16 @@ public:
 
 void wFormatFloat(sChar *buffer,sInt size,sF32 value);
 
+// And the other direction, for the same reason.
+//
+// sScanner::ScanFloat() is not correctly rounded either: a value written at
+// full precision and read back through it comes out one ULP low. That showed up
+// as a .wz4 -> .wz4t -> .wz4 round trip changing 0x3f9e9828 into 0x3f9e9827 —
+// invisible in a diff of the text, and exactly the kind of drift that would make
+// phase 4's golden images flaky. Parse the token's exact source text instead.
+
+sF32 wParseFloat(const sChar *text);
+
 /****************************************************************************/
 
 class wJsonDoc

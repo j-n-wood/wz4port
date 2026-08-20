@@ -19,6 +19,20 @@
 
 /****************************************************************************/
 
+enum wWz4tReadFlags
+{
+  // Accept an operator whose class is not registered, substituting the
+  // UnknownOp placeholder and remembering the original name — exactly what
+  // Altona's .wz4 reader does (doc.cpp:1854, wz4port/patches/07).
+  //
+  // OFF by default, and that default is the important one. In a hand-written
+  // test case an unknown class is a typo, and accepting it would let the case
+  // pass while testing nothing. It is switched ON only when converting a
+  // document, where the unknown classes are real operators from subsystems this
+  // port does not build.
+  wWZ4T_ALLOWUNKNOWN = 0x0001,
+};
+
 // Reads `filename` into the global Doc, which must already exist and have its
 // operator modules registered. Parameter names and value kinds are validated
 // against `meta`; a name that is not a parameter of that class is an error, not
@@ -30,11 +44,11 @@
 // Does NOT call Doc->Connect(); the caller decides when, so it can inspect the
 // pre-connection state if it wants to.
 
-sBool wReadWz4t(const sChar *filename,const wMetaLibrary &meta);
+sBool wReadWz4t(const sChar *filename,const wMetaLibrary &meta,sInt flags=0);
 
 // Same, from memory. `sourcename` only appears in messages.
 sBool wReadWz4tText(const sChar *text,const sChar *sourcename,
-  const wMetaLibrary &meta);
+  const wMetaLibrary &meta,sInt flags=0);
 
 /****************************************************************************/
 

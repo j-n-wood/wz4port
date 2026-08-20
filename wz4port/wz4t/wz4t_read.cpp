@@ -48,10 +48,12 @@ class wWz4tReader
 {
   sScanner Scan;
   const wMetaLibrary *Meta;
+  sInt Flags;                     // wWZ4T_???
 
   wPage *Page;                    // current page, created on demand
   sBool TookDefault;              // see AddPage
   sInt Errors;
+  sInt Substituted;               // ops accepted as UnknownOp placeholders
 
   void Fail(const sChar *msg);
 
@@ -69,18 +71,20 @@ class wWz4tReader
   sBool Block(const sChar *what);
 
 public:
-  wWz4tReader(const wMetaLibrary &meta);
+  wWz4tReader(const wMetaLibrary &meta,sInt flags);
   sBool Run(const sChar *text,const sChar *sourcename);
 };
 
 /****************************************************************************/
 
-wWz4tReader::wWz4tReader(const wMetaLibrary &meta)
+wWz4tReader::wWz4tReader(const wMetaLibrary &meta,sInt flags)
 {
   Meta = &meta;
+  Flags = flags;
   Page = 0;
   TookDefault = 0;
   Errors = 0;
+  Substituted = 0;
 }
 
 void wWz4tReader::Fail(const sChar *msg)
@@ -259,7 +263,11 @@ sBool wWz4tReader::Value(wValue &out)
   if(Scan.Token==sTOK_FLOAT)
   {
     out.IsFloat = 1;
-    out.F = Scan.ScanFloat();
+    // Not Scan.ScanFloat(): it is not correctly rounded and loses a ULP, which
+    // showed up as a document round trip changing 0x3f9e9828 to 0x3f9e9827.
+    // ValueString is the token's exact source text. See wParseFloat.
+    out.F = wParseFloat(Scan.ValueString);
+    Scan.Scan();
     if(negative)
       out.F = -out.F;
     out.I = sInt(out.F);
@@ -467,6 +475,17 @@ sBool wWz4tReader::Settings(wStackOp *op,const wMetaClass *mc)
       continue;
     }
 
+    // A placeholder has no metadata, so nothing can be assigned to it. Its
+    // parameters were already lost when the document was first read; the file
+    // says so in a comment. Consume the value and move on.
+    if(!mc)
+    {
+      wValue discard;
+      while(!Scan.Errors && Value(discard) && (Scan.IfToken(',') || Scan.IfToken('|')))
+        ;
+      continue;
+    }
+
     const wMetaParam *p = mc->FindParam(key);
     if(!p)
     {
@@ -518,20 +537,33 @@ sBool wWz4tReader::Op(sInt *stackx,sInt *stacky,sInt *rowx,sInt rowy)
 
   const wMetaClass *mc = Meta->Find(type,name);
   wClass *cl = Doc->FindClass(name,type);
+  sBool substitute = 0;
 
-  if(!cl)
+  if(!cl || !mc)
   {
-    sString<512> msg;
-    msg.PrintF(L"no registered operator %s.%s",type,name);
-    Fail(msg);
-    return 0;
-  }
-  if(!mc)
-  {
-    sString<512> msg;
-    msg.PrintF(L"no metadata for %s.%s — is build/meta up to date?",type,name);
-    Fail(msg);
-    return 0;
+    if(!(Flags & wWZ4T_ALLOWUNKNOWN))
+    {
+      sString<512> msg;
+      if(!cl)
+        msg.PrintF(L"no registered operator %s.%s",type,name);
+      else
+        msg.PrintF(L"no metadata for %s.%s — is build/meta up to date?",type,name);
+      Fail(msg);
+      return 0;
+    }
+
+    // Converting a document rather than reading a case: keep the operator as a
+    // placeholder so its geometry still shapes the graph, and remember what it
+    // was so a later write puts the name back.
+    cl = Doc->FindClass(L"UnknownOp",L"AnyType");
+    if(!cl)
+    {
+      Fail(L"UnknownOp is not registered, so an unknown class cannot be kept");
+      return 0;
+    }
+    mc = 0;
+    substitute = 1;
+    Substituted++;
   }
 
   sInt x = 0,y = 0,w = 3,h = 1;
@@ -574,6 +606,11 @@ sBool wWz4tReader::Op(sInt *stackx,sInt *stacky,sInt *rowx,sInt rowy)
   op->PosY = y;
   op->SizeX = w;
   op->SizeY = h;
+  if(substitute)
+  {
+    op->ForeignClass = name;
+    op->ForeignType = type;
+  }
 
   // Defaults first, so a file only has to state what it changes. This is the
   // same SetDefaults the editor runs when you place an operator.
@@ -691,16 +728,19 @@ sBool wWz4tReader::Run(const sChar *text,const sChar *sourcename)
     }
   }
 
+  if(Substituted)
+    sPrintF(L"wz4t: %d operator(s) kept as UnknownOp placeholders\n",Substituted);
+
   return !Scan.Errors && Errors==0;
 }
 
 /****************************************************************************/
 
 sBool wReadWz4tText(const sChar *text,const sChar *sourcename,
-  const wMetaLibrary &meta)
+  const wMetaLibrary &meta,sInt flags)
 {
   sVERIFY(Doc);
-  wWz4tReader reader(meta);
+  wWz4tReader reader(meta,flags);
   return reader.Run(text,sourcename);
 }
 
@@ -714,7 +754,7 @@ sBool wReadWz4tText(const sChar *text,const sChar *sourcename,
 // UTF-8, the corruption is IDEMPOTENT, and a read/write/read round-trip test
 // passes while quietly mangling the text. Found exactly that way.
 
-sBool wReadWz4t(const sChar *filename,const wMetaLibrary &meta)
+sBool wReadWz4t(const sChar *filename,const wMetaLibrary &meta,sInt flags)
 {
   sDInt size = 0;
   sU8 *bytes = sLoadFile(filename,size);
@@ -742,7 +782,7 @@ sBool wReadWz4t(const sChar *filename,const wMetaLibrary &meta)
   sChar *text = new sChar[len+1];
   sCopyStringFromUTF8(text,zero,sInt(len+1));
 
-  sBool ok = wReadWz4tText(text,filename,meta);
+  sBool ok = wReadWz4tText(text,filename,meta,flags);
 
   delete[] text;
   delete[] zero;

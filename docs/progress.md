@@ -4,12 +4,12 @@ Read this first when picking the project up cold. It records where things
 stand, what has been decided and why, and what would otherwise have to be
 rediscovered the hard way.
 
-**Last updated:** phase 3, stage 3.2.
-**Status:** Phases 1 and 2 complete and verified; the operator runtime links and
-runs headless. Phase 3: **3.3, 3.1a, 3.1b and 3.2 done**, plus the
-destructive-write fix (`patches/07`). **`.wz4t` reads and writes, and the round
-trip preserves every parameter word, string and link.** `wz4gen convert` does
-`.wz4` ↔ `.wz4t`. Next is 3.4: `render` (stubbed) and the phase gate.
+**Last updated:** end of phase 3.
+**Status:** Phases 1, 2 and 3 complete and verified. **The phase 3 gate passes:
+`.wz4` → `.wz4t` → `.wz4` over all six bundled documents preserves every
+operator's identity, geometry and store name, every parameter of every
+registered operator, and reproduces the re-derived connection lists exactly.**
+`ctest` is 24 tests. Phase 4 (texture library and test suite) not started.
 
 ---
 
@@ -51,8 +51,8 @@ about the build.
 | 0 — Documentation (`docs/00`–`02`) | **Done**, reviewed and approved |
 | 1 — Toolchain and portable base | **Done**, gate passed |
 | 2 — Headless op runtime + metadata | **Done**, phase gate passed |
-| 3 — Text graph format + CLI | **In progress.** 3.3, 3.1a, 3.1b, 3.2 done. 3.4 next |
-| 4 — Texture library + tests | Not started |
+| 3 — Text graph format + CLI | **Done**, phase gate passed |
+| 4 — Texture library + tests | **Next** |
 | 5 — Texture GUI | Not started |
 | 6 — Geometry | Not started |
 | 7 — Animated geometry | Not started |
@@ -85,6 +85,7 @@ Clean build from scratch: **0 errors**. Warnings are expected and benign
 | `wz4t` | **Ours.** JSON, the runtime metadata model, and the `.wz4t` reader + writer |
 | `wz4t_read` | Stage 3.1b gate: a hand-written case parses and connects (`ctest`) |
 | `wz4t_round_*` (2) | Stage 3.2 gate: read→write→read preserves every word (`ctest`) |
+| `docround_*` (6) | **Phase 3 gate:** `.wz4`→`.wz4t`→`.wz4` over every document (`ctest`) |
 | `wz4gen` | The headless CLI: `list`, `identity`, `describe`, `checkmeta`. `convert`/`render` to come |
 | `core_connect` | Phase 2 gate: links `wz4core`, derives a graph from geometry (`ctest`) |
 | `load_*` (6 tests) | Every bundled `.wz4` document must load and be non-empty (`ctest`) |
@@ -741,6 +742,40 @@ point of a text format.
 The lasting fix is the test, though: it now asserts an **actual character value**
 against a compiler-encoded literal. *A round trip being stable is not the same
 as it being correct*, and only the second kind of check tells them apart.
+
+### Done: 3.4 — the CLI, and the phase gate
+
+`wz4gen` has `list`, `describe`, `checkmeta`, `convert`, `identity`, and `render`
+stubbed for phase 4 (it loads the graph and resolves the store, then says what
+is missing and exits non-zero, rather than pretending to be absent).
+
+**Phase gate passed over all six documents.** On `example.wz4`: 4,899 operators,
+418 of them registered, every identity and geometry preserved, every parameter of
+every registered operator preserved, and every re-derived connection identical.
+
+Parameters are compared only for registered operators, because Altona discarded
+the rest at `.wz4` read time — the plan already scoped the gate that way.
+
+**The reader needed a lenient mode** before `.wz4t` → `.wz4` could work at all:
+the writer emits `GenBitmap.Text` for classes this build cannot load, and the
+reader rejected them by design. `wWZ4T_ALLOWUNKNOWN` substitutes `UnknownOp` and
+remembers the name, mirroring the binary reader. **Off by default** — in a
+hand-written case an unknown class is a typo.
+
+### A 1-ULP float drift the gate caught
+
+`example.wz4` failed the first run: `0x3f9e9828 → 0x3f9e9827` on
+`ScreenshotProxy.Screenshot`'s `Position`, `Target` and `Zoom`. The writer was
+exact, so the loss was `sScanner::ScanFloat()` — **A18 again, on the parsing
+side.** Fixed by parsing the token's exact source text through libc.
+
+Worth remembering what that nearly cost: the text diff of two conversions looked
+identical, and 5 of 6 documents passed. A phase 4 golden image would have drifted
+for a reason nobody would think to look for in the *scanner*.
+
+**Rule of thumb now established twice over: for anything numeric or textual
+crossing a format boundary, do not use Altona's conversions.** `wFormatFloat`
+and `wParseFloat` in `wz4t/json.hpp` are the ones to use.
 
 ### Still to use from phase 2
 

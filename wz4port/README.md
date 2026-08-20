@@ -20,12 +20,19 @@ ninja -C build
 
 Requires clang (or gcc), CMake ≥ 3.20 and Ninja. No external libraries yet.
 
-## Current state — phases 1 and 2 complete
+## Current state — phases 1, 2 and 3 complete
 
 **The Werkkzeug operator runtime builds and runs with no GUI, no graphics API
-and no window system.** `core_connect` proves it end to end: it constructs a
-document programmatically and lets the runtime derive the graph from block
-geometry alone.
+and no window system**, and there is a text graph format with a working
+converter. `.wz4` → `.wz4t` → `.wz4` round-trips all six bundled documents with
+identity, geometry, parameters and the derived graph intact.
+
+```sh
+wz4gen list                        # registered operators
+wz4gen list doc.wz4 -stores        # what is in a document
+wz4gen describe GenBitmap.Perlin   # the full parameter description
+wz4gen convert doc.wz4 doc.wz4t    # and back
+```
 
 | Target | What it is |
 |---|---|
@@ -38,10 +45,16 @@ geometry alone.
 | `headless_core_gate` | Compiles `wz4lib/doc_core.hpp` alone, with the GUI poisoned |
 | `headless_ops_gate` | Generates and compiles both op modules `-headless`, GUI poisoned |
 | `opsmeta_gate` | Emits and validates metadata for all 33 `.ops` modules into `build/meta/` |
+| **`wz4t`** | **Ours. JSON, the runtime metadata model, and the `.wz4t` reader + writer** |
+| **`wz4gen`** | **Ours. The headless CLI** |
 | `core_connect` | Phase 2 gate: links `wz4core`, derives a graph from geometry (`ctest`) |
+| `wz4t_read`, `wz4t_round_*` | Stage 3.1b/3.2 gates over hand-written cases (`ctest`) |
+| `docround_*` | Phase 3 gate: `.wz4` → `.wz4t` → `.wz4` over six documents (`ctest`) |
+| `load_*`, `identity_*` | Every bundled document loads, and survives a load/save (`ctest`) |
+| `checkmeta` | The metadata reads back consistently (`ctest`) |
 | `simd_parity` | Verifies all 43 SSE2 intrinsics against scalar models (`ctest`) |
 
-Not yet built: the texture library, the `.wz4t` text format, the CLI, the editor.
+Not yet built: the texture library and the editor.
 
 ## Six things that are not obvious
 
@@ -136,7 +149,9 @@ compat/          altona_config.hpp, POSIX shim, stub headers
   altona_missing.cpp   sCheckBreakKey — declared everywhere, defined only for Windows
 patches/         every change made to altona_wz4/, with rationale
 tools/opsmeta/   .ops -> metadata JSON
-tests/           simd_parity, headless_core, core_connect + gui_poison
+tools/wz4gen/    the headless CLI
+wz4t/            JSON, runtime metadata, .wz4t read/write
+tests/           gates + gui_poison; cases/ holds hand-written .wz4t
 build/           compiled output (gitignored)
   generated/     wz4ops output, non-headless — the inertness proof, note 5
   generated-headless/  wz4ops -headless output, compiled by headless_ops_gate

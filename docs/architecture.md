@@ -41,6 +41,11 @@ that was reversed is more useful than one silently replaced.
                        └─────────────────────────────────────────┘
                                           │
                        ┌─────────────────────────────────────────┐
+  phase 3 ✓            │  wz4t — json, meta, .wz4t read/write     │
+                       │  wz4gen — list describe convert identity │
+                       └─────────────────────────────────────────┘
+                                          │
+                       ┌─────────────────────────────────────────┐
   phase 2.4 ✓          │  wz4core — doc.cpp build.cpp basic.cpp   │
                        │           script.cpp  util/image.cpp     │
                        │           gui/{theme,palette}.cpp        │
@@ -112,6 +117,7 @@ Enforced by the build — breaking these fails compilation and names the file:
 | The metadata reads back consistently | `checkmeta` — offsets, `continues` owners, choice masks, all 33 modules |
 | `.wz4t` parses, connects, and refuses bad input | `wz4t_read` — 19 checks, 6 of them rejections |
 | `.wz4t` round-trips every parameter word, and text is correct | `wz4t_round_*` — two cases, including a non-ASCII assertion against a literal |
+| `.wz4` → `.wz4t` → `.wz4` preserves identity, geometry, parameters and the graph | `docround_*` — all six bundled documents |
 
 Enforced only by discipline — nothing catches a regression:
 
@@ -821,6 +827,47 @@ choice decoding against Altona's own `sFindFlag` (A16) rather than against
 itself, and why the absence of a reference oracle (Part 5) is the standing risk
 it is.
 
+### A34 · Do not use Altona's numeric or text conversions across a format boundary — standing
+
+*Established in 2.3, confirmed twice more in 3.2 and 3.4.* Three independent
+failures, one cause:
+
+| Facility | What it does | Found in |
+|---|---|---|
+| `sFormatStringBuffer` `%f` | Not correctly rounded: `4.0f` prints as `4.00000023` | 2.3 (A18) |
+| `sFormatStringBuffer` `%g` | Does not exist; falls through to `PrintInt`, so `0.125` prints as `0` | 3.1a |
+| `sLoadText` | Decodes UTF-8 only with a BOM; otherwise byte-per-character | 3.2 (A33) |
+| `sSaveTextAnsi` | Truncates each character to a byte; output reads as binary | 3.2 |
+| `sScanner::ScanFloat` | Not correctly rounded: loses one ULP on a full-precision value | 3.4 |
+
+None of these matter inside Altona, where the values are display text. All of
+them matter at a boundary where a value must survive a write and a read.
+
+`wz4port/wz4t/json.hpp` holds the replacements — `wFormatFloat`, `wParseFloat` —
+and the readers decode UTF-8 themselves. **Use those.**
+
+The 3.4 instance is the instructive one. A one-ULP change is invisible in a diff
+of the text, and 5 of the 6 documents passed anyway; only comparing raw
+parameter words caught it. Phase 4's golden images would have drifted for a
+reason nobody would have thought to look for in the *scanner*.
+
+### A35 · Graceful degradation is a mode, not a default — standing
+
+*Phase 3.4.* `.wz4t` → `.wz4` was impossible until the reader could accept a
+class this build cannot load, because the writer emits those operators by name
+and the reader rejected them (A31, deliberately).
+
+The resolution is a flag, `wWZ4T_ALLOWUNKNOWN`, **off by default**:
+
+| Caller | Mode | Because |
+|---|---|---|
+| hand-written case | strict | an unknown class is a typo, and silence would let the case test nothing |
+| `wz4gen convert`, document round-trip | lenient | the unknown classes are real operators from out-of-scope subsystems |
+
+Same input, same parser, opposite correct answers — so leniency belongs to the
+*caller's intent*, not to the format. Worth remembering when the editor loads a
+user's document (lenient) versus a regression case (strict).
+
 ---
 
 ## Part 3 — where inference lost to measurement
@@ -850,6 +897,7 @@ adopted because of this list.
 | A fresh `wDocument` is empty | Its constructor calls `DefaultDoc()` and it already owns a page (A32) |
 | `sLoadText` reads UTF-8 | Only with a BOM; otherwise byte-per-character. Silent mojibake on hand-written files (A33) |
 | A passing round-trip test means the data survived | Not if the error is idempotent. `café` → `cafÃ©` passed every comparison (A33) |
+| `sScanner::ScanFloat` round-trips a float | Loses one ULP. Invisible in a text diff; 5 of 6 documents passed anyway (A34) |
 | `doc.cpp` has 16 GUI-touching lines | It contains all ~840 lines of `wPaintInfo`. Third time a line count understated coupling (A22) |
 | Extracting a declaration is enough to decouple | It compiles; it does not link. The definitions needed extracting too (A23) |
 | `script.cpp` might be excludable | `wExecutive::Execute` drives `ScriptContext` directly (A19) |

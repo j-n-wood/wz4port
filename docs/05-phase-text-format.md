@@ -323,23 +323,69 @@ for 3.4 is `render` (stubbed) and the phase gate.
 | `wz4gen convert <in> <out>` | `.wz4` ↔ `.wz4t`, direction from extensions |
 | `wz4gen render <doc> --op=<name> --out=<file>` | Evaluate an operator and write its result (PNG in phase 4, OBJ in phase 6) |
 
-`render` is stubbed here and completed in phase 4; the other three are complete.
+`render` is stubbed here and completed in phase 4; the other three are complete. The stub is
+honest rather than absent: it loads the graph and resolves the named store, then says what is
+missing (a texture library to evaluate and an image writer) and exits non-zero.
 
-**Gate — phase gate.** Round-trip: `.wz4` → `.wz4t` → `.wz4` preserves every operator, its
-geometry, its parameters and its store name; and re-deriving connections from the result
-reproduces the original input lists exactly. Run against all five bundled documents, limited
-to the subgraphs whose classes we have registered.
+### 3.4 — **done**, and the phase gate passes
+
+**Gate — passed** over all six bundled documents (`docround_*` in `ctest`). Per document it
+checks operator count, class identity, page and geometry, store name / hide / bypass,
+**parameters for every registered operator**, and that the re-derived input lists match the
+originals exactly.
+
+Scope is as the plan stated — "limited to the subgraphs whose classes we have registered".
+Parameters are compared only for operators this build can load, because Altona discarded the
+rest when it first read the `.wz4` (`UnknownOp` declares no storage; `patches/07`). Claiming
+otherwise would be false. Their *identity*, *geometry* and *participation in connections* are
+compared, which is what keeps the graph check meaningful: on `example.wz4` that is 4,899
+operators, only 418 of them registered, and every connection re-derived correctly.
+
+#### The reader needed a lenient mode
+
+`.wz4t` → `.wz4` could not work at all until the reader could accept an unregistered class,
+because the writer emits `GenBitmap.Text` for operators this build cannot load and the reader
+rejected them by design.
+
+So `wWZ4T_ALLOWUNKNOWN` substitutes the `UnknownOp` placeholder and remembers the original
+name — mirroring exactly what Altona's own `.wz4` reader does. **It is off by default**, and
+that default is the point: in a hand-written case an unknown class is a typo, and accepting it
+would let the case pass while testing nothing. Only `convert` and the document round-trip
+switch it on.
+
+#### A 1-ULP float drift, found by the gate
+
+`example.wz4` failed the first run, on `ScreenshotProxy.Screenshot`:
+
+```
+word 4: 0x3f9e9828 -> 0x3f9e9827
+word 5: 0x3f07449f -> 0x3f07449e
+word 6: 0xbf80754a -> 0xbf807549
+```
+
+One unit in the last place, on `Position`, `Target` and `Zoom`. The writer was exact — it
+already prints at the shortest precision that round-trips — so the loss was in
+`sScanner::ScanFloat()`, which is not correctly rounded. **A18 again, on the parsing side.**
+
+Fixed by parsing the token's exact source text (`ValueString`) through libc, next to the
+formatting helper that already existed for the same reason.
+
+Worth noting what this nearly cost: the text diff of two conversions looks identical, and
+5 of 6 documents passed. A per-operator golden image in phase 4 would have drifted for reasons
+nobody would have thought to look for in the *scanner*.
 
 ---
 
-## Deliverables
+## Deliverables — all done
 
-- `wz4port/wz4t/` — `json`, `meta` (done), plus `wz4t_read`, `wz4t_write`.
+- `wz4port/wz4t/` — `json`, `meta`, `wz4t_read`, `wz4t_write`.
   The plan said `wz4port/libwz4core/wz4t_*.cpp`; it is a separate `wz4t` target instead,
   because `wz4core` is upstream sources compiled in place
-- `wz4port/tools/wz4gen/`
-- The `.wz4t` grammar, documented and frozen
-- Round-trip test over the bundled documents
+- `wz4port/tools/wz4gen/` — `list`, `describe`, `checkmeta`, `convert`, `identity`,
+  and `render` stubbed for phase 4
+- The `.wz4t` grammar, documented and frozen at version 1, with the two ambiguities in
+  `02-target-model.md` §4.2 resolved
+- Round-trip tests: two hand-written cases and all six bundled documents
 
 ## Risks
 

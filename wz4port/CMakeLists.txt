@@ -505,6 +505,30 @@ foreach(_case three_ops values)
 endforeach()
 
 #############################################################################
+##  wz4t_docround — the phase 3 gate                                       ##
+#############################################################################
+
+# .wz4 -> .wz4t -> .wz4 over every bundled document, checking identity,
+# geometry, store names, parameters (for the registered subgraph) and the
+# re-derived connection lists.
+
+add_executable(wz4t_docround "${CMAKE_CURRENT_SOURCE_DIR}/tests/wz4t_docround.cpp")
+target_link_libraries(wz4t_docround PRIVATE wz4t)
+target_compile_options(wz4t_docround PRIVATE
+  "SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/tests/gui_poison.h"
+)
+
+foreach(_doc ${WZ4_DOCS})
+  get_filename_component(_name "${_doc}" NAME_WE)
+  add_test(NAME docround_${_name} COMMAND wz4t_docround
+    "${WZ4_META_DIR}"
+    "${FR_ROOT}/altona_wz4/${_doc}"
+    "${CMAKE_BINARY_DIR}/roundtrip/${_name}.wz4t"
+    "${CMAKE_BINARY_DIR}/roundtrip/${_name}_back.wz4")
+  set_tests_properties(docround_${_name} PROPERTIES DEPENDS opsmeta_gate)
+endforeach()
+
+#############################################################################
 ##  core_connect — the phase 2 gate                                        ##
 #############################################################################
 

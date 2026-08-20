@@ -29,6 +29,16 @@ void wFormatFloat(sChar *buffer,sInt size,sF32 value)
   buffer[i] = 0;
 }
 
+sF32 wParseFloat(const sChar *text)
+{
+  char narrow[128];
+  sInt i = 0;
+  for(;text[i] && i<sInt(sizeof(narrow))-1;i++)
+    narrow[i] = char(text[i]);
+  narrow[i] = 0;
+  return strtof(narrow,0);
+}
+
 /****************************************************************************/
 
 wJsonValue::wJsonValue()
