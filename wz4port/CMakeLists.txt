@@ -587,6 +587,7 @@ if(EXISTS "${WZ4_IMGUI_DIR}/imgui.cpp" AND EXISTS "${WZ4_GLFW_DIR}/CMakeLists.tx
       "${CMAKE_CURRENT_SOURCE_DIR}/editor/canvas.cpp"
       "${CMAKE_CURRENT_SOURCE_DIR}/editor/palette.cpp"
       "${CMAKE_CURRENT_SOURCE_DIR}/editor/docedit.cpp"
+      "${CMAKE_CURRENT_SOURCE_DIR}/editor/params.cpp"
     )
     target_link_libraries(wz4ed PRIVATE wz4t wz4tex imgui)
     target_compile_options(wz4ed PRIVATE
@@ -1115,6 +1116,35 @@ target_compile_options(palette_insert PRIVATE
   "SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/tests/gui_poison.h"
 )
 add_test(NAME palette_insert COMMAND palette_insert)
+
+#############################################################################
+##  params_edit — the stage 5.5 gate                                       ##
+#############################################################################
+
+# "Every parameter is editable and edits reach the generator." The panel is
+# generated from metadata, so the question reduces to whether the offset the
+# metadata gives actually addresses the parameter it names — and a wrong offset
+# is invisible in a screenshot: the panel would show a plausible number, write
+# the wrong word, and the picture would change in some other way.
+#
+# So this writes through the metadata exactly as editor/params.cpp does, then
+# RENDERS and checks the bitmap. It needs wz4tex and the metadata directory.
+
+add_executable(params_edit
+  "${CMAKE_CURRENT_SOURCE_DIR}/tests/params_edit.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/editor/docedit.cpp"
+)
+target_link_libraries(params_edit PRIVATE wz4t wz4tex)
+target_include_directories(params_edit PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}/editor")
+target_compile_definitions(params_edit PRIVATE
+  "WZ4_META_DIR_STR=L\"${WZ4_META_DIR}\""
+)
+target_compile_options(params_edit PRIVATE
+  "SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/tests/gui_poison.h"
+)
+add_test(NAME params_edit COMMAND params_edit)
+set_tests_properties(params_edit PROPERTIES DEPENDS opsmeta_gate)
 
 # The other half of 5.3's gate: the derived graph the editor's inspector shows
 # must be the one the headless library derives. They agree by construction — both

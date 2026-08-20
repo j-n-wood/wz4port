@@ -33,6 +33,7 @@
 #include "canvas.hpp"
 #include "palette.hpp"
 #include "docedit.hpp"
+#include "params.hpp"
 
 #include <GLFW/glfw3.h>
 #include <stdio.h>                  // fflush, for the exit path at the bottom
@@ -432,26 +433,21 @@ static sBool DrawInspector()
       mc->ArrayWords,op->GetArrayCount());
 
   ImGui::Separator();
-  if(ImGui::BeginTable("params",3,ImGuiTableFlags_Borders|ImGuiTableFlags_RowBg))
-  {
-    ImGui::TableSetupColumn("Parameter");
-    ImGui::TableSetupColumn("Kind");
-    ImGui::TableSetupColumn("Offset",ImGuiTableColumnFlags_WidthFixed,56.0f);
-    ImGui::TableHeadersRow();
 
-    for(sInt i=0;i<mc->Params.GetCount();i++)
-    {
-      const wMetaParam *p = mc->Params[i];
-      ImGui::TableNextRow();
-      ImGui::TableNextColumn();
-      ImGui::TextUnformatted(wUtf8(p->Symbol.IsEmpty() ? p->Label : p->Symbol));
-      ImGui::TableNextColumn();
-      ImGui::TextUnformatted(wUtf8(p->Kind));
-      ImGui::TableNextColumn();
-      ImGui::Text("%d",p->Offset);
-    }
-    ImGui::EndTable();
+  // The generated parameter panel. Everything below this line is a function of
+  // the metadata; there is no per-operator UI code anywhere in the editor.
+  const sInt pc = wDrawParams(op,mc);
+  if(pc & wPC_VALUE)
+  {
+    // ChangeMsg: drop caches downstream and mark the document dirty. Doc->Change
+    // walks the outputs, which is what makes an edit to a Perlin invalidate the
+    // Blur that reads it rather than only itself.
+    Doc->Change(op);
+    Ed->Status.PrintF(L"changed %s",
+      op->Class ? (const sChar *) op->Class->Name : L"operator");
   }
+  if(pc & wPC_CONNECT)
+    changed = 1;                    // ConnectMsg: the caller reconnects
 
   return changed;
 }

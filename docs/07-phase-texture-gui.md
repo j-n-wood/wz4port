@@ -313,7 +313,7 @@ path reaches every operator regardless, so nothing is unreachable.
 serialisation of full blocks including geometry, which is a piece of work in its own right and
 belongs with undo in 5.7.
 
-### 5.5 — Parameter panel
+### 5.5 — Parameter panel — **done**
 
 Generated entirely from metadata. Every widget kind in `01-existing-model.md` §5.2:
 
@@ -330,8 +330,71 @@ Generated entirely from metadata. Every widget kind in `01-existing-model.md` §
 Change propagation follows the original's four-level contract: value change, value change plus
 relayout, connection change, and both.
 
-**Gate:** every parameter of every texture operator is editable, and edits reach the
-generator. Spot-check against the `.ops` sources.
+**Gate — passed.** `editor/params.cpp` generates the whole panel from the metadata; there is no
+per-operator UI code anywhere in the editor, which is the point — 34 texture operators today and
+47 mesh operators later cost nothing extra.
+
+`params_edit` is the gate, and it does not spot-check: it walks **all 34 texture operators and
+all 140 parameters** and asserts that every offset lies inside the operator's declared storage
+and every kind has an editor. A wrong offset is the failure that matters and it is *invisible in
+a screenshot* — the panel would show a plausible number, write the wrong word, and the picture
+would change in some other way. So the test writes through the metadata exactly as the panel does
+and then **renders**, checking the bitmap:
+
+- Setting `Flat`'s `Size` — two controls packed in one word — to "32" on both gives a 32×32
+  bitmap; changing only the first gives **64×32**, which is what proves the mask is right rather
+  than merely plausible. The choice *value* is the exponent while the *label* is the power of
+  two, the same trap that caught the `.wz4t` reader in phase 4 (A36).
+- A colour edit changes the render and leaves the size alone.
+- **`Doc->Change` invalidates downstream**: editing `Flat` changes what the `Blur` beneath it
+  renders. Without that the panel would appear to do nothing, because `Blur` would keep serving a
+  cached bitmap.
+
+Verified by eye against the `.ops` sources on `Bricks` (13 words: two packed size controls, three
+colours, two `int[2]` pairs, a three-control flags word) and `Gradient` (array rows with per-row
+`Pos` and `Colour`, insert and remove). Every value matched the document.
+
+#### 14 widget kinds exist in the corpus, not 20
+
+Counted from the emitted metadata rather than from the DSL reference: `float`, `flags`, `int`,
+`group`, `color`, `string`, `link`, `action`, `label`, `fileout`, `filein`, `radio`, `strobe`,
+`char`. All 14 have editors.
+
+**`bitmask`, `custom` and `tie` have zero uses corpus-wide** — which confirms the standing note in
+`architecture.md` Part 5 that those three were "represented but unexercised". They render as a
+named "no editor for kind" line rather than as a blank row, so an operator that ever used one
+would be visibly incomplete instead of quietly missing a control.
+
+#### Conditional visibility is not implemented, and cannot be from schema v1
+
+The plan says "conditional visibility, evaluated from the expression trees in the metadata".
+**There are no expression trees in the metadata.** Schema v1 carries no representation of
+`if(expr)`, so this is a phase-2 emitter gap surfacing exactly where the plan's risk table
+predicted it would.
+
+Scope, measured rather than estimated: **4 conditionals across 2 of the 34 texture operators** —
+`Light` and `Bump`, both `if(Mode!=2)` guarding `Pos` and `if(Mode!=1)` guarding `Dir`. The cost
+is that a directional light shows a `Pos` field it ignores, and a point light shows a `Dir` field
+it ignores. Both remain editable and harmless.
+
+The gate asks that every parameter be *editable*, and showing all of them is strictly more
+editable, not less. Closing this properly means teaching `opsmeta` to emit the expressions,
+bumping `schemaVersion` to 2, and evaluating them here — a piece of phase-2 work, and better done
+deliberately than bolted on.
+
+#### Also not implemented, deliberately
+
+- **Tied vector dragging under Ctrl.** Components drag independently. The tie groups exist in the
+  DSL as `tie a,b,c;` and have zero uses in the corpus.
+- **`LayoutMsg`.** With no conditionals there is no panel whose *shape* depends on a value, so the
+  two relayout levels of the four-level contract collapse into the two that remain. `wPC_VALUE`
+  and `wPC_CONNECT` are what the panel can actually distinguish, and the enum says so.
+- **File browse buttons.** Paths are editable as text; a picker needs the file dialog 5.1 deferred.
+- **The store browser** for `link` parameters — the plan's "deliberately not included" list
+  already excludes it. The link name is an editable text field, and the panel says whether it
+  currently resolves.
+- **Per-operator undo.** §5.5 of the reference calls the original's undo "a genuine gap, not a
+  subtlety to preserve", and 5.7 replaces it with document-level undo.
 
 ### 5.6 — Preview
 

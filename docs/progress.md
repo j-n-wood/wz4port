@@ -4,12 +4,13 @@ Read this first when picking the project up cold. It records where things
 stand, what has been decided and why, and what would otherwise have to be
 rediscovered the hard way.
 
-**Last updated:** phase 5, stage 5.4.
-**Status:** Phases 1–4 complete and verified; **phase 5 can now build a graph
-from scratch** — palette, insert, delete, move, resize, Hide, Bypass. All 34
+**Last updated:** phase 5, stage 5.5.
+**Status:** Phases 1–4 complete and verified; **phase 5 is a usable editor** —
+palette, insert, delete, move, resize, Hide, Bypass, and a metadata-generated
+parameter panel that edits every parameter of every texture operator. All 34
 `GenBitmap` operators run on macOS arm64, with 93 reviewed test cases and 90
 byte-exact goldens that are bit-identical between the NEON and SSE2 builds.
-`ctest` is **130 tests** on arm64.
+`ctest` is **131 tests** on arm64.
 
 **`wz4ed` is the editor.** It has a window, a menu bar, a metadata-driven
 inspector, and the stacking canvas: blocks coloured by output type, selection,
@@ -38,11 +39,23 @@ what a sideways drag destroys.
 **The palette comes from the live class registry, not the metadata** — only a
 registered class can be inserted, so the registry is the authoritative palette
 and cannot offer something uncreatable. Insert and delete live in
-`editor/edit_ops.cpp` with no UI attached, so `palette_insert` drives the same
-code the palette drives rather than a copy of it.
+`editor/docedit.cpp` with no UI attached, so `palette_insert` drives the same
+code the palette drives rather than a copy of it. (Named `docedit` and not the
+obvious `edit_ops` because `.gitignore` excludes `*_ops.cpp` — see A48.)
 
-Next: **5.5**, the parameter panel — the big one, and the real payoff for the
-phase-2 metadata.
+**The parameter panel is the payoff for opsmeta.** `editor/params.cpp` generates
+every control from the schema — there is no per-operator UI code in the editor at
+all. `params_edit` checks all 34 operators and all 140 parameters for offsets
+inside storage and kinds with editors, then writes through the metadata and
+**renders**, because a wrong offset is invisible in a screenshot.
+
+**Conditional visibility is the one thing 5.5 could not do**: schema v1 carries no
+`if(expr)` trees. It affects 4 parameters on 2 operators (`Light`, `Bump`) and
+the cost is two fields showing when they are ignored. Closing it means teaching
+`opsmeta` to emit expressions and bumping the schema to v2 — phase-2 work.
+
+Next: **5.6**, the preview pane — upload the `GenBitmap` result as a texture, and
+the editor becomes an actual texture editor.
 
 **SSE2-vs-NEON parity is real and was runnable here**, contrary to the plan's
 assumption that it needed a Linux box: `sh wz4port/tests/tex/parity_x86_64.sh`
@@ -110,7 +123,7 @@ about the build.
 | 2 — Headless op runtime + metadata | **Done**, phase gate passed |
 | 3 — Text graph format + CLI | **Done**, phase gate passed |
 | 4 — Texture library + tests | **Done**, phase gate passed. All 34 operators run |
-| 5 — Texture GUI | **In progress.** 5.1–5.4 done, all gates passed |
+| 5 — Texture GUI | **In progress.** 5.1–5.5 done, all gates passed |
 | 6 — Geometry | Not started |
 | 7 — Animated geometry | Not started |
 
@@ -161,6 +174,7 @@ Clean build from scratch: **0 errors**. Warnings are expected and benign
 | `connect_passes` | Stage 5.3 gate: the Hide, Sort and Bypass post-passes |
 | `connect_inputs` | And that `wz4gen list -inputs` agrees with the editor's inspector |
 | `palette_insert` | Stage 5.4 gate: all 67 offerable classes insert, connect and delete |
+| `params_edit` | Stage 5.5 gate: 140 parameters addressable, and edits reach the generator |
 
 `simd_parity`: **70,184 checks, 0 failures** on arm64 via sse2neon.
 
@@ -232,7 +246,8 @@ wz4port/
   editor/main.cpp              phase 5 — wz4ed: window, panes, menus, panels
   editor/canvas.hpp/.cpp       stage 5.2 — the stacking canvas
   editor/palette.hpp/.cpp      stage 5.4 — the operator palette
-  editor/edit_ops.hpp/.cpp       insert and delete, with no UI attached
+  editor/docedit.hpp/.cpp        insert and delete, with no UI attached
+  editor/params.hpp/.cpp       stage 5.5 — the panel, generated from metadata
   editor/imgui_wz4.hpp         include ImGui through this, never directly (A46)
   tests/editor_shot.cmake      run the editor, screenshot it, check the PNG
   tests/canvas_rules.cpp       stage 5.2 gate, without a window
