@@ -66,6 +66,17 @@ if("${_out}${_err}" MATCHES "FATAL ERROR")
   message(FATAL_ERROR "wz4ed printed a fatal error while exiting cleanly")
 endif()
 
+# The preview must have evaluated the selected operator and uploaded a texture.
+# Without this the screenshot could show an empty pane and still pass every other
+# check here — which is the whole reason the editor prints the line.
+if(DEFINED SELECT AND NOT SELECT STREQUAL "")
+  if(NOT "${_out}" MATCHES "preview: [0-9]+ x [0-9]+ uploaded")
+    message(FATAL_ERROR
+      "the preview did not upload a texture for <${SELECT}>.\n"
+      "wz4ed reports what it showed; see the output above.")
+  endif()
+endif()
+
 if(NOT EXISTS "${OUT}")
   message(FATAL_ERROR "no screenshot was written to <${OUT}>")
 endif()

@@ -396,7 +396,7 @@ deliberately than bolted on.
 - **Per-operator undo.** §5.5 of the reference calls the original's undo "a genuine gap, not a
   subtlety to preserve", and 5.7 replaces it with document-level undo.
 
-### 5.6 — Preview
+### 5.6 — Preview — **done**
 
 A 2D preview pane: pan, zoom with **8 = 1:1** as in the original, 3×3 tiling toggle, alpha
 view toggle, and the `W x H` readout. Upload the `GenBitmap` result as a texture.
@@ -404,7 +404,57 @@ view toggle, and the `W x H` readout. Upload the `GenBitmap` result as a texture
 Recalculation follows the original's caching: editing an operator invalidates it and
 everything downstream, and evaluation stops at any still-valid cache.
 
-**Gate:** editing a parameter updates the preview promptly on a non-trivial graph.
+**Gate — passed.** The middle column now splits: canvas above, preview below, which is the
+original's arrangement and the right one — you edit the graph and watch the result, and both want
+to be visible at once. Verified against phase 4's goldens: previewing `chain.wz4t`'s
+`twisted_soft` shows the same image as `golden/chain_twisted_soft.png`.
+
+`Doc->CalcOp` is the evaluation, so the caching model comes for free: it stops at the first
+still-valid cached result upstream, which is why editing the last operator of a long chain is
+cheap. Re-evaluation is driven by a revision counter bumped on every value edit and every
+structural change, so a parameter drag does not re-render the graph on every frame of the drag.
+
+`params_edit` from 5.5 already proves the half that matters underneath: `Doc->Change` invalidates
+downstream, so editing a `Flat` changes what the `Blur` below it renders.
+
+#### The zoom mapping was read, not guessed
+
+`wPaintInfo::Zoom2D` is documented only as "8 = normal size", and nothing in the code dump reads
+it — the consumer is `wPaintInfo::CalcRect`, where the whole specification turns out to be one
+line: `Rect.x1 = Rect.x0 + ((xs<<zoom)>>8)` (`doc.cpp:584`). So the scale is exactly
+**2^(zoom−8)** on an integer 0..15 clamp, wheel stepping by one. Guessing would have produced
+something plausible and wrong; the readout shows `1:1`, `2:1`, `1:4` rather than the raw index,
+because 8 means nothing to a reader.
+
+Filtering is **NEAREST**, deliberately: this is a texture editor, and at 4:1 the user is looking
+at individual texels that bilinear filtering would blur away.
+
+#### The checkerboard is the A40 lesson built into the UI
+
+Stage 4.3 lost a day to four operators that zero the alpha channel: their PNGs are fully
+transparent, which *displays as plain white* and is indistinguishable from success. The fix then
+was to make the tool report alpha.
+
+The preview draws on a checkerboard and frames the image extent, so **`color_invert` now renders
+as a visible empty frame** — obviously a 128×128 bitmap that is entirely transparent, rather than
+a white square. The alpha toggle shows the channel as greyscale, baked into the upload because no
+tint can isolate a channel. Confirmed by eye on exactly that operator.
+
+3×3 tiling dims the eight surrounding copies, because the point of tiling is to judge how a
+texture *wraps* and that is easier when the seam is identifiable.
+
+#### The preview reports what it showed
+
+`wz4ed` prints `preview: 128 x 128 uploaded` before a screenshot, and `editor_shot.cmake` asserts
+it whenever a `-select` was given. Without that the screenshot could show an empty pane and pass
+every other check — the same reasoning as A39, applied to a pane instead of a file.
+
+#### Not implemented
+
+Handles and gizmos (§7.1) — the plan's "deliberately not included" list already excludes them,
+and the texture operators declare none. No 3D path: dispatch is on the result object's type, and
+`GenBitmap` is the only type this pane accepts; a mesh would need the render pass that phase 6
+brings.
 
 ### 5.7 — Document-level undo
 

@@ -4,13 +4,15 @@ Read this first when picking the project up cold. It records where things
 stand, what has been decided and why, and what would otherwise have to be
 rediscovered the hard way.
 
-**Last updated:** phase 5, stage 5.5.
-**Status:** Phases 1–4 complete and verified; **phase 5 is a usable editor** —
-palette, insert, delete, move, resize, Hide, Bypass, and a metadata-generated
-parameter panel that edits every parameter of every texture operator. All 34
-`GenBitmap` operators run on macOS arm64, with 93 reviewed test cases and 90
-byte-exact goldens that are bit-identical between the NEON and SSE2 builds.
-`ctest` is **131 tests** on arm64.
+**Last updated:** phase 5, stage 5.6.
+**Status:** Phases 1–4 complete and verified; **phase 5 is a working texture
+editor** — palette, insert, delete, move, resize, Hide, Bypass, a
+metadata-generated parameter panel, and a live preview. All 34 `GenBitmap`
+operators run on macOS arm64, with 93 reviewed test cases and 90 byte-exact
+goldens that are bit-identical between the NEON and SSE2 builds. `ctest` is
+**131 tests** on arm64.
+
+Only **5.7, document-level undo**, remains in the phase.
 
 **`wz4ed` is the editor.** It has a window, a menu bar, a metadata-driven
 inspector, and the stacking canvas: blocks coloured by output type, selection,
@@ -54,8 +56,18 @@ inside storage and kinds with editors, then writes through the metadata and
 the cost is two fields showing when they are ignored. Closing it means teaching
 `opsmeta` to emit expressions and bumping the schema to v2 — phase-2 work.
 
-Next: **5.6**, the preview pane — upload the `GenBitmap` result as a texture, and
-the editor becomes an actual texture editor.
+**The preview's checkerboard is the A40 lesson built into the UI.** `color_invert`
+zeroes alpha, and in 4.3 its PNG looked like a white square and fooled me. In the
+preview it renders as a visible empty frame — obviously a transparent bitmap
+rather than a white one. `wz4ed` also prints `preview: W x H uploaded` so a
+non-interactive run can assert the pane worked rather than only show it.
+
+Zoom is upstream's exact mapping, **2^(zoom−8)** on a 0..15 clamp, read out of
+`wPaintInfo::CalcRect` (`doc.cpp:584`) rather than guessed — the `Zoom2D` field
+is documented only as "8 = normal size" and nothing else in the dump reads it.
+
+Next: **5.7**, document-level undo — the phase gate, and the one place the plan
+sets out to be *better* than the original rather than faithful to it.
 
 **SSE2-vs-NEON parity is real and was runnable here**, contrary to the plan's
 assumption that it needed a Linux box: `sh wz4port/tests/tex/parity_x86_64.sh`
@@ -123,7 +135,7 @@ about the build.
 | 2 — Headless op runtime + metadata | **Done**, phase gate passed |
 | 3 — Text graph format + CLI | **Done**, phase gate passed |
 | 4 — Texture library + tests | **Done**, phase gate passed. All 34 operators run |
-| 5 — Texture GUI | **In progress.** 5.1–5.5 done, all gates passed |
+| 5 — Texture GUI | **In progress.** 5.1–5.6 done; only 5.7 (undo) remains |
 | 6 — Geometry | Not started |
 | 7 — Animated geometry | Not started |
 
@@ -169,7 +181,7 @@ Clean build from scratch: **0 errors**. Warnings are expected and benign
 | `simd_parity` | Verifies all 43 SSE2 intrinsics against scalar models |
 | **`wz4ed`** | **The editor** (phase 5). ImGui + GLFW + GL 3.3, vendored and pinned |
 | `imgui` | Vendored ImGui v1.92.9b, built without `altona_flags` — see below |
-| `wz4ed_shell` | Stage 5.1 gate: the editor starts, draws and screenshots (`ctest`) |
+| `wz4ed_shell` | Stages 5.1/5.6: the editor starts, draws, previews and screenshots (`ctest`) |
 | `canvas_rules` | Stage 5.2 gate: canvas edits obey `CheckMove`, and rewire the graph |
 | `connect_passes` | Stage 5.3 gate: the Hide, Sort and Bypass post-passes |
 | `connect_inputs` | And that `wz4gen list -inputs` agrees with the editor's inspector |
@@ -248,6 +260,7 @@ wz4port/
   editor/palette.hpp/.cpp      stage 5.4 — the operator palette
   editor/docedit.hpp/.cpp        insert and delete, with no UI attached
   editor/params.hpp/.cpp       stage 5.5 — the panel, generated from metadata
+  editor/preview.hpp/.cpp      stage 5.6 — evaluate and show the bitmap
   editor/imgui_wz4.hpp         include ImGui through this, never directly (A46)
   tests/editor_shot.cmake      run the editor, screenshot it, check the PNG
   tests/canvas_rules.cpp       stage 5.2 gate, without a window

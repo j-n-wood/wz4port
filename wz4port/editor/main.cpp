@@ -34,6 +34,7 @@
 #include "palette.hpp"
 #include "docedit.hpp"
 #include "params.hpp"
+#include "preview.hpp"
 
 #include <GLFW/glfw3.h>
 #include <stdio.h>                  // fflush, for the exit path at the bottom
@@ -111,6 +112,12 @@ struct wEditor
 
   wCanvas Canvas;
   wPalette Palette;
+  wPreview Preview;
+
+  // Bumped by every edit. The preview re-evaluates when it changes, which is
+  // what keeps a parameter drag responsive without re-rendering the graph on
+  // every frame of the drag.
+  sInt Revision;
 
   // `bool`, not sBool: ImGui takes bool* for its toggles and sBool is an int.
   bool ShowDemo;
@@ -123,6 +130,7 @@ struct wEditor
     Selected = 0;
     ShowDemo = false;
     ShowList = false;
+    Revision = 0;
     Status = L"no document";
   }
 
@@ -443,6 +451,7 @@ static sBool DrawInspector()
     // walks the outputs, which is what makes an edit to a Perlin invalidate the
     // Blur that reads it rather than only itself.
     Doc->Change(op);
+    Ed->Revision++;
     Ed->Status.PrintF(L"changed %s",
       op->Class ? (const sChar *) op->Class->Name : L"operator");
   }
@@ -547,10 +556,15 @@ static void DrawFrame(GLFWwindow *window,sBool &quit)
   }
   ImGui::End();
 
+  // The middle column splits: canvas above, preview below. That is the original's
+  // arrangement and the right one — you edit the graph and watch the result,
+  // and the two want to be visible at once.
+  const float canvash = (vp->Size.y-menuh)*0.58f;
+
   // The canvas is the editor. In this model the geometry IS the graph, so the
   // canvas is not a view of the document, it is the document.
   ImGui::SetNextWindowPos(ImVec2(palw,menuh));
-  ImGui::SetNextWindowSize(ImVec2(canvasw,vp->Size.y-menuh));
+  ImGui::SetNextWindowSize(ImVec2(canvasw,canvash));
   ImGui::Begin("Canvas",0,paneflags);
   {
 
@@ -568,6 +582,12 @@ static void DrawFrame(GLFWwindow *window,sBool &quit)
       ImGui::TextDisabled("Pass a .wz4t on the command line.");
     }
   }
+  ImGui::End();
+
+  ImGui::SetNextWindowPos(ImVec2(palw,menuh+canvash));
+  ImGui::SetNextWindowSize(ImVec2(canvasw,vp->Size.y-menuh-canvash));
+  ImGui::Begin("Preview",0,paneflags);
+  Ed->Preview.Draw(Ed->Selected,Ed->Revision);
   ImGui::End();
 
   ImGui::SetNextWindowPos(ImVec2(palw+canvasw,menuh));
@@ -664,7 +684,10 @@ static void DrawFrame(GLFWwindow *window,sBool &quit)
 
   // One rebuild per frame, however many edits produced it.
   if(reconnect && Doc)
+  {
     Doc->Connect();
+    Ed->Revision++;                 // a structural change invalidates the preview
+  }
 
   (void)window;
 }
@@ -864,6 +887,12 @@ void sMain()
     drawn++;
     if(frames>0 && drawn>=frames)
     {
+      // What the preview ended up showing, so a non-interactive run can be
+      // checked rather than only looked at.
+      sString<128> pv;
+      Ed->Preview.Describe(pv);
+      sPrintF(L"wz4ed: %s\n",pv);
+
       // Before the swap, so what is read back is the frame just drawn.
       if(shot && !SaveScreenshot(window,shot))
         failed = 1;

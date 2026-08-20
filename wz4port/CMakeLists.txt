@@ -588,6 +588,7 @@ if(EXISTS "${WZ4_IMGUI_DIR}/imgui.cpp" AND EXISTS "${WZ4_GLFW_DIR}/CMakeLists.tx
       "${CMAKE_CURRENT_SOURCE_DIR}/editor/palette.cpp"
       "${CMAKE_CURRENT_SOURCE_DIR}/editor/docedit.cpp"
       "${CMAKE_CURRENT_SOURCE_DIR}/editor/params.cpp"
+      "${CMAKE_CURRENT_SOURCE_DIR}/editor/preview.cpp"
     )
     target_link_libraries(wz4ed PRIVATE wz4t wz4tex imgui)
     target_compile_options(wz4ed PRIVATE
