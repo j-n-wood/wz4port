@@ -288,30 +288,90 @@ static void DrawOperatorList()
 // prints, shown here to prove the metadata is reaching the editor, which is what
 // every later stage depends on.
 
-static void DrawInspector()
+static sBool DrawInspector()
 {
   if(!Ed->Selected)
   {
     ImGui::TextDisabled("Select an operator.");
-    return;
+    return 0;
   }
 
   wOp *op = Ed->Selected;
   if(!op->Class)
   {
     ImGui::TextDisabled("Operator has no class.");
-    return;
+    return 0;
   }
+
+  sBool changed = 0;
 
   ImGui::Text("%s.%s",wUtf8(op->Class->OutputType->Symbol),
                       wUtf8(op->Class->Name));
+
+  // Hide and Bypass. These are graph edits, not display options: Hide drops the
+  // block from its consumers' input lists and Bypass splices it out, passing its
+  // own in0 through. So both reconnect, and the derived inputs below change
+  // under them — which is the point of showing them together.
+  {
+    bool hide = ((wStackOp *) op)->Hide!=0;
+    if(ImGui::Checkbox("Hide (H)",&hide))
+    {
+      ((wStackOp *) op)->Hide = hide ? 1 : 0;
+      changed = 1;
+    }
+    ImGui::SameLine();
+    bool bypass = op->Bypass!=0;
+    if(ImGui::Checkbox("Bypass (B)",&bypass))
+    {
+      op->Bypass = bypass ? 1 : 0;
+      changed = 1;
+    }
+  }
+
+  // The derived input list, in slot order. This is the editor showing what the
+  // connection rule produced for this operator — geometry in, arguments out —
+  // and it is how a person checks that a drag did what it looked like it did.
+  // Nothing here is stored in the document: every entry was computed from
+  // rectangles by wDocument::Connect().
+  ImGui::Separator();
+  if(op->Inputs.GetCount()==0)
+  {
+    ImGui::TextDisabled("no inputs derived");
+  }
+  else
+  {
+    ImGui::Text("%d input(s), left to right:",op->Inputs.GetCount());
+    for(sInt i=0;i<op->Inputs.GetCount();i++)
+    {
+      wStackOp *in = (wStackOp *) op->Inputs[i];
+
+      // Spelled out rather than nested ternaries: sPoolString and
+      // const sChar * convert to each other, so a ternary mixing them is
+      // ambiguous and clang refuses it.
+      const sChar *nm = L"?";
+      if(!in->Name.IsEmpty())
+        nm = in->Name;
+      else if(in->Class)
+        nm = in->Class->Name;
+
+      ImGui::BulletText("in%d  %s  @x%d",i,wUtf8(nm),in->PosX);
+    }
+  }
+
+  if(!op->NoError())
+  {
+    const sChar *why = op->CalcErrorString ? op->CalcErrorString
+                                           : op->ConnectErrorString;
+    ImGui::TextColored(ImVec4(1.0f,0.45f,0.45f,1.0f),"error: %s",
+      why ? wUtf8(why) : "connection refused");
+  }
 
   const wMetaClass *mc = Ed->Meta.Find(op->Class->OutputType->Symbol,
                                        op->Class->Name);
   if(!mc)
   {
     ImGui::TextDisabled("No metadata for this class.");
-    return;
+    return changed;
   }
 
   ImGui::Separator();
@@ -341,6 +401,8 @@ static void DrawInspector()
     }
     ImGui::EndTable();
   }
+
+  return changed;
 }
 
 /****************************************************************************/
@@ -409,6 +471,11 @@ static void DrawFrame(GLFWwindow *window,sBool &quit)
                                     |ImGuiWindowFlags_NoResize
                                     |ImGuiWindowFlags_NoCollapse;
 
+  // Any edit that changes the graph — a drag, a Hide, a Bypass — sets this, and
+  // the frame ends with one Connect(). Collected rather than reconnecting at the
+  // point of the edit so that two edits in one frame cost one rebuild.
+  sBool reconnect = 0;
+
   // The canvas is the editor. It gets the space, and the panels sit beside it —
   // in this model the geometry IS the graph, so the canvas is not a view of the
   // document, it is the document.
@@ -426,14 +493,10 @@ static void DrawFrame(GLFWwindow *window,sBool &quit)
 
     if(page)
     {
-      // Reconnect on any structural change. Moving a block one cell can make or
-      // break an input, so this is not cosmetic — Connect() is what turns the
-      // new geometry back into a graph.
+      // Moving a block one cell can make or break an input, so a drag is a
+      // structural change and not a cosmetic one.
       if(Ed->Canvas.Draw(page))
-      {
-        Doc->Connect();
-        Ed->Status.PrintF(L"reconnected: %d operator(s)",page->Ops.GetCount());
-      }
+        reconnect = 1;
       Ed->Selected = Ed->Canvas.SingleSelection(page);
     }
     else
@@ -447,7 +510,8 @@ static void DrawFrame(GLFWwindow *window,sBool &quit)
   ImGui::SetNextWindowPos(ImVec2(canvasw,menuh));
   ImGui::SetNextWindowSize(ImVec2(vp->Size.x-canvasw,vp->Size.y-menuh));
   ImGui::Begin("Inspector",0,paneflags);
-  DrawInspector();
+  if(DrawInspector())
+    reconnect = 1;
   ImGui::End();
 
   // The list is now a secondary view rather than the main one. It is kept
@@ -478,6 +542,37 @@ static void DrawFrame(GLFWwindow *window,sBool &quit)
 
   if(ImGui::IsKeyPressed(ImGuiKey_Home,false))
     Ed->Canvas.FitPending = 1;
+
+  // H and B on the whole selection, which is how the original works — these are
+  // per-block graph edits and are usually applied to several blocks at once.
+  // Guarded on no text field having focus, or typing an H in a name would toggle
+  // Hide on everything selected.
+  if(!ImGui::GetIO().WantTextInput && Doc && Doc->Pages.GetCount())
+  {
+    wPage *page = Doc->Pages[Ed->CurrentPage];
+    const sBool h = ImGui::IsKeyPressed(ImGuiKey_H,false);
+    const sBool b = ImGui::IsKeyPressed(ImGuiKey_B,false);
+    if(h || b)
+    {
+      for(sInt i=0;i<page->Ops.GetCount();i++)
+      {
+        wStackOp *op = page->Ops[i];
+        if(!op->Select) continue;
+        if(h) op->Hide = op->Hide ? 0 : 1;
+        if(b) op->Bypass = op->Bypass ? 0 : 1;
+        reconnect = 1;
+      }
+    }
+  }
+
+  // One rebuild per frame, however many edits produced it.
+  if(reconnect && Doc)
+  {
+    Doc->Connect();
+    if(Doc->Pages.GetCount())
+      Ed->Status.PrintF(L"reconnected: %d operator(s)",
+        Doc->Pages[Ed->CurrentPage]->Ops.GetCount());
+  }
 
   (void)window;
 }
@@ -552,6 +647,7 @@ static void Usage()
   sPrint(L"  -frames  render n frames and exit, instead of running\n");
   sPrint(L"  -shot    write the last frame as a PNG. Implies -frames 2\n");
   sPrint(L"  -select  select an operator by store name at startup\n");
+  sPrint(L"  -guides  start with connection guides on (View toggle otherwise)\n");
   sPrint(L"\n");
   sPrint(L"Switches go after the filename: Altona's shell parser treats the\n");
   sPrint(L"token after a -switch as that switch's first parameter.\n");
@@ -638,6 +734,11 @@ void sMain()
   const sChar *select = sGetShellParameter(L"select",0);
   if(select && Doc->Pages.GetCount())
     Ed->SelectByName(select);
+
+  // For screenshots: the guides are a View toggle, and a non-interactive run
+  // cannot reach a menu.
+  if(sGetShellSwitch(L"guides"))
+    Ed->Canvas.ShowGuides = 1;
 
   sBool quit = 0;
   sBool failed = 0;

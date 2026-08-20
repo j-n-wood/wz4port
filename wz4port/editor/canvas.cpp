@@ -538,9 +538,17 @@ sBool wCanvas::Draw(wPage *page)
     }
   }
 
-  // Derived connections, as guides. The original draws none — the geometry is
-  // supposed to be self-evident — but while learning the model a faint hint of
-  // what feeds what is genuinely useful, so it is a toggle that defaults off.
+  // Derived connections, as guides. The original draws none, and once you try to
+  // draw them you find out why: this is a CONTACT model, so a connection has no
+  // length. The two blocks share an edge, and a line from one centre to the
+  // other has both endpoints on that same edge — invisible, hidden under the
+  // borders. Drawing wires here is a category error.
+  //
+  // What is worth drawing is the CONTACT PATCH: the span of the shared edge
+  // where the two blocks actually overlap, which is precisely the thing that
+  // makes the connection exist and precisely the thing a sideways drag destroys.
+  // Highlighting it answers "why is this connected, and how much room is there
+  // before it stops being connected", which no wire could.
   if(ShowGuides)
   {
     for(sInt i=0;i<page->Ops.GetCount();i++)
@@ -550,11 +558,16 @@ sBool wCanvas::Draw(wPage *page)
       {
         wStackOp *in = (wStackOp *) op->Inputs[k];
         if(!in) continue;
-        const ImVec2 f = CellToScreen(origin,in->PosX+in->SizeX*0.5f,
-                                             float(in->PosY+in->SizeY));
-        const ImVec2 t = CellToScreen(origin,op->PosX+op->SizeX*0.5f,
-                                             float(op->PosY));
-        dl->AddLine(f,t,IM_COL32(255,255,255,60),1.0f);
+
+        const sInt x0 = sMax(op->PosX,in->PosX);
+        const sInt x1 = sMin(op->PosX+op->SizeX,in->PosX+in->SizeX);
+        if(x1<=x0) continue;        // bypass substitution can leave no overlap
+
+        const float y = float(op->PosY);
+        const ImVec2 a2 = CellToScreen(origin,float(x0),y);
+        const ImVec2 b2 = CellToScreen(origin,float(x1),y);
+        dl->AddLine(ImVec2(a2.x+1.0f,a2.y),ImVec2(b2.x-1.0f,b2.y),
+          IM_COL32(120,220,255,200),sMax(2.0f,2.0f*Zoom));
       }
     }
   }

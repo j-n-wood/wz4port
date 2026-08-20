@@ -1067,6 +1067,42 @@ target_compile_options(canvas_rules PRIVATE
 add_test(NAME canvas_rules COMMAND canvas_rules)
 
 #############################################################################
+##  connect_passes — the stage 5.3 gate                                    ##
+#############################################################################
+
+# The connection rule is adjacency plus overlap, then three post-passes: Hide,
+# Sort and Bypass. core_connect covers the adjacency and canvas_rules covers what
+# a drag does to it; the post-passes were untested, and each one changes which
+# operator feeds which.
+#
+# The editor reimplements none of it — it calls Doc->Connect() — so this pins
+# upstream behaviour that the editor now exposes as Hide and Bypass toggles.
+
+add_executable(connect_passes
+  "${CMAKE_CURRENT_SOURCE_DIR}/tests/connect_passes.cpp")
+target_link_libraries(connect_passes PRIVATE wz4core)
+target_compile_options(connect_passes PRIVATE
+  "SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/tests/gui_poison.h"
+)
+add_test(NAME connect_passes COMMAND connect_passes)
+
+# The other half of 5.3's gate: the derived graph the editor's inspector shows
+# must be the one the headless library derives. They agree by construction — both
+# call Doc->Connect() — and `wz4gen list -inputs` is what makes that checkable
+# instead of merely true.
+#
+# Atlas is the case worth pinning: three inputs whose ORDER comes from their x
+# positions and nothing else, which is the part of the rule a reimplementation
+# would be most likely to get wrong.
+add_test(NAME connect_inputs COMMAND wz4gen list
+  "${CMAKE_CURRENT_SOURCE_DIR}/tests/tex/ops_gen.wz4t" -inputs
+  -meta "${WZ4_META_DIR}")
+set_tests_properties(connect_inputs PROPERTIES
+  DEPENDS opsmeta_gate
+  PASS_REGULAR_EXPRESSION
+    "atlas +Atlas +at +8,13 +9x1 +<- Flat@x8, Flat@x11, Flat@x14")
+
+#############################################################################
 ##  SIMD parity test                                                       ##
 #############################################################################
 

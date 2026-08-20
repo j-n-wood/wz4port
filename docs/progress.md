@@ -4,11 +4,12 @@ Read this first when picking the project up cold. It records where things
 stand, what has been decided and why, and what would otherwise have to be
 rediscovered the hard way.
 
-**Last updated:** phase 5, stage 5.2.
-**Status:** Phases 1–4 complete and verified; **phase 5 has a working canvas.**
-All 34 `GenBitmap` operators run on macOS arm64, with 93 reviewed test cases and
-90 byte-exact goldens that are bit-identical between the NEON and SSE2 builds.
-`ctest` is **127 tests** on arm64.
+**Last updated:** phase 5, stage 5.3.
+**Status:** Phases 1–4 complete and verified; **phase 5 has a working canvas and
+the connection rule is fully exercised.** All 34 `GenBitmap` operators run on
+macOS arm64, with 93 reviewed test cases and 90 byte-exact goldens that are
+bit-identical between the NEON and SSE2 builds. `ctest` is **129 tests** on
+arm64.
 
 **`wz4ed` is the editor.** It has a window, a menu bar, a metadata-driven
 inspector, and the stacking canvas: blocks coloured by output type, selection,
@@ -17,13 +18,24 @@ zoom and pan. Run it as `wz4ed <doc.wz4t>`; add `-shot <file.png>` to render two
 frames, screenshot and exit, which is how a GUI gets a regression test here, and
 `-select <name>` to pre-select an operator so the panels are exercised too.
 
-**The canvas does not reimplement the collision rules.** It calls
-`wPage::CheckDest` and `wPage::CheckMove`, which read `wOp::Select` — so there is
-no parallel selection state that could drift from what the document format
-enforces. `canvas_rules` (30 checks, no window) drives exactly that code.
+**The editor reimplements no rules.** Collision goes through
+`wPage::CheckDest`/`CheckMove`, which read `wOp::Select`, and connection goes
+through `wDocument::Connect()`. There is no parallel state that could drift from
+what the document format enforces — which is what phases 2–4 were for.
+`canvas_rules` (30 checks) and `connect_passes` (27) drive exactly that code with
+no window.
 
-Next: **5.3**, connection derivation as an explicit stage, then **5.4** the
-operator palette.
+`Hide` and `Bypass` are editable in the editor (checkboxes, or `H`/`B` on the
+selection) and the inspector lists the derived inputs beside them, so watching
+`in0` change under a Bypass is a two-second demonstration of the rule.
+
+**Connection guides draw the contact patch, not wires.** This is a contact model,
+so a connection has no length — a centre-to-centre line has both endpoints on the
+shared edge and renders as nothing. That is the real reason the original draws no
+wires. The overlap span along the shared edge is the informative thing, and it is
+what a sideways drag destroys.
+
+Next: **5.4**, the operator palette.
 
 **SSE2-vs-NEON parity is real and was runnable here**, contrary to the plan's
 assumption that it needed a Linux box: `sh wz4port/tests/tex/parity_x86_64.sh`
@@ -91,7 +103,7 @@ about the build.
 | 2 — Headless op runtime + metadata | **Done**, phase gate passed |
 | 3 — Text graph format + CLI | **Done**, phase gate passed |
 | 4 — Texture library + tests | **Done**, phase gate passed. All 34 operators run |
-| 5 — Texture GUI | **In progress.** 5.1 and 5.2 done, both gates passed |
+| 5 — Texture GUI | **In progress.** 5.1–5.3 done, all gates passed |
 | 6 — Geometry | Not started |
 | 7 — Animated geometry | Not started |
 
@@ -129,7 +141,7 @@ Clean build from scratch: **0 errors**. Warnings are expected and benign
 | `wz4t_read` | Stage 3.1b gate: a hand-written case parses and connects (`ctest`) |
 | `wz4t_round_*` (4) | Stage 3.2 gate: read→write→read preserves every word (`ctest`) |
 | `docround_*` (6) | **Phase 3 gate:** `.wz4`→`.wz4t`→`.wz4` over every document (`ctest`) |
-| `wz4gen` | The headless CLI: `list`, `describe`, `checkmeta`, `convert`, `identity`, `render` |
+| `wz4gen` | The headless CLI: `list` (`-inputs`), `describe`, `checkmeta`, `convert`, `identity`, `render`, `diff` |
 | `core_connect` | Phase 2 gate: links `wz4core`, derives a graph from geometry (`ctest`) |
 | `load_*` (6 tests) | Every bundled `.wz4` document must load and be non-empty (`ctest`) |
 | `identity_*` (6 tests) | And survive a load/save/reload with every class intact (`ctest`) |
@@ -139,6 +151,8 @@ Clean build from scratch: **0 errors**. Warnings are expected and benign
 | `imgui` | Vendored ImGui v1.92.9b, built without `altona_flags` — see below |
 | `wz4ed_shell` | Stage 5.1 gate: the editor starts, draws and screenshots (`ctest`) |
 | `canvas_rules` | Stage 5.2 gate: canvas edits obey `CheckMove`, and rewire the graph |
+| `connect_passes` | Stage 5.3 gate: the Hide, Sort and Bypass post-passes |
+| `connect_inputs` | And that `wz4gen list -inputs` agrees with the editor's inspector |
 
 `simd_parity`: **70,184 checks, 0 failures** on arm64 via sse2neon.
 
@@ -212,6 +226,7 @@ wz4port/
   editor/imgui_wz4.hpp         include ImGui through this, never directly (A46)
   tests/editor_shot.cmake      run the editor, screenshot it, check the PNG
   tests/canvas_rules.cpp       stage 5.2 gate, without a window
+  tests/connect_passes.cpp     stage 5.3 gate: Hide, Sort, Bypass
   third_party/sse2neon.h       pinned v1.9.1, MIT, 11,222 lines
   third_party/imgui/           pinned v1.92.9b, MIT — core + glfw/gl3 backends
   third_party/glfw/            pinned 3.5.1, zlib — src/include/CMake only

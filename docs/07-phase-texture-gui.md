@@ -171,17 +171,77 @@ Worth recording because of how the second one hid:
   the parameter panel" have nothing to report until 5.6 and 5.5 exist. The cache dot is drawn.
   Adding the other two now would mean inventing state to display.
 
-### 5.3 — Connection derivation
+### 5.3 — Connection derivation — **done**
 
-Implement `ConnectStack` exactly: exact bottom-to-top edge adjacency, horizontal span overlap,
-left-to-right input ordering, then the `Hide`, sort and `Bypass` passes.
+~~Implement `ConnectStack` exactly~~ — **the editor implements none of it.** It calls
+`wDocument::Connect()`, the same function every other tool in this port calls. That is the
+whole reason phases 2 to 4 made the runtime headless: there was nothing left to reimplement,
+and reimplementing it would only have created a second thing that could be wrong.
 
-Draw derived connections as subtle guides — the original draws none, but a faint indication of
-which blocks feed which helps while learning the model. Off by default; a view toggle.
+So the gate as originally written — "connections derived in the editor match those derived by
+the headless library" — is true *by construction*. What this stage actually delivered is the
+part that was missing: making that checkable, and making the derivation visible and editable.
 
-**Gate:** connections derived in the editor match those derived by the headless library for
-the same document, verified by comparing against `wz4gen list`. Moving a block one cell breaks
-the connection exactly as the rule predicts.
+**Gate — passed.**
+
+#### The three post-passes were untested, and they are not cosmetic
+
+`core_connect` covered adjacency and `canvas_rules` covered what a drag does to it, but Hide,
+Sort and Bypass had no coverage at all, and each one changes which operator feeds which.
+`connect_passes` is 27 checks over all three:
+
+- **Hide** drops the block from its consumers' input lists while leaving it on the page, and a
+  hidden block still derives its own inputs.
+- **Bypass** splices the block out, passing its own `in0` through — and *removes the slot
+  entirely* when the bypassed block has no inputs, which is a different outcome from passing
+  nothing through.
+- **Sort** is left-to-right by `PosX`, and it runs *after* Hide for a reason worth knowing: the
+  Hide pass removes with `RemAt`, which does not preserve order. Hiding the **middle** of three
+  inputs is the case that would expose it, so that is the case the test uses.
+- **Bypass runs after Sort and never re-sorts**, so substitution could in principle leave a
+  list out of order. It cannot, and the reason is geometric: a bypassed block's own input must
+  overlap that block's horizontal span, while its sibling slots lie outside it, so the
+  substitute always sorts into the slot it replaces. Asserted rather than assumed — I started
+  to write a test claiming the opposite and had to work out why it was unwritable.
+- **Comments never participate**, in either direction.
+
+#### `wz4gen list` could not read `.wz4t`
+
+The gate said "verified by comparing against `wz4gen list`", and it turned out `list` called
+`Doc->Load` unconditionally — the *binary* reader. The tool could not read the text format this
+project invented. Fixed by dispatching on the extension, as `convert` already did.
+
+`list -inputs` now prints the derived graph per operator, in slot order, with each input's `x`
+position and any `[hidden]` / `[bypass]` marker. On `ops_gen.wz4t` it reports
+`atlas … <- Flat@x8, Flat@x11, Flat@x14`, which is exactly what the editor's inspector shows.
+`connect_inputs` pins that line, because the *ordering* of those three is the part of the rule a
+reimplementation is most likely to get wrong.
+
+#### Hide and Bypass are now editable, and the inspector shows the derivation
+
+Checkboxes in the inspector and `H` / `B` on the whole selection, guarded against firing while a
+text field has focus. Both reconnect. The inspector lists the derived inputs beside them, so
+toggling Bypass and watching `in0` change from the bypassed block to *its* input is a two-second
+demonstration of the rule.
+
+Edits are collected into one `Connect()` per frame rather than reconnecting at the point of
+each edit.
+
+#### Connection guides: the original draws none, and trying to draw them shows why
+
+This is a **contact** model, so a connection has no length. The two blocks share an edge, and a
+line from one centre to the other has both endpoints *on that edge* — invisible, hidden under
+the borders. I implemented centre-to-centre wires first and they rendered nothing at all on
+either a vertical stack or `atlas`'s three inputs. Drawing wires here is a category error, and
+that is the real reason the original has none.
+
+What is worth drawing is the **contact patch**: the span of the shared edge where the two blocks
+overlap. That is precisely what makes the connection exist and precisely what a sideways drag
+destroys, so highlighting it answers "why is this connected, and how much room is there before
+it stops being" — which no wire could. `atlas` shows as three distinct segments along its top
+edge, one per input.
+
+Still a `View` toggle, off by default, `-guides` to start with it on.
 
 ### 5.4 — Operator palette
 

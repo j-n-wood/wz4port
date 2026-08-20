@@ -112,7 +112,35 @@ static void ListDocument(const sChar *filename)
 {
   sPrintF(L"loading %s\n",filename);
 
-  if(!Doc->Load(filename))
+  // Dispatch on the extension, like `convert` does. `list` used to call
+  // Doc->Load unconditionally, which is the binary .wz4 reader, so it could not
+  // read the text format this project invented — noticed when stage 5.3's gate
+  // asked for exactly that comparison.
+  const sChar *ext = sFindFileExtension(filename);
+  const sBool text = ext && sCmpStringI(ext,L"wz4t")==0;
+
+  if(text)
+  {
+    const sChar *dir = sGetShellParameter(L"meta",0);
+    if(!dir)
+      dir = WZ4GEN_META_DIR;
+
+    wMetaLibrary meta;
+    if(!meta.LoadDirectory(dir))
+    {
+      sPrintF(L"wz4gen: no metadata in <%s>\n",dir);
+      sSetErrorCode();
+      return;
+    }
+    if(!wReadWz4t(filename,meta,wWZ4T_ALLOWUNKNOWN))
+    {
+      sPrintF(L"wz4gen: could not read <%s>\n",filename);
+      sSetErrorCode();
+      return;
+    }
+    Doc->Connect();
+  }
+  else if(!Doc->Load(filename))
   {
     sPrintF(L"wz4gen: could not load <%s>\n",filename);
     sSetErrorCode();
@@ -145,6 +173,58 @@ static void ListDocument(const sChar *filename)
       sPrintF(L"    %-40s %-6s %4d op(s)\n",
         page->Name,page->IsTree ? L"tree" : L"stack",
         page->IsTree ? page->Tree.GetCount() : page->Ops.GetCount());
+  }
+
+  // The derived graph, per operator, in slot order. Nothing here is stored in
+  // the document: every entry was computed from block rectangles by
+  // wDocument::Connect(). This is what the editor's inspector shows, and the
+  // two agree by construction because they are the same call — printing it makes
+  // that checkable rather than merely true.
+  if(sGetShellSwitch(L"inputs"))
+  {
+    for(sInt p=0;p<Doc->Pages.GetCount();p++)
+    {
+      wPage *page = Doc->Pages[p];
+      if(page->IsTree)
+        continue;
+      sPrintF(L"\n  page \"%s\"\n",page->Name);
+
+      for(sInt i=0;i<page->Ops.GetCount();i++)
+      {
+        wStackOp *op = page->Ops[i];
+        sString<512> line;
+        line.PrintF(L"    %-24s %-16s at %3d,%-3d %2dx%-2d  <- ",
+          op->Name.IsEmpty() ? L"-" : (const sChar *) op->Name,
+          op->Class ? op->Class->Name : L"?",
+          op->PosX,op->PosY,op->SizeX,op->SizeY);
+
+        if(op->Inputs.GetCount()==0)
+        {
+          line.Add(L"(nothing)");
+        }
+        else
+        {
+          for(sInt k=0;k<op->Inputs.GetCount();k++)
+          {
+            wStackOp *in = (wStackOp *) op->Inputs[k];
+            if(k)
+              line.Add(L", ");
+            sString<64> one;
+            const sChar *nm = L"?";
+            if(!in->Name.IsEmpty())
+              nm = in->Name;
+            else if(in->Class)
+              nm = in->Class->Name;
+            one.PrintF(L"%s@x%d",nm,in->PosX);
+            line.Add(one);
+          }
+        }
+
+        if(op->Hide)   line.Add(L"  [hidden]");
+        if(op->Bypass) line.Add(L"  [bypass]");
+        sPrintF(L"%s\n",line);
+      }
+    }
   }
 
   // Which classes appear, and how often. Sorted by count so the shape of the
