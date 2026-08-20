@@ -80,9 +80,29 @@ op GenBitmap.Cell at 10,0 size 3x1 {
   Seed = 3
   Mode = inner
 }
-// `sub` subtracts the ALPHA channel too, and both inputs are opaque, so alpha
-// goes to zero and the PNG renders blank — the same trap as Color's `sub` and
-// `invert` modes. Asserted as blank rather than worked around.
+// `sub` takes alpha to zero, and the reason is worth stating properly because it
+// looks like a bug and is not.
+//
+// NO ARITHMETIC MODE SPECIAL-CASES ALPHA. The kernels operate on all four 16-bit
+// lanes at once:
+//
+//   BI_SUB (wz3_bitmap_code.cpp:770)  _mm_subs_epu16(a,b)
+//   BI_ADD (wz3_bitmap_code.cpp:760)  _mm_adds_epi16(a,b)
+//
+// For two opaque inputs alpha is 0x7fff on both sides, so `sub` gives
+// 0x7fff-0x7fff = 0 — fully transparent, always, for any pair of opaque inputs.
+// `add` gets away with the same channel-agnostic treatment purely by luck:
+// SIGNED saturation clamps at 0x7fff, which is exactly the value that means
+// opaque. Change one instruction and add would be as surprising as sub.
+//
+// It went unnoticed for the life of the tool because the original's preview
+// IGNORED ALPHA: wPaintInfo::PaintTex2D draws through a plain sSimpleMaterial
+// with no blend flags (doc.cpp:129), and the alpha view was a separate toggle. So
+// an artist saw the RGB subtraction they expected and the destroyed alpha only
+// mattered if something downstream consumed it.
+//
+// Asserted as blank here rather than worked around, and the editor's preview
+// defaults to `rgb` for the same reason the original did.
 op GenBitmap.Merge at 7,1 size 6x1 {
   name = merge_sub
   Mode = sub
@@ -160,9 +180,30 @@ op GenBitmap.Cell at 31,0 size 3x1 {
   Seed = 3
   Mode = inner
 }
-// Correct: the cells read as DARK blobs rather than bright ones, over a field
-// that brightens to the right — an inversion of the cells' usual sense, which is
-// how you tell this mode from `mul`.
+// This mode's job is to ADD AN ALPHA CHANNEL TO AN RGB IMAGE, and it is worth
+// knowing that before trying to judge the picture.
+//
+// BI_ALPHA (wz3_bitmap_code.cpp:808) masks with {0xffff,0xffff,0xffff,0}: it
+// keeps operand a's three colour lanes, clears its alpha, and substitutes
+// operand b's LUMINANCE — a 50:50:50 average of b's red, green and blue shifted
+// into the alpha lane. So input 0 supplies the colour and input 1 supplies the
+// coverage.
+//
+// This is the deliberate, late step by which alpha enters a graph at all. None of
+// the arithmetic modes carry alpha (see merge_sub), so a pipeline that wants
+// alpha attaches it here.
+//
+// Correct: the RGB is input 0's ramp, UNCHANGED, and the alpha is the cells'
+// brightness. Measured against src_ramp with `wz4gen diff`:
+//
+//     per channel, worst delta: b 0, g 0, r 0, a 195
+//
+// Every colour channel byte-identical, alpha the only thing that moved — which is
+// the mask in the kernel, observed from outside.
+//
+// So what this looks like depends entirely on how the viewer composites it:
+// indistinguishable from src_ramp in the editor's `rgb` mode, cell-shaped in
+// `rgba`, and the cells in greyscale in `alpha`.
 op GenBitmap.Merge at 28,1 size 6x1 {
   name = merge_alpha
   Mode = alpha
@@ -343,15 +384,19 @@ op GenBitmap.Cell at 80,0 size 3x1 {
 }
 // Quoted: the label contains a space.
 //
-// This mode maps to the SAME constant as `alpha` in the mode table
-// (wz3_bitmap_ops.ops:683 — BI_ALPHA appears twice, at index 4 and index 11), so
-// the table alone suggests the two are duplicates. They are not: index 11 gets a
-// trailing `out->PreMulAlpha()` after the merge (:706), and the checksums
-// confirm they differ.
+// The same BI_ALPHA constant as `alpha` above — it appears twice in the mode
+// table, at index 4 and index 11 (wz3_bitmap_ops.ops:683) — plus a trailing
+// `out->PreMulAlpha()` for index 11 only (:706).
 //
-// Worth knowing before reading the table as a bug, and worth knowing when
-// judging "two modes match means one is ignored" — for this pair the difference
-// is real but small.
+// So the two are not a duplicate but a PAIR, and knowing what BI_ALPHA is for
+// makes the pairing obvious: "attach an alpha channel", and "attach one and
+// premultiply it" — the second being the form compositing hardware usually wants.
+// The checksums differ, and now it is clear why they should.
+//
+// Correct: as merge_alpha, with the RGB scaled down by the alpha it just gained.
+// Against src_ramp that shows as `b 182, g 182, r 182, a 195` where merge_alpha
+// gave `b 0, g 0, r 0, a 195` — so unlike merge_alpha, this one differs from its
+// input even in `rgb` mode, which is the cheapest way to tell the pair apart.
 op GenBitmap.Merge at 77,1 size 6x1 {
   name = merge_premul
   Mode = "premul alpha"

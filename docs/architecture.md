@@ -977,6 +977,43 @@ Generalisable, and the third instance of the same shape after A33 and A39: when
 the deliverable is *rendered* by something else — a viewer, a browser, a
 terminal — correctness lives at that boundary, not at the buffer.
 
+**Why the engine does this, established later in phase 5.** None of the
+arithmetic kernels special-case alpha; they operate on all four 16-bit lanes at
+once. `BI_SUB` is `_mm_subs_epu16(a,b)` and `BI_ADD` is `_mm_adds_epi16(a,b)`
+(`wz3_bitmap_code.cpp:770` and `:760`). For two opaque inputs alpha is `0x7fff`
+on both sides, so **`sub` always yields zero alpha** while **`add` survives by
+luck**: signed saturation clamps at `0x7fff`, which happens to be exactly the
+value that means opaque.
+
+And it went unnoticed for the life of the original tool because **its preview
+ignored alpha**: `wPaintInfo::PaintTex2D` draws through a plain
+`sSimpleMaterial` with no blend flags (`doc.cpp:129`), with the alpha view as a
+separate toggle. An artist saw the RGB subtraction they expected.
+
+**And alpha is attached deliberately, by an operator whose job that is.**
+`Merge`'s `alpha` mode masks with `{0xffff,0xffff,0xffff,0}`
+(`wz3_bitmap_code.cpp:808`): it keeps input 0's three colour lanes, clears its
+alpha, and substitutes input 1's *luminance*. That is literally "add an alpha
+channel to an RGB image". Measured from outside, `merge_alpha` against its own
+input reads `b 0, g 0, r 0, a 195` — every colour channel byte-identical, alpha
+the only thing that moved.
+
+`premul alpha` is the same constant plus a trailing `PreMulAlpha()`, so the two
+are not the duplicate the mode table suggests but a designed pair: attach an alpha
+channel, or attach one and premultiply it for compositing.
+
+This was corroborated independently by the user's recollection of working with
+Werkkzeug4 — that alpha-related examples were treated specially, adding an alpha
+channel to an RGB image as an explicit step. Worth recording, because a
+first-hand memory of how a dead tool was *used* is not recoverable from the source
+and it is what turns three separate code readings into one coherent design.
+
+So the honest reading is not "four operators are broken" but **alpha is not a
+carried channel in this engine — it is attached late and on purpose**, and the
+original's presentation matched that. The editor's preview therefore defaults to
+`rgb` as the original did, with `rgba` and `alpha` a click away. Showing a
+perfectly good RGB result as an empty pane is accurate and useless.
+
 ### A41 · Verify an operator's input order before writing the case, not after — standing
 
 *Phase 4.3.* `Mask(a,b,mask)` is really `Mask(mask,a,b)`: the code does

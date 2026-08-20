@@ -18,12 +18,12 @@ wPreview::wPreview()
   TexX = TexY = 0;
   ShownOp = 0;
   ShownRevision = -1;
-  ShownAlpha = 0;
+  ShownMode = -1;
   Failed = 0;
   Zoom = 8;                         // 1:1
   PanX = PanY = 0.0f;
   Tile = false;
-  Alpha = false;
+  AlphaMode = AM_RGB;               // as the original — see the header
   Info = L"";
 }
 
@@ -115,12 +115,11 @@ sBool wPreview::Upload(wOp *op)
   {
     const sU32 c = img.Data[i];
     const sU8 a = sU8((c>>24)&255);
-    if(Alpha)
+
+    if(AlphaMode==AM_ALPHA)
     {
-      // Alpha view: the alpha channel as greyscale, fully opaque. Baked into the
-      // upload rather than done with a tint, because no tint can isolate a
-      // channel — and a transparent preview is the exact confusion stage 4.3
-      // spent a day on (architecture.md A40).
+      // The alpha channel as greyscale. Baked into the upload rather than done
+      // with a tint, because no tint can isolate a channel.
       rgba[i*4+0] = a;
       rgba[i*4+1] = a;
       rgba[i*4+2] = a;
@@ -131,7 +130,8 @@ sBool wPreview::Upload(wOp *op)
       rgba[i*4+0] = sU8((c>>16)&255);
       rgba[i*4+1] = sU8((c>> 8)&255);
       rgba[i*4+2] = sU8((c    )&255);
-      rgba[i*4+3] = a;
+      // RGB mode forces opaque, which is what the original's preview did.
+      rgba[i*4+3] = (AlphaMode==AM_RGB) ? 255 : a;
     }
   }
 
@@ -163,13 +163,13 @@ sBool wPreview::Upload(wOp *op)
 
 void wPreview::Draw(wOp *op,sInt revision)
 {
-  // Re-evaluate only when something actually changed. The alpha toggle counts,
+  // Re-evaluate only when something actually changed. The alpha mode counts,
   // because it is baked into the upload.
-  if(op!=ShownOp || revision!=ShownRevision || (Alpha!=0)!=(ShownAlpha!=0))
+  if(op!=ShownOp || revision!=ShownRevision || AlphaMode!=ShownMode)
   {
     ShownOp = op;
     ShownRevision = revision;
-    ShownAlpha = Alpha ? 1 : 0;
+    ShownMode = AlphaMode;
     Upload(op);
   }
 
@@ -188,8 +188,23 @@ void wPreview::Draw(wOp *op,sInt revision)
 
   ImGui::SameLine();
   ImGui::Checkbox("tile",&Tile);
+
+  // Three named modes rather than two independent toggles: "alpha off" and
+  // "show alpha as grey" are not orthogonal, and presenting them as checkboxes
+  // made it unclear what the combination meant.
   ImGui::SameLine();
-  ImGui::Checkbox("alpha",&Alpha);
+  ImGui::TextDisabled("|");
+  const char *names[3] = { "rgb","rgba","alpha" };
+  for(sInt i=0;i<3;i++)
+  {
+    ImGui::SameLine();
+    if(ImGui::RadioButton(names[i],AlphaMode==i))
+      AlphaMode = i;
+  }
+  if(ImGui::IsItemHovered())
+    ImGui::SetTooltip("rgb ignores alpha, as the original's preview did.\n"
+                      "rgba composites over the checkerboard.\n"
+                      "alpha shows the channel as greyscale.");
 
   // The W x H readout the original prints, plus the zoom as a ratio rather than
   // as the raw index — 8 means nothing to a reader, 1:1 does.

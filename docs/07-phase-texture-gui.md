@@ -365,6 +365,19 @@ Counted from the emitted metadata rather than from the DSL reference: `float`, `
 named "no editor for kind" line rather than as a blank row, so an operator that ever used one
 would be visibly incomplete instead of quietly missing a control.
 
+#### A control's name comes from its choice, not from its parameter
+
+Found by reviewing the running editor. `Perlin`'s `Mode` is one word carrying two independent
+toggles whose choices are `-|abs` and `-|sin`, and labelling each from the *parameter* produced
+**two identical unnamed checkboxes** under a "Mode" heading with no way to tell which did what.
+
+A two-choice control's only real name is its ON choice's label, so that is now its caption:
+`abs` and `sin`. Where the on-choice has no name of its own the parameter's label is the fallback.
+
+The same review showed multi-control words read better **side by side than stacked** — two
+identical fourteen-entry dropdowns for `Flat`'s `Size` gave no clue which was x and which was y,
+where a pair on one row reads as components, which is how upstream lays out vectors too.
+
 #### Conditional visibility is not implemented, and cannot be from schema v1
 
 The plan says "conditional visibility, evaluated from the expression trees in the metadata".
@@ -429,16 +442,32 @@ because 8 means nothing to a reader.
 Filtering is **NEAREST**, deliberately: this is a texture editor, and at 4:1 the user is looking
 at individual texels that bilinear filtering would blur away.
 
-#### The checkerboard is the A40 lesson built into the UI
+#### Alpha presentation: three modes, `rgb` by default
 
-Stage 4.3 lost a day to four operators that zero the alpha channel: their PNGs are fully
-transparent, which *displays as plain white* and is indistinguishable from success. The fix then
-was to make the tool report alpha.
+The first version composited alpha honestly over a checkerboard, so a fully-transparent result
+read as transparent — the A40 lesson built into the UI. **That turned out to be accurate and
+useless**, and reviewing the running editor caught it: `Merge sub` produces a perfectly good RGB
+subtraction *and* zero alpha, so the pane showed an empty frame for a result that is not empty.
 
-The preview draws on a checkerboard and frames the image extent, so **`color_invert` now renders
-as a visible empty frame** — obviously a 128×128 bitmap that is entirely transparent, rather than
-a white square. The alpha toggle shows the channel as greyscale, baked into the upload because no
-tint can isolate a channel. Confirmed by eye on exactly that operator.
+Investigating properly changed the reading of A40:
+
+- **No arithmetic kernel special-cases alpha.** `BI_SUB` is `_mm_subs_epu16(a,b)` and `BI_ADD` is
+  `_mm_adds_epi16(a,b)` — all four 16-bit lanes at once. Two opaque inputs give
+  `0x7fff-0x7fff = 0`, so `sub` is *always* fully transparent. `add` survives by luck: signed
+  saturation clamps at `0x7fff`, exactly the value that means opaque. One instruction apart.
+- **The original's preview ignored alpha.** `wPaintInfo::PaintTex2D` draws through a plain
+  `sSimpleMaterial` with no blend flags (`doc.cpp:129`); the alpha view was a separate toggle. An
+  artist saw the RGB subtraction they expected, and the destroyed alpha mattered only if something
+  downstream consumed it.
+
+So the honest reading is not "four operators are broken" but "alpha is not a managed channel in
+this engine, and the original's presentation hid it".
+
+The pane now offers `rgb` / `rgba` / `alpha` as three named modes rather than two independent
+toggles — "alpha off" and "show alpha as grey" are not orthogonal — and **`rgb` is the default,
+as the original was**. `rgba` composites over the checkerboard, where `color_invert` still reads
+unmistakably as a transparent bitmap; `alpha` shows the channel as greyscale, baked into the
+upload because no tint can isolate a channel.
 
 3×3 tiling dims the eight surrounding copies, because the point of tiling is to judge how a
 texture *wraps* and that is easier when the seam is identifiable.

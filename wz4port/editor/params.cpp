@@ -121,7 +121,8 @@ static sBool DragIntCell(const char *id,sS32 *v,const wMetaParam *p,sInt slot)
 // the whole reason this is not just a combo bound to a word. Getting it wrong
 // silently corrupts a neighbouring control — the same hazard the .wz4t reader hit
 // in phase 4 (architecture.md A36).
-static sBool DrawFlagsWidget(const char *id,sU32 *word,const wMetaWidget *w)
+static sBool DrawFlagsWidget(const char *id,sU32 *word,const wMetaWidget *w,
+  const sChar *fallback)
 {
   if(w->Choices.GetCount()==0)
     return 0;
@@ -133,8 +134,26 @@ static sBool DrawFlagsWidget(const char *id,sU32 *word,const wMetaWidget *w)
   if(w->Choices.GetCount()==2 &&
      w->Choices[0].Value==0 && w->Choices[1].Value==1)
   {
+    // The caption is the ON choice's own label, which is the only name this
+    // control has. Perlin's Mode is the case that showed why it matters: it is
+    // one word carrying two independent toggles whose choices are "-|abs" and
+    // "-|sin", so labelling them from the PARAMETER gave two identical unnamed
+    // checkboxes under a "Mode" heading and no way to tell which did what.
+    //
+    // Falls back to the parameter's label when the on-choice has no name of its
+    // own, which is better than an empty caption.
+    const sChar *cap = w->Choices[1].Label;
+    if(!cap || !cap[0] || sCmpString(cap,L"-")==0)
+      cap = fallback;
+
+    // A constant id suffix is enough: DrawParam has already pushed the parameter
+    // and the row onto ImGui's id stack, and multi-widget callers push the widget
+    // index, so the caption text does not have to carry uniqueness.
+    sString<128> capbuf;
+    capbuf.PrintF(L"%s##fw",cap ? cap : L"");
+
     bool on = cur!=0;
-    if(ImGui::Checkbox(id,&on))
+    if(ImGui::Checkbox(wPUtf8(capbuf),&on))
     {
       *word = (*word & ~mask) | ((on ? 1u : 0u) << w->Shift);
       return 1;
@@ -301,17 +320,27 @@ static sInt DrawParam(wOp *op,const wMetaParam *p,
       sU32 *word = words + p->Offset;
       if(widgets.GetCount()==1)
       {
-        if(DrawFlagsWidget(id,word,widgets[0]))
+        if(DrawFlagsWidget(id,word,widgets[0],lbl))
           change |= wPC_VALUE;
       }
       else
       {
+        // Several controls in one word go on ONE row, not stacked. Stacked, two
+        // identical 14-entry dropdowns for Flat's Size gave no clue which was x
+        // and which was y; side by side they read as a pair, which is how
+        // upstream lays out components too.
         ImGui::TextUnformatted(wPUtf8(lbl));
-        for(sInt i=0;i<widgets.GetCount();i++)
+        const sInt n = widgets.GetCount();
+        const float w = (ImGui::GetContentRegionAvail().x - 6.0f*(n-1))/n;
+        for(sInt i=0;i<n;i++)
         {
+          if(i) ImGui::SameLine(0.0f,6.0f);
           ImGui::PushID(i);
-          ImGui::SetNextItemWidth(-1.0f);
-          if(DrawFlagsWidget("##w",word,widgets[i]))
+          ImGui::SetNextItemWidth(w);
+          // "##w", not "w": a combo uses this string as its visible label, so a
+          // bare id showed a stray "w" between Flat's two Size dropdowns. The
+          // checkbox path overrides the caption anyway.
+          if(DrawFlagsWidget("##w",word,widgets[i],lbl))
             change |= wPC_VALUE;
           ImGui::PopID();
         }

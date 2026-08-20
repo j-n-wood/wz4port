@@ -46,14 +46,26 @@ private:
 
   wOp *ShownOp;
   sInt ShownRevision;
-  sBool ShownAlpha;                 // the alpha toggle is baked into the upload
   sBool Failed;
   sString<128> Info;
 
   sInt Zoom;                        // 0..15, 8 = 1:1
   float PanX,PanY;
   bool Tile;
-  bool Alpha;
+
+  // How the alpha channel is presented. RGB is the DEFAULT and matches the
+  // original: wPaintInfo::PaintTex2D draws through a plain sSimpleMaterial with
+  // no blend flags (doc.cpp:129), so Werkkzeug4's preview ignored alpha unless
+  // you switched to its alpha view.
+  //
+  // That default matters for more than nostalgia. Several arithmetic Merge and
+  // Color modes destroy alpha as a side effect — `sub` subtracts it to zero —
+  // and compositing those honestly makes a perfectly good RGB result look like
+  // an empty pane. Ignoring alpha by default shows the work; RGBA is one click
+  // away when the question is "what is the alpha doing".
+  enum wAlphaMode { AM_RGB, AM_RGBA, AM_ALPHA };
+  sInt AlphaMode;
+  sInt ShownMode;
 
   void Release();
   sBool Upload(wOp *op);
