@@ -76,11 +76,11 @@ static void PrintFloat(sTextBuffer &out,sF32 v)
 //
 // Returns 0 if the word cannot be expressed that way at all, so the caller can
 // write the raw integer instead.
-static sBool PrintChoices(sTextBuffer &out,const wMetaClass *mc,
+static sBool PrintChoices(sTextBuffer &out,const sArray<wMetaParam *> &plist,
   const wMetaParam *p,sInt value)
 {
   sArray<const wMetaWidget *> widgets;
-  wGatherWidgets(mc,p,widgets);
+  wGatherWidgets(plist,p,widgets);
   if(widgets.GetCount()==0)
     return 0;
 
@@ -91,8 +91,18 @@ static sBool PrintChoices(sTextBuffer &out,const wMetaClass *mc,
   if((value & ~covered)!=0)
     return 0;
 
-  sTextBuffer tb;
+  // Trailing controls sitting at zero are left out: the reader assigns
+  // positionally into a word that starts at zero, so an omitted trailing
+  // control reads back the same. That turns `Flags = linear, "-"` into
+  // `Flags = linear`. Only TRAILING ones — a zero in the middle still has to be
+  // written, or the controls after it would shift.
+  sInt last = -1;
   for(sInt i=0;i<widgets.GetCount();i++)
+    if(((value & widgets[i]->Mask) >> widgets[i]->Shift)!=0)
+      last = i;
+
+  sTextBuffer tb;
+  for(sInt i=0;i<=last;i++)
   {
     const wMetaWidget *w = widgets[i];
     sInt v = (value & w->Mask) >> w->Shift;
@@ -124,6 +134,9 @@ static sBool PrintChoices(sTextBuffer &out,const wMetaClass *mc,
       tb.Print(num);
     }
   }
+
+  if(last<0)
+    tb.Print(L"0");               // every control at zero
 
   out.Print(tb.Get());
   return 1;
@@ -176,8 +189,10 @@ static sBool IsDefault(wOp *op,const wMetaParam *p)
   return 1;
 }
 
-static void PrintValue(sTextBuffer &out,wOp *op,const wMetaClass *mc,
-  const wMetaParam *p)
+// `words` is the base of the storage being read: the operator's parameter
+// words, or one array row's.
+static void PrintValue(sTextBuffer &out,wOp *op,
+  const sArray<wMetaParam *> &plist,const wMetaParam *p,const sU32 *words)
 {
   if(p->Space==wMS_STRINGS)
   {
@@ -187,25 +202,28 @@ static void PrintValue(sTextBuffer &out,wOp *op,const wMetaClass *mc,
 
   if(p->Kind==L"char")
   {
-    PrintQuoted(out,(const sChar *)(op->EditU()+p->Offset));
+    PrintQuoted(out,(const sChar *)(words+p->Offset));
     return;
   }
 
   if(p->Kind==L"color")
   {
     sString<32> hex;
-    hex.PrintF(L"#%08x",sU32(op->EditU()[p->Offset]));
+    hex.PrintF(L"#%08x",sU32(words[p->Offset]));
     out.Print(hex);
     return;
   }
 
+  const sInt *ints = (const sInt *)words;
+  const sF32 *floats = (const sF32 *)words;
+
   if(p->Widgets.GetCount()>0)
   {
-    if(PrintChoices(out,mc,p,op->EditS()[p->Offset]))
+    if(PrintChoices(out,plist,p,ints[p->Offset]))
       return;
     // Fall through to the raw integer.
     sString<32> num;
-    num.PrintF(L"%d",op->EditS()[p->Offset]);
+    num.PrintF(L"%d",ints[p->Offset]);
     out.Print(num);
     return;
   }
@@ -220,12 +238,12 @@ static void PrintValue(sTextBuffer &out,wOp *op,const wMetaClass *mc,
       out.Print(L", ");
     if(p->Kind==L"float")
     {
-      PrintFloat(out,op->EditF()[p->Offset+i]);
+      PrintFloat(out,floats[p->Offset+i]);
     }
     else
     {
       sString<32> num;
-      num.PrintF(L"%d",op->EditS()[p->Offset+i]);
+      num.PrintF(L"%d",ints[p->Offset+i]);
       out.Print(num);
     }
   }
@@ -315,8 +333,30 @@ static void WriteOp(sTextBuffer &out,wStackOp *op,const wMetaLibrary &meta,
         continue;
 
       body.PrintF(L"  %s = ",p->Symbol);
-      PrintValue(body,op,mc,p);
+      PrintValue(body,op,mc->Params,p,op->EditU());
       body.Print(L"\n");
+    }
+
+    // Array rows. EVERY field is written, unlike the operator's own parameters:
+    // wOp::AddArray runs SetDefaultsArray, which interpolates float fields
+    // between neighbouring rows, so "the default" for a row field depends on
+    // what is around it. Stating everything removes that dependence.
+    if(mc->Array && op->ArrayData.GetCount())
+    {
+      for(sInt r=0;r<op->ArrayData.GetCount();r++)
+      {
+        const sU32 *row = (const sU32 *)op->ArrayData[r];
+        body.Print(L"  element {");
+        for(sInt i=0;i<mc->Array->Params.GetCount();i++)
+        {
+          const wMetaParam *p = mc->Array->Params[i];
+          if(p->Space!=wMS_WORDS || p->Continues || p->Symbol.IsEmpty())
+            continue;
+          body.PrintF(L" %s = ",p->Symbol);
+          PrintValue(body,op,mc->Array->Params,p,row);
+        }
+        body.Print(L" }\n");
+      }
     }
   }
 

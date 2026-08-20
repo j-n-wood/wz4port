@@ -1011,15 +1011,30 @@ void sMain()
           {
             GenBitmap *bm = (GenBitmap *)obj;
 
-            // A generator that ran but wrote nothing looks the same as one that
-            // did not run, so say how much of the image is non-black.
-            sInt nonzero = 0;
+            // "How many pixels are non-zero" turned out to be a poor signal:
+            // a pixel is one sU64 of four sU16 channels, so an opaque black
+            // gradient is 100% non-zero on alpha alone. What actually
+            // distinguishes an operator that worked is whether the image has
+            // STRUCTURE, so report whether every pixel is identical.
+            //
+            // The checksum is reported but deliberately not asserted anywhere
+            // yet. Locking bit-exact expectations is stage 4.4's job, after the
+            // outputs have been reviewed by eye — locking them earlier would
+            // just freeze whatever the code does today, which is precisely the
+            // failure mode 06-phase-texture.md warns about.
+            sBool uniform = 1;
+            sU64 sum = 0;
             for(sInt i=0;i<bm->Size;i++)
-              if(bm->Data[i]!=0)
-                nonzero++;
+            {
+              if(bm->Data[i]!=bm->Data[0])
+                uniform = 0;
+              sum = sum*1099511628211ULL ^ bm->Data[i];
+            }
 
-            sPrintF(L"  %d x %d, %d of %d pixel(s) non-zero\n",
-              bm->XSize,bm->YSize,nonzero,bm->Size);
+            sPrintF(L"  %d x %d, %s, checksum %08x%08x\n",
+              bm->XSize,bm->YSize,
+              uniform ? L"uniform" : L"structured",
+              sU32(sum>>32),sU32(sum));
           }
           else
           {

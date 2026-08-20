@@ -157,6 +157,46 @@ DSL's own defaults behave.
 - Values: numbers, comma-separated vectors, `#aarrggbb` colours, quoted strings, and
   identifiers for `flags`/`radio` choices (falling back to integers when a choice has no name).
 
+### 4.2b Parameter arrays
+
+Added in phase 4.1, when `Gradient` rendered black because its colour stops had nowhere to
+live. An operator's table widget is written as `element` blocks inside its body:
+
+```
+op GenBitmap.Gradient at 16,0 size 3x1 {
+  Size  = 64, 64
+  Flags = linear
+  element { Pos = 0  Color = #ff000000 }
+  element { Pos = 1  Color = #ffffffff }
+}
+```
+
+Named `element` after the group label the original editor gives it, and deliberately not `row`,
+which already means a side-by-side placement block at the top level.
+
+**Every field of a row is written, unlike an operator's own parameters.** `wOp::AddArray` runs
+the generated `SetDefaultsArray`, which for float fields *interpolates between the neighbouring
+rows* — so "the default" for a row field depends on what is around it. Stating everything
+removes that dependence and keeps the round trip order-independent.
+
+Rows may not contain `string`, `filein`, `fileout` or `link` fields; those live on the operator.
+13 classes corpus-wide have arrays, two of them textures (`Gradient`, `Vector`).
+
+### 4.2c A choice parameter takes one value per control
+
+`Size = 256, 256` is **two values for one word**, not two words: `Size` is a `flags` parameter
+whose single integer holds two controls, at bit shifts 0 and 8. Comma-separated values are
+assigned positionally, one per control.
+
+Two consequences worth stating, both learned the hard way in 4.1:
+
+- **A numeric choice label is a label, not a number.** `Size`'s labels are `"1"` … `"8192"`, and
+  label `"64"` has control value 6. A bare `64` therefore means the label. The writer always
+  emits the label for the same reason — writing the raw value 3 for label `"8"` would read back
+  as label `"8"` and silently change the size.
+- Trailing controls at zero are omitted, so `Flags = linear, "-"` is written `Flags = linear`.
+  A zero in the *middle* is still written, or the controls after it would shift.
+
 ### 4.3 Sugar for hand-written cases
 
 Requiring a test author to compute grid coordinates would make the suite tedious and

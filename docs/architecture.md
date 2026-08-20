@@ -111,7 +111,8 @@ Enforced by the build — breaking these fails compilation and names the file:
 | The choice decomposition agrees with Altona | `opsmeta` cross-check against `sFindFlag`, 2,729 values |
 | Every conditional symbol resolves | `opsmeta` errors rather than emitting `offset: -1` |
 | The operator runtime links and runs with no GUI | `core_connect` (`ctest`), against `wz4core` built with the poison |
-| The texture engine evaluates to a real bitmap | `tex_smoke_*` — four operators, failing on `1 x 1` or `0 of` |
+| The texture engine evaluates to a real bitmap | `tex_smoke_*` — five operators; `Flat` must be uniform, the rest structured |
+| Array rows survive a `.wz4t` round trip | `wz4t_round_tex` — rows compared word for word |
 | Connection-from-geometry behaves as documented | `core_connect`'s 14 checks against `01-existing-model.md` §2.2 |
 | The `.wz4` document format still reads | `load_*` — all six bundled documents, non-empty, via `ctest` |
 | A load/save by this build does not damage a document | `identity_*` — class identity tally preserved, all six documents |
@@ -887,7 +888,29 @@ breaks two naive assumptions at once:
 
 Both rules are shared between reader and writer through one `wGatherWidgets`
 helper, because getting them to disagree is exactly how a round trip corrupts
-data while looking fine.
+data while looking fine. That helper takes the parameter *list* explicitly —
+an array row is a separate word space with its own list, and searching the wrong
+one silently finds no widgets at all.
+
+### A38 · A row's "default" depends on its neighbours, so rows state everything — standing
+
+*Phase 4.1.* `.wz4t` omits any operator parameter equal to its default, which is
+safe because the reader runs `SetDefaults` first and both sides read the same
+metadata.
+
+Array rows cannot work that way. `wOp::AddArray` calls the generated
+`SetDefaultsArray`, which sets each field's default and then **linearly
+interpolates every float field between the neighbouring rows**
+(`output.cpp:681-696`) — the behaviour that makes inserting a gradient key land
+halfway between its neighbours instead of at a default. So "the default" for a
+row field is a function of the rows around it.
+
+Omitting a row field would therefore make a file's meaning depend on row order,
+and a round trip could shuffle values without changing any text. The writer
+emits **every** field of every row instead.
+
+Generalisable: default-omission is only sound where the default is a constant.
+Check that before shortening any serialised form.
 
 ### A37 · Check for a local definition before extracting a "missing" symbol — standing
 

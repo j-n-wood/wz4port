@@ -141,7 +141,10 @@ struct wMetaClass
 // wMetaParam entries. Both the reader and the writer need the whole set: the
 // reader to assign `Size = 256, 256` one value per widget, the writer to decode
 // the word back without dropping the continued bits.
-void wGatherWidgets(const wMetaClass *mc,const wMetaParam *owner,
+// `params` is the list the owner belongs to — wMetaClass::Params for an
+// operator parameter, wMetaArray::Params for an array row field. They are
+// separate word spaces, so searching the wrong one silently finds nothing.
+void wGatherWidgets(const sArray<wMetaParam *> &params,const wMetaParam *owner,
   sArray<const wMetaWidget *> &out);
 
 /****************************************************************************/

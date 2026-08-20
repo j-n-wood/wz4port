@@ -4,12 +4,13 @@ Read this first when picking the project up cold. It records where things
 stand, what has been decided and why, and what would otherwise have to be
 rediscovered the hard way.
 
-**Last updated:** phase 4, stage 4.1.
+**Last updated:** phase 4, stage 4.1 (+ `.wz4t` array syntax).
 **Status:** Phases 1–3 complete and verified. **Phase 4 stage 4.1 done: the
 texture library builds, links and RUNS.** All 34 `GenBitmap` operators register
-and `wz4gen render` evaluates them — `Flat`, `Perlin`, `Cell` and `Blur` each
-produce a full 64×64 bitmap. First time this port has executed a generator.
-`ctest` is 28 tests. Next: `.wz4t` array syntax (see below), then 4.2.
+and `wz4gen render` evaluates them — `Flat` (uniform, correctly), `Perlin`,
+`Cell`, `Gradient` and `Blur` all produce 64×64 output. First time this port has
+executed a generator. `.wz4t` gained array-row syntax so `Gradient` works.
+`ctest` is 30 tests. Next: 4.2, PNG output.
 
 ---
 
@@ -83,7 +84,7 @@ Clean build from scratch: **0 errors**. Warnings are expected and benign
 | `opsmeta_gate` | Emits + validates metadata for all 33 `.ops` modules into `build/meta/` |
 | **`wz4core`** | **The operator runtime, GUI-free: doc, build, basic, script, generated basic_ops** |
 | **`wz4tex`** | **The texture engine: wz3_bitmap_code + genvector + generated ops** |
-| `tex_smoke_*` (4) | Stage 4.1 gate: four operators evaluate to a full bitmap (`ctest`) |
+| `tex_smoke_*` (5) | Stage 4.1 gate: five operators evaluate; `Flat` uniform, rest structured |
 | `wz4t` | **Ours.** JSON, the runtime metadata model, and the `.wz4t` reader + writer |
 | `wz4t_read` | Stage 3.1b gate: a hand-written case parses and connects (`ctest`) |
 | `wz4t_round_*` (2) | Stage 3.2 gate: read→write→read preserves every word (`ctest`) |
@@ -812,14 +813,21 @@ evaluates one and reports its size and non-zero pixel count. Registering the
 module also dropped `example.wz4`'s unknown-class count 4,687 → 3,854, and all
 six phase-3 round trips still pass — now comparing far more real parameters.
 
-### Blocking part of 4.3: `.wz4t` has no array syntax
+### Done: `.wz4t` array syntax
 
-`Gradient`'s colour stops live in a parameter array, and the format never defined
-row syntax — a `Gradient` with no rows renders black, which is how this was
-found. **Two** of 34 texture operators are affected (`Gradient`, `Vector`); 13
-classes corpus-wide. The metadata already carries the array descriptor
-(`wMetaArray`, from 3.1a), so reader and writer have what they need. Sketch and
-reasoning in `06` §4.1.
+`Gradient` rendered **black** because its colour stops live in a parameter array
+and the format never defined row syntax. Closed in the same stage rather than
+deferred, since 4.3 cannot write a `Gradient` case without it.
+
+`element { Pos = 0  Color = #ff000000 }` blocks inside the operator body —
+named after the editor's own group label, not `row`, which already means
+side-by-side placement at the top level. Grammar in `02` §4.2b.
+
+**Every field of a row is written**, unlike an operator's own parameters,
+because `SetDefaultsArray` *interpolates float fields between neighbouring rows*
+— so "the default" for a row field depends on its neighbours, and omitting one
+would make a file's meaning depend on row order. `wz4t_round_tex` covers it, and
+the round-trip snapshot now compares array rows word for word.
 
 ### Three diagnosis lessons from 4.1
 

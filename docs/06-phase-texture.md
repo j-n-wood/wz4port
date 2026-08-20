@@ -85,7 +85,7 @@ hard-errors on arm64.
 `GenBitmap::Text` is stubbed behind `#if !WZ4PORT_HAVE_SFONT2D`, leaving the bitmap untouched
 so a graph containing it still evaluates. `LoadAtlas` needed no stub.
 
-#### Found here, and it blocks part of 4.3: `.wz4t` cannot express parameter arrays
+#### Found here and closed here: `.wz4t` could not express parameter arrays
 
 `Gradient`'s colour stops live in a `array { float Pos; color Color; }` block, and the format
 has no syntax for array rows — `02-target-model.md` §4 never defined one. A `Gradient` with no
@@ -95,19 +95,24 @@ Scope is bounded: **two** of the 34 texture operators use arrays, `Gradient` and
 Corpus-wide it is 13 classes. So 32 operators can have real cases in 4.3 without this, but
 those two cannot, and `Gradient` is too central to leave out.
 
-Needs a grammar addition before 4.3 — rows inside the operator block, something like
+**Done, in this stage** rather than deferred, because 4.3 cannot write a `Gradient` case
+without it. Grammar and rationale in `02-target-model.md` §4.2b; `element` blocks inside the
+operator body, named after the editor's own group label to avoid colliding with the top-level
+`row`. The metadata already carried the array descriptor from 3.1a, so nothing new was needed
+there.
 
-```
-op GenBitmap.Gradient at 0,0 size 3x1 {
-  Size = 256, 256
-  row { Pos = 0    Color = #ff000000 }
-  row { Pos = 1    Color = #ffffffff }
-}
-```
+Every field of a row is written, unlike an operator's own parameters, because
+`SetDefaultsArray` *interpolates float fields between neighbouring rows* — so "the default" for
+a row field depends on its neighbours, and omitting one would make the file's meaning depend on
+row order.
 
-with `row` distinguished from the existing top-level `row` block by context. The metadata
-already carries the array descriptor and its row parameters (`wMetaArray`, read in 3.1a), so
-the reader and writer have everything they need.
+`wz4t_round_tex` covers it, and the round-trip snapshot now compares array rows word for word.
+Verified the `element` blocks really are in the written text rather than being dropped by both
+sides — the A33 lesson applied.
+
+Two related format bugs surfaced at the same time, both from `Size = 64, 64` failing:
+`Size` is one word holding two controls, so comma-separated values are positional; and a
+numeric choice label beats a raw number. Both in `02` §4.2c.
 
 ### 4.2 — `wz4gen render` for bitmaps
 

@@ -522,7 +522,7 @@ set_tests_properties(wz4t_read PROPERTIES DEPENDS opsmeta_gate)
 #############################################################################
 
 add_executable(wz4t_round "${CMAKE_CURRENT_SOURCE_DIR}/tests/wz4t_round.cpp")
-target_link_libraries(wz4t_round PRIVATE wz4t)
+target_link_libraries(wz4t_round PRIVATE wz4t wz4tex)
 target_compile_options(wz4t_round PRIVATE
   "SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/tests/gui_poison.h"
 )
@@ -532,6 +532,12 @@ foreach(_case three_ops values)
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/cases/${_case}.wz4t")
   set_tests_properties(wz4t_round_${_case} PROPERTIES DEPENDS opsmeta_gate)
 endforeach()
+
+# And the texture smoke case, which is the only one with array rows.
+add_test(NAME wz4t_round_tex COMMAND wz4t_round
+  "${WZ4_META_DIR}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/tests/tex/smoke.wz4t")
+set_tests_properties(wz4t_round_tex PROPERTIES DEPENDS opsmeta_gate)
 
 #############################################################################
 ##  wz4t_docround — the phase 3 gate                                       ##
@@ -566,14 +572,24 @@ endforeach()
 # how many pixels are non-zero, so an operator that runs but writes nothing
 # fails rather than looking the same as one that ran.
 
-foreach(_op flat noise cells blurred)
+# Flat is a solid colour, so "uniform" is the correct answer for it and the
+# wrong answer for everything else. Both directions are asserted: an operator
+# that silently produced a flat fill would otherwise look like it worked.
+foreach(_op noise cells ramp blurred)
   add_test(NAME tex_smoke_${_op} COMMAND wz4gen render
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/tex/smoke.wz4t"
     -op ${_op} -meta "${WZ4_META_DIR}")
   set_tests_properties(tex_smoke_${_op} PROPERTIES
     DEPENDS opsmeta_gate
-    FAIL_REGULAR_EXPRESSION "0 of|1 x 1")
+    PASS_REGULAR_EXPRESSION "64 x 64, structured")
 endforeach()
+
+add_test(NAME tex_smoke_flat COMMAND wz4gen render
+  "${CMAKE_CURRENT_SOURCE_DIR}/tests/tex/smoke.wz4t"
+  -op flat -meta "${WZ4_META_DIR}")
+set_tests_properties(tex_smoke_flat PROPERTIES
+  DEPENDS opsmeta_gate
+  PASS_REGULAR_EXPRESSION "64 x 64, uniform")
 
 #############################################################################
 ##  core_connect — the phase 2 gate                                        ##

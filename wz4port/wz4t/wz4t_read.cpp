@@ -72,8 +72,13 @@ class wWz4tReader
 
   sBool Op(sInt *stackx,sInt *stacky,sInt *rowx,sInt rowy);
   sBool Settings(wStackOp *op,const wMetaClass *mc);
+  sBool Element(wStackOp *op,const wMetaClass *mc);
+
+  // `words` is the base of the storage being written: the operator's own
+  // parameter words, or one array row's. 0 means the operator's.
   sBool Apply(wStackOp *op,const wMetaClass *mc,const wMetaParam *p,
-    sArray<wValue> &values);
+    sArray<wValue> &values,sU32 *words);
+
   sBool Block(const sChar *what);
 
 public:
@@ -316,8 +321,17 @@ sBool wWz4tReader::Value(wValue &out)
 // needs to know — which space, which offset, how many words — comes from the
 // metadata, because wClass does not carry it (docs/architecture.md A28).
 sBool wWz4tReader::Apply(wStackOp *op,const wMetaClass *mc,const wMetaParam *p,
-  sArray<wValue> &values)
+  sArray<wValue> &values,sU32 *words)
 {
+  sBool inrow = words!=0;
+  if(!words)
+    words = op->EditU();
+  sInt budget = inrow ? mc->ArrayWords : mc->ParaWords;
+
+  // An array row is its own word space with its own parameter list.
+  const sArray<wMetaParam *> &plist =
+    (inrow && mc->Array) ? mc->Array->Params : mc->Params;
+
   // How many values may this parameter take?
   sInt slots = 1;
   if(p->Layout==wML_VECTOR || p->Layout==wML_ARRAY)
@@ -333,7 +347,7 @@ sBool wWz4tReader::Apply(wStackOp *op,const wMetaClass *mc,const wMetaParam *p,
   if(p->Widgets.GetCount()>0)
   {
     sArray<const wMetaWidget *> widgets;
-    wGatherWidgets(mc,p,widgets);
+    wGatherWidgets(plist,p,widgets);
     slots = sMax(1,widgets.GetCount());
   }
 
@@ -345,7 +359,19 @@ sBool wWz4tReader::Apply(wStackOp *op,const wMetaClass *mc,const wMetaParam *p,
     return 0;
   }
 
-  // Strings
+  // Strings and links live on the operator, never in an array row.
+  if(p->Kind==L"string" || p->Kind==L"filein" || p->Kind==L"fileout"
+    || p->Kind==L"link")
+  {
+    if(inrow)
+    {
+      sString<256> msg;
+      msg.PrintF(L"%s cannot appear in an array row",p->Symbol);
+      Fail(msg);
+      return 0;
+    }
+  }
+
   if(p->Kind==L"string" || p->Kind==L"filein" || p->Kind==L"fileout")
   {
     if(p->Offset<0 || p->Offset>=op->EditStringCount)
@@ -378,16 +404,16 @@ sBool wWz4tReader::Apply(wStackOp *op,const wMetaClass *mc,const wMetaParam *p,
     return 0;
   }
 
-  if(p->Offset<0 || p->Offset+p->Words>mc->ParaWords)
+  if(p->Offset<0 || p->Offset+p->Words>budget)
   {
-    Fail(L"parameter offset is outside the operator's word storage");
+    Fail(L"parameter offset is outside the available word storage");
     return 0;
   }
 
   // char[n] is an sString<n> living inline in the parameter words.
   if(p->Kind==L"char")
   {
-    sChar *dest = (sChar *)(op->EditU()+p->Offset);
+    sChar *dest = (sChar *)(words+p->Offset);
     sInt max = p->Capacity>0 ? p->Capacity : 1;
     sInt i = 0;
     const sChar *src = values[0].S;
@@ -415,7 +441,7 @@ sBool wWz4tReader::Apply(wStackOp *op,const wMetaClass *mc,const wMetaParam *p,
   if(p->Widgets.GetCount()>0)
   {
     sArray<const wMetaWidget *> widgets;
-    wGatherWidgets(mc,p,widgets);
+    wGatherWidgets(plist,p,widgets);
 
     sInt acc = 0;
 
@@ -495,7 +521,7 @@ sBool wWz4tReader::Apply(wStackOp *op,const wMetaClass *mc,const wMetaParam *p,
       }
     }
 
-    op->EditS()[p->Offset] = acc;
+    ((sInt *)words)[p->Offset] = acc;
     return 1;
   }
 
@@ -509,15 +535,81 @@ sBool wWz4tReader::Apply(wStackOp *op,const wMetaClass *mc,const wMetaParam *p,
       break;
 
     if(isfloat)
-      op->EditF()[p->Offset+i] = v.F;
+      ((sF32 *)words)[p->Offset+i] = v.F;
     else
-      op->EditS()[p->Offset+i] = v.I;
+      ((sInt *)words)[p->Offset+i] = v.I;
   }
 
   return 1;
 }
 
 /****************************************************************************/
+
+// One row of a parameter array — the table widget. Called `element` after the
+// group label the original editor gives it, and deliberately not `row`, which
+// already means a side-by-side placement block at the top level.
+//
+// Every field is expected to be stated. wOp::AddArray runs the generated
+// SetDefaultsArray, which for float fields INTERPOLATES between the neighbouring
+// rows (output.cpp:681-696) — so an unstated field would depend on row order.
+// The writer therefore emits all of them; see wz4t_write.cpp.
+sBool wWz4tReader::Element(wStackOp *op,const wMetaClass *mc)
+{
+  if(!mc->Array)
+  {
+    sString<256> msg;
+    msg.PrintF(L"%s.%s has no array",mc->OutputType,mc->Name);
+    Fail(msg);
+    return 0;
+  }
+
+  sU32 *words = (sU32 *)op->AddArray(-1);
+  if(!words)
+  {
+    Fail(L"could not allocate an array row");
+    return 0;
+  }
+
+  Scan.Match('{');
+  while(!Scan.Errors && Scan.Token!='}' && Scan.Token!=sTOK_END)
+  {
+    sPoolString key;
+    if(!Scan.ScanName(key))
+      break;
+    Scan.Match('=');
+
+    const wMetaParam *p = 0;
+    for(sInt i=0;i<mc->Array->Params.GetCount();i++)
+      if(mc->Array->Params[i]->Symbol==key)
+        p = mc->Array->Params[i];
+
+    if(!p)
+    {
+      sString<512> msg;
+      msg.PrintF(L"%s.%s has no array field called \"%s\"",
+        mc->OutputType,mc->Name,key);
+      Fail(msg);
+      return 0;
+    }
+
+    sArray<wValue> values;
+    for(;;)
+    {
+      wValue v;
+      if(!Value(v))
+        break;
+      values.AddTail(v);
+      if(!Scan.IfToken(',') && !Scan.IfToken('|'))
+        break;
+    }
+
+    if(!Scan.Errors && values.GetCount())
+      Apply(op,mc,p,values,words);
+  }
+  Scan.Match('}');
+
+  return !Scan.Errors;
+}
 
 sBool wWz4tReader::Settings(wStackOp *op,const wMetaClass *mc)
 {
@@ -535,6 +627,20 @@ sBool wWz4tReader::Settings(wStackOp *op,const wMetaClass *mc)
     if(Scan.IfName(L"bypass"))
     {
       op->Bypass = 1;
+      continue;
+    }
+    if(Scan.IfName(L"element"))
+    {
+      if(!mc)                     // a placeholder: consume and ignore
+      {
+        Scan.Match('{');
+        while(!Scan.Errors && Scan.Token!='}' && Scan.Token!=sTOK_END)
+          Scan.Scan();
+        Scan.Match('}');
+        continue;
+      }
+      if(!Element(op,mc))
+        break;
       continue;
     }
 
@@ -595,7 +701,7 @@ sBool wWz4tReader::Settings(wStackOp *op,const wMetaClass *mc)
     }
 
     if(!Scan.Errors && values.GetCount())
-      Apply(op,mc,p,values);
+      Apply(op,mc,p,values,0);
   }
 
   Scan.Match('}');

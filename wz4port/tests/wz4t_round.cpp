@@ -13,17 +13,21 @@
 
 #include "wz4lib/doc_core.hpp"
 #include "wz4lib/basic_ops.hpp"
+#include "wz4frlib/wz3_bitmap_ops.hpp"
 #include "base/system.hpp"
 #include "wz4t.hpp"
 #include "meta.hpp"
 
 /****************************************************************************/
 
+// wz3_bitmap is registered here too, so the round trip covers the texture
+// operators — in particular Gradient, the only case with a parameter array.
 void RegisterWZ4Classes()
 {
   for(sInt i=0;i<2;i++)
   {
     sREGOPS(basic,0);
+    sREGOPS(wz3_bitmap,0);
   }
 }
 
@@ -56,6 +60,8 @@ struct Snap
   sArray<sU32> Words;
   sArray<sPoolString> Strings;
   sArray<sPoolString> Links;
+  sArray<sU32> Rows;              // every array row's words, concatenated
+  sInt RowCount;
 };
 
 static void Take(sArray<Snap *> &out)
@@ -86,6 +92,16 @@ static void Take(sArray<Snap *> &out)
         s->Strings.AddTail(sPoolString(op->EditString[k]->Get()));
       for(sInt k=0;k<op->Links.GetCount();k++)
         s->Links.AddTail(sPoolString((const sChar *)op->Links[k].LinkName));
+
+      // Array rows, word for word. Gradient's colour stops live here, and a
+      // round trip that dropped or reordered them would otherwise pass.
+      s->RowCount = op->ArrayData.GetCount();
+      for(sInt r=0;r<op->ArrayData.GetCount();r++)
+      {
+        const sU32 *row = (const sU32 *)op->ArrayData[r];
+        for(sInt k=0;k<op->Class->ArrayCount;k++)
+          s->Rows.AddTail(row[k]);
+      }
     }
   }
 }
@@ -167,6 +183,26 @@ static sBool Same(Snap *a,Snap *b,sString<512> &why)
     {
       why.PrintF(L"%s.%s: link %d was \"%s\", now \"%s\"",
         a->Type,a->Class,i,a->Links[i],b->Links[i]);
+      return 0;
+    }
+  }
+  if(a->RowCount!=b->RowCount)
+  {
+    why.PrintF(L"%s.%s: %d array row(s) became %d",
+      a->Type,a->Class,a->RowCount,b->RowCount);
+    return 0;
+  }
+  if(a->Rows.GetCount()!=b->Rows.GetCount())
+  {
+    why.PrintF(L"%s.%s: array row size changed",a->Type,a->Class);
+    return 0;
+  }
+  for(sInt i=0;i<a->Rows.GetCount();i++)
+  {
+    if(a->Rows[i]!=b->Rows[i])
+    {
+      why.PrintF(L"%s.%s: array word %d was 0x%08x, now 0x%08x",
+        a->Type,a->Class,i,a->Rows[i],b->Rows[i]);
       return 0;
     }
   }

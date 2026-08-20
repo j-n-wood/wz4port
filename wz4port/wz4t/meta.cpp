@@ -75,12 +75,12 @@ const wMetaParam *wMetaClass::FindParam(const sChar *symbol) const
 
 /****************************************************************************/
 
-void wGatherWidgets(const wMetaClass *mc,const wMetaParam *owner,
+void wGatherWidgets(const sArray<wMetaParam *> &params,const wMetaParam *owner,
   sArray<const wMetaWidget *> &out)
 {
-  for(sInt i=0;i<mc->Params.GetCount();i++)
+  for(sInt i=0;i<params.GetCount();i++)
   {
-    const wMetaParam *p = mc->Params[i];
+    const wMetaParam *p = params[i];
     if(p->Symbol!=owner->Symbol)
       continue;
     if(p->Space!=wMS_WORDS || p->Offset!=owner->Offset)

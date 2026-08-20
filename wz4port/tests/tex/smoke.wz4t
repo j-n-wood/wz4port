@@ -29,11 +29,6 @@ stack at 4,0 {
 }
 
 // Voronoi cells: a second, quite different generator path.
-//
-// Gradient would be the obvious third choice and is deliberately NOT here: its
-// colour stops live in a parameter array, and .wz4t has no syntax for array
-// rows yet. It renders black until that lands. Only Gradient and Vector are
-// affected, out of 34 texture operators.
 stack at 8,0 {
   op GenBitmap.Cell {
     name = cells
@@ -42,6 +37,19 @@ stack at 8,0 {
     Color1 = #ffc0e0ff
     Max = 24
     Seed = 3
+  }
+}
+
+// A gradient, whose colour stops live in a parameter array. Two rows here, so
+// this also exercises `element` — without which the operator renders black,
+// which is how the array gap was found in the first place.
+stack at 16,0 {
+  op GenBitmap.Gradient {
+    name = ramp
+    Size = 64, 64
+    Flags = linear
+    element { Pos = 0  Color = #ff000000 }
+    element { Pos = 1  Color = #ffffffff }
   }
 }
 
