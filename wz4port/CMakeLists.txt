@@ -411,6 +411,7 @@ add_library(wz4t STATIC
   "${CMAKE_CURRENT_SOURCE_DIR}/wz4t/json.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/wz4t/meta.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/wz4t/wz4t_read.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/wz4t/wz4t_write.cpp"
 )
 target_include_directories(wz4t PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/wz4t")
 target_link_libraries(wz4t PUBLIC wz4core)
@@ -486,6 +487,22 @@ add_test(NAME wz4t_read COMMAND wz4t_read
   "${WZ4_META_DIR}"
   "${CMAKE_CURRENT_SOURCE_DIR}/tests/cases/three_ops.wz4t")
 set_tests_properties(wz4t_read PROPERTIES DEPENDS opsmeta_gate)
+
+#############################################################################
+##  wz4t_round — the stage 3.2 gate                                        ##
+#############################################################################
+
+add_executable(wz4t_round "${CMAKE_CURRENT_SOURCE_DIR}/tests/wz4t_round.cpp")
+target_link_libraries(wz4t_round PRIVATE wz4t)
+target_compile_options(wz4t_round PRIVATE
+  "SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/tests/gui_poison.h"
+)
+foreach(_case three_ops values)
+  add_test(NAME wz4t_round_${_case} COMMAND wz4t_round
+    "${WZ4_META_DIR}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/cases/${_case}.wz4t")
+  set_tests_properties(wz4t_round_${_case} PROPERTIES DEPENDS opsmeta_gate)
+endforeach()
 
 #############################################################################
 ##  core_connect — the phase 2 gate                                        ##

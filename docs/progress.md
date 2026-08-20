@@ -4,13 +4,12 @@ Read this first when picking the project up cold. It records where things
 stand, what has been decided and why, and what would otherwise have to be
 rediscovered the hard way.
 
-**Last updated:** phase 3, stage 3.1b.
+**Last updated:** phase 3, stage 3.2.
 **Status:** Phases 1 and 2 complete and verified; the operator runtime links and
-runs headless. Phase 3: **3.3 done** (all six bundled `.wz4` documents load —
-7,090 operators), **the destructive-write bug fixed** (`patches/07`), **3.1a
-done** (metadata readable at runtime, validated from the consumer side), and
-**3.1b done — the `.wz4t` reader works**: a hand-written case parses and its
-connections are derived correctly from geometry alone. Next is 3.2, the writer.
+runs headless. Phase 3: **3.3, 3.1a, 3.1b and 3.2 done**, plus the
+destructive-write fix (`patches/07`). **`.wz4t` reads and writes, and the round
+trip preserves every parameter word, string and link.** `wz4gen convert` does
+`.wz4` ↔ `.wz4t`. Next is 3.4: `render` (stubbed) and the phase gate.
 
 ---
 
@@ -52,7 +51,7 @@ about the build.
 | 0 — Documentation (`docs/00`–`02`) | **Done**, reviewed and approved |
 | 1 — Toolchain and portable base | **Done**, gate passed |
 | 2 — Headless op runtime + metadata | **Done**, phase gate passed |
-| 3 — Text graph format + CLI | **In progress.** 3.3, 3.1a, 3.1b done. 3.2 (writer) next |
+| 3 — Text graph format + CLI | **In progress.** 3.3, 3.1a, 3.1b, 3.2 done. 3.4 next |
 | 4 — Texture library + tests | Not started |
 | 5 — Texture GUI | Not started |
 | 6 — Geometry | Not started |
@@ -83,8 +82,9 @@ Clean build from scratch: **0 errors**. Warnings are expected and benign
 | `headless_ops_gate` | Generates and compiles both op modules `-headless`, GUI poisoned |
 | `opsmeta_gate` | Emits + validates metadata for all 33 `.ops` modules into `build/meta/` |
 | **`wz4core`** | **The operator runtime, GUI-free: doc, build, basic, script, generated basic_ops** |
-| `wz4t` | **Ours.** JSON reader, the runtime metadata model, and the `.wz4t` reader |
+| `wz4t` | **Ours.** JSON, the runtime metadata model, and the `.wz4t` reader + writer |
 | `wz4t_read` | Stage 3.1b gate: a hand-written case parses and connects (`ctest`) |
+| `wz4t_round_*` (2) | Stage 3.2 gate: read→write→read preserves every word (`ctest`) |
 | `wz4gen` | The headless CLI: `list`, `identity`, `describe`, `checkmeta`. `convert`/`render` to come |
 | `core_connect` | Phase 2 gate: links `wz4core`, derives a graph from geometry (`ctest`) |
 | `load_*` (6 tests) | Every bundled `.wz4` document must load and be non-empty (`ctest`) |
@@ -130,8 +130,10 @@ wz4port/
   wz4t/                        phase 3 — ours: JSON, metadata, the text format
     json.hpp  json.cpp         a small general JSON reader, plus wFormatFloat
     meta.hpp  meta.cpp         wMetaLibrary — what wClass cannot tell you
-    wz4t.hpp  wz4t_read.cpp    the .wz4t reader
-  tests/cases/three_ops.wz4t   the stage 3.1b case, hand-written
+    wz4t.hpp                   the .wz4t reader and writer
+    wz4t_read.cpp  wz4t_write.cpp
+  tests/cases/three_ops.wz4t   stage 3.1b: geometry and connections
+  tests/cases/values.wz4t      stage 3.2: value kinds, escapes, non-ASCII text
   tests/
     simd_parity.cpp
     headless_core.cpp          phase 2 stage 2.1 gate
@@ -702,6 +704,43 @@ already owns one empty page, because the constructor calls `DefaultDoc()`
 (`doc.cpp:2514`). Reading a two-page file gave *three* pages — which in 3.2
 would have meant a round trip gaining a stray page every pass. The reader now
 takes that default page over for the file's first `page`.
+
+### Done: 3.2 — the writer
+
+`wz4t/wz4t_write.cpp` plus `wz4gen convert`. Canonical output, sorted by `PosY`
+then `PosX`, sugar expanded, and **only non-default parameters written** — safe
+because `SetDefaults` (from `wz4ops`) and the metadata defaults (from `opsmeta`)
+come from the same parse tree.
+
+**Gate passed** over two cases: read → write → read comparing *every parameter
+word, string and link*, plus writing twice giving byte-identical text.
+
+Flags decoding needed three guards, all of which fall back to the raw integer:
+a `continue flags` parameter puts more widgets on a word its owner declares (so
+decoding gathers every widget at that offset, or the continued bits vanish on
+write); an **ambiguous** label cannot be written because the reader resolves the
+first match; and a label that is not a bare identifier (`16 Samples`) cannot
+either.
+
+### The false pass — worth reading before writing another round-trip test
+
+The gate passed on a case containing `café °C — ΔΣ 中文` **while mangling it**:
+`café` was stored as `cafÃ©`.
+
+`sLoadText` decodes UTF-8 only when it finds a BOM (`system.cpp:1080`) and
+otherwise takes each byte as a character. A hand-written `.wz4t` has no BOM, so
+it read as Latin-1; the writer then re-encoded those characters as UTF-8. **That
+corruption is idempotent after the first pass**, so read→write→read is perfectly
+stable and every comparison passes.
+
+Fixed by decoding UTF-8 in the reader regardless of BOM, and by writing
+`sSaveTextUTF8` instead of `sSaveTextAnsi` — the latter truncated each character
+to a byte and produced a file `grep` called **binary**, which defeats the whole
+point of a text format.
+
+The lasting fix is the test, though: it now asserts an **actual character value**
+against a compiler-encoded literal. *A round trip being stable is not the same
+as it being correct*, and only the second kind of check tells them apart.
 
 ### Still to use from phase 2
 

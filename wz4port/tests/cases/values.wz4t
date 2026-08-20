@@ -1,0 +1,52 @@
+wz4t 1
+
+// Stage 3.2: the value kinds and text a round trip has to survive intact.
+// Nothing here is about connections — three_ops.wz4t covers those.
+
+page "values"
+
+// Non-ASCII text. This is the reason the writer emits UTF-8 rather than
+// sSaveTextAnsi, which would truncate every character to one byte: 'é' and '°'
+// would survive Latin-1 by luck, the em dash and the Greek would not.
+op AnyType.Comment at 0,0 size 8x1 {
+  Text = "café °C — ΔΣ 中文"
+  Color = red
+}
+
+// Escapes, and a quoted store name that is not a bare identifier.
+op AnyType.Comment at 0,2 size 8x2 {
+  name = "not an identifier"
+  Text = "line one\nline two\ttabbed \"quoted\" back\\slash"
+  Color = cyan
+}
+
+// A choice label containing a space cannot be written bare, so the writer
+// falls back to the integer for the whole parameter. Reading it back must give
+// the same word either way.
+op Texture2D.MakeTexture at 0,5 size 3x1 {
+  Format = DXT5
+  Flags = 1
+}
+
+// Defaults stated explicitly. The writer should omit them, and the reader's
+// SetDefaults should put them back — so these lines must not survive the round
+// trip as text, while the values must.
+op Texture2D.MakeTexture at 4,5 size 3x1 {
+  Format = argb8888
+}
+
+// The bare flags.
+op AnyType.Comment at 0,8 size 4x1 {
+  Text = "hidden"
+  hide
+}
+
+op AnyType.Comment at 6,8 size 4x1 {
+  Text = "bypassed"
+  bypass
+}
+
+// A file path through a fileout parameter.
+op Texture2D.Export at 0,10 size 3x1 {
+  Filename = "out/some path/tex.wz4tex"
+}

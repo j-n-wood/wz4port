@@ -111,6 +111,7 @@ Enforced by the build — breaking these fails compilation and names the file:
 | A load/save by this build does not damage a document | `identity_*` — class identity tally preserved, all six documents |
 | The metadata reads back consistently | `checkmeta` — offsets, `continues` owners, choice masks, all 33 modules |
 | `.wz4t` parses, connects, and refuses bad input | `wz4t_read` — 19 checks, 6 of them rejections |
+| `.wz4t` round-trips every parameter word, and text is correct | `wz4t_round_*` — two cases, including a non-ASCII assertion against a literal |
 
 Enforced only by discipline — nothing catches a regression:
 
@@ -791,6 +792,35 @@ empty and untouched.
 Worth generalising: when a round trip is the acceptance criterion, **look for
 state the constructor creates**, not just state the format carries.
 
+### A33 · A stable round trip is not a correct one — standing
+
+*Phase 3.2.* The `.wz4t` round-trip gate compared every parameter word, string
+and link across read → write → read, and required two writes to be
+byte-identical. It passed on a case containing `café °C — ΔΣ 中文` **while
+storing `cafÃ©`**.
+
+`sLoadText` decodes UTF-8 only on finding a BOM (`system.cpp:1080`); otherwise
+each byte becomes one character. A hand-written file has no BOM, so it read as
+Latin-1 — and the writer then re-encoded those characters as UTF-8. **The
+corruption is idempotent after the first pass.** Every comparison in the gate is
+between pass 1 and pass 2, so every comparison agreed.
+
+Fixed by decoding UTF-8 in the reader regardless of BOM (`sLoadFile` +
+`sCopyStringFromUTF8`) and writing `sSaveTextUTF8`. `sSaveTextAnsi` truncated
+each character to a byte and produced output `grep` reported as **binary** —
+which alone defeats a format whose purpose is being read and diffed.
+
+The durable fix is in the test: it now asserts an **actual character value**
+against a literal the compiler encodes, independently of any file.
+
+**Generalise this.** A round-trip test compares the system against itself, so it
+cannot see an error the system applies consistently. Any such test needs at
+least one assertion against a value from outside the loop. The same reasoning
+already applies elsewhere in this project — it is why `opsmeta` cross-checks
+choice decoding against Altona's own `sFindFlag` (A16) rather than against
+itself, and why the absence of a reference oracle (Part 5) is the standing risk
+it is.
+
 ---
 
 ## Part 3 — where inference lost to measurement
@@ -818,6 +848,8 @@ adopted because of this list.
 | `sArray::AddMany` constructs its elements | Raw memory. `AddManyInit` assigns into raw memory. Both crash on element types owning storage (A30) |
 | A hex colour literal is one token | `#08ff0000` is INT+NAME, `#1e500000` is a FLOAT. Reassembled from exact source text (3.1b) |
 | A fresh `wDocument` is empty | Its constructor calls `DefaultDoc()` and it already owns a page (A32) |
+| `sLoadText` reads UTF-8 | Only with a BOM; otherwise byte-per-character. Silent mojibake on hand-written files (A33) |
+| A passing round-trip test means the data survived | Not if the error is idempotent. `café` → `cafÃ©` passed every comparison (A33) |
 | `doc.cpp` has 16 GUI-touching lines | It contains all ~840 lines of `wPaintInfo`. Third time a line count understated coupling (A22) |
 | Extracting a declaration is enough to decouple | It compiles; it does not link. The definitions needed extracting too (A23) |
 | `script.cpp` might be excludable | `wExecutive::Execute` drives `ScriptContext` directly (A19) |

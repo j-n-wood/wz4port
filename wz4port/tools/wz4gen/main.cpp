@@ -19,6 +19,7 @@
 #include "base/system.hpp"
 #include "meta.hpp"
 #include "json.hpp"               // wFormatFloat — Altona has no %g
+#include "wz4t.hpp"
 
 // Where opsmeta puts its output. Compiled in so the tool works with no
 // arguments in a normal build; override with -meta <dir>.
@@ -822,6 +823,9 @@ static void Usage()
   sPrint(L"    -errors     also list connection and calc errors\n");
   sPrint(L"  identity      load, save, reload, and check every operator kept\n");
   sPrint(L"                its class — including ones this build cannot load\n");
+  sPrint(L"  describe      the full parameter description of one operator\n");
+  sPrint(L"  checkmeta     read all the metadata and check it hangs together\n");
+  sPrint(L"  convert       .wz4 <-> .wz4t, direction from the extensions\n");
   sPrint(L"\n");
   sPrint(L"Switches go after the filename: Altona's shell parser treats the\n");
   sPrint(L"token after a -switch as that switch's first parameter.\n");
@@ -879,6 +883,56 @@ void sMain()
       else
       {
         Describe(meta,what);
+      }
+    }
+  }
+  else if(sCmpString(command,L"convert")==0)
+  {
+    const sChar *in = sGetShellParameter(0,1);
+    const sChar *out = sGetShellParameter(0,2);
+    const sChar *dir = sGetShellParameter(L"meta",0);
+    if(!dir)
+      dir = WZ4GEN_META_DIR;
+
+    if(!in || !out)
+    {
+      sPrint(L"usage: wz4gen convert <in> <out> [-meta <dir>]\n");
+      sPrint(L"       direction follows the extensions: .wz4 <-> .wz4t\n");
+      sSetErrorCode();
+      delete Doc;
+      return;
+    }
+
+    wMetaLibrary meta;
+    if(!meta.LoadDirectory(dir))
+    {
+      sPrintF(L"wz4gen: %s\n",meta.GetError());
+      sSetErrorCode();
+      delete Doc;
+      return;
+    }
+
+    sBool intext = sFindString(in,L".wz4t")>=0;
+    sBool outtext = sFindString(out,L".wz4t")>=0;
+
+    sBool ok = intext ? wReadWz4t(in,meta) : Doc->Load(in);
+    if(!ok)
+    {
+      sPrintF(L"wz4gen: could not read <%s>\n",in);
+      sSetErrorCode();
+    }
+    else
+    {
+      Doc->Connect();
+      ok = outtext ? wWriteWz4tFile(out,meta) : Doc->Save(out);
+      if(!ok)
+      {
+        sPrintF(L"wz4gen: could not write <%s>\n",out);
+        sSetErrorCode();
+      }
+      else
+      {
+        sPrintF(L"%s -> %s: %d operator(s)\n",in,out,Doc->AllOps.GetCount());
       }
     }
   }

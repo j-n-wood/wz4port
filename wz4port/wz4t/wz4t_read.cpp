@@ -704,16 +704,49 @@ sBool wReadWz4tText(const sChar *text,const sChar *sourcename,
   return reader.Run(text,sourcename);
 }
 
+// .wz4t is UTF-8, always, whether or not the file carries a BOM.
+//
+// sLoadText only decodes UTF-8 when it finds a BOM (system.cpp:1080) and
+// otherwise takes each byte as one character. That is wrong here, and wrong in
+// the way that hides: a hand-written file — which is the entire point of this
+// format, and which no ordinary editor gives a BOM — would read as Latin-1, so
+// "café" became "cafÃ©". Because the writer then re-encodes those characters as
+// UTF-8, the corruption is IDEMPOTENT, and a read/write/read round-trip test
+// passes while quietly mangling the text. Found exactly that way.
+
 sBool wReadWz4t(const sChar *filename,const wMetaLibrary &meta)
 {
-  sChar *text = sLoadText(filename);
-  if(!text)
+  sDInt size = 0;
+  sU8 *bytes = sLoadFile(filename,size);
+  if(!bytes)
   {
     sPrintF(L"wz4t: could not read <%s>\n",filename);
     return 0;
   }
+
+  sU8 *utf8 = bytes;
+  sDInt len = size;
+  if(len>=3 && utf8[0]==0xef && utf8[1]==0xbb && utf8[2]==0xbf)
+  {
+    utf8 += 3;                    // skip a BOM if one is there
+    len -= 3;
+  }
+
+  // sCopyStringFromUTF8 wants a zero-terminated byte string.
+  sChar8 *zero = new sChar8[len+1];
+  for(sDInt i=0;i<len;i++)
+    zero[i] = sChar8(utf8[i]);
+  zero[len] = 0;
+
+  // One sChar per byte is always enough: UTF-8 never shortens.
+  sChar *text = new sChar[len+1];
+  sCopyStringFromUTF8(text,zero,sInt(len+1));
+
   sBool ok = wReadWz4tText(text,filename,meta);
+
   delete[] text;
+  delete[] zero;
+  delete[] bytes;
   return ok;
 }
 

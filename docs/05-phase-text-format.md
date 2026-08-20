@@ -258,14 +258,63 @@ Left alone, that would have shown up in 3.2 as a round trip gaining a stray empt
 every pass. The reader now takes the default page over for the first `page` in the file rather
 than appending, provided it is still empty and untouched.
 
-### 3.2 — Writer
+### 3.2 — Writer — **done**
 
-Emit canonical `.wz4t` from a `wDocument`. Deterministic ordering (by page, then `PosY`, then
-`PosX`) so output is diff-stable.
+`wz4port/wz4t/wz4t_write.cpp`, plus `wz4gen convert` (brought forward from 3.4, since a writer
+with no way to invoke it is not demonstrable). Canonical output: explicit `at` and `size` on
+every operator, no sugar, pages in document order, operators sorted by `PosY` then `PosX`.
 
-**Gate:** writer output re-parses to an identical document.
+**Only non-default parameters are written.** Safe because the reader runs the operator's
+`SetDefaults` before applying settings, and because `SetDefaults` (emitted by `wz4ops`) and the
+metadata defaults (emitted by `opsmeta`) come from the same parse tree — they agree by
+construction. It is also what keeps a per-operator case short enough to read, which §4.1 asks
+for.
+
+**Gate — passed.** `wz4t_round` over two cases: read → write → read, then compare **every
+parameter word, string and link**, not just operator counts. Plus: writing twice must give
+byte-identical text.
+
+#### Flags decoding, and where it gives up
+
+A packed integer is rendered as choice labels (`Format = DXT5`), which needs care:
+
+- **`continue flags` declares more widgets on a word an earlier parameter owns**, so decoding
+  gathers every widget touching that offset. Looking only at the owner's widgets would silently
+  drop the continued bits on write.
+- A label that is **ambiguous** across widgets cannot be written — the reader resolves the
+  first match and would pick the wrong widget. `-` used as a blank entry in several widgets is
+  the common case.
+- A label that is **not a bare identifier** (`16 Samples`, `San Andreas Gap`) is not written
+  either.
+- Any of those, or a value with no matching choice, falls back to the raw integer for the whole
+  parameter. Correctness first; the round trip is identical either way.
+
+#### The false pass, and what it cost to find
+
+The round trip passed on ASCII and then passed on a case with `café °C — ΔΣ 中文` in it — while
+**mangling the text**. `café` was being stored as `cafÃ©`.
+
+`sLoadText` decodes UTF-8 only when it finds a BOM (`system.cpp:1080`) and otherwise takes each
+byte as one character. A hand-written `.wz4t` — the entire point of the format — has no BOM, so
+it read as Latin-1. The writer then re-encoded those characters as UTF-8, which means **the
+corruption is idempotent after the first pass**: read/write/read is perfectly stable, and every
+comparison in the gate passes.
+
+Two fixes, and the second matters more than the first:
+
+1. The reader decodes UTF-8 itself, BOM optional, via `sLoadFile` +
+   `sCopyStringFromUTF8`. The writer emits `sSaveTextUTF8` rather than `sSaveTextAnsi`, which
+   truncated every character to a byte — and which also produced a file `grep` reported as
+   **binary**, defeating the format's stated purpose.
+2. The gate now asserts an **actual character value** against a compiler-encoded literal, not
+   just stability. A round trip being stable is not the same as it being correct, and only the
+   second kind of check can tell the difference.
 
 ### 3.4 — `wz4gen` CLI
+
+`list`, `describe`, `checkmeta`, `identity` and `convert` already exist — they were built where
+they were needed to demonstrate an earlier stage rather than held back to here. What remains
+for 3.4 is `render` (stubbed) and the phase gate.
 
 | Command | Behaviour |
 |---|---|

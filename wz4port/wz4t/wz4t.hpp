@@ -38,4 +38,19 @@ sBool wReadWz4tText(const sChar *text,const sChar *sourcename,
 
 /****************************************************************************/
 
+// Writes the global Doc as canonical .wz4t: explicit `at` and `size` on every
+// operator, no sugar, pages in document order and operators sorted by PosY then
+// PosX so the output is diff-stable.
+//
+// Only parameters that differ from their default are written. That is safe
+// because the reader runs the operator's SetDefaults before applying settings,
+// and because SetDefaults and the metadata defaults are emitted from the same
+// parse tree by wz4ops and opsmeta respectively — they agree by construction.
+// It is also what keeps a per-operator test case short enough to read.
+
+sBool wWriteWz4t(sTextBuffer &out,const wMetaLibrary &meta);
+sBool wWriteWz4tFile(const sChar *filename,const wMetaLibrary &meta);
+
+/****************************************************************************/
+
 #endif // FILE_WZ4PORT_WZ4T_HPP
