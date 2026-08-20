@@ -431,7 +431,18 @@ foreach(_doc ${WZ4_DOCS})
   get_filename_component(_name "${_doc}" NAME_WE)
   add_test(NAME load_${_name}
     COMMAND wz4gen list "${FR_ROOT}/altona_wz4/${_doc}")
+
+  # And that a load/save/reload by THIS build does not damage the document.
+  # Without wOp::ForeignClass every operator whose module we have not
+  # registered would be rewritten as UnknownOp and lost for good — see
+  # wz4port/patches/07.
+  add_test(NAME identity_${_name}
+    COMMAND wz4gen identity
+      "${FR_ROOT}/altona_wz4/${_doc}"
+      "${CMAKE_BINARY_DIR}/roundtrip/${_name}.wz4")
 endforeach()
+
+file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/roundtrip")
 
 #############################################################################
 ##  core_connect — the phase 2 gate                                        ##

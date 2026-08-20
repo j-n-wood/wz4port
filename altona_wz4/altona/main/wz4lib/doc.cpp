@@ -1116,6 +1116,8 @@ sInt OpsTotal = 0;
 wOp::wOp() : SelectedHandles(0)
 {
   OpsTotal++;
+  ForeignClass = L"";
+  ForeignType = L"";
   EditStringCount = 0;
   EditString = 0;
   EditData = 0;
@@ -1302,6 +1304,8 @@ void wOp::CopyFrom(wOp *src)
   Init(src->Class);
   Name = src->Name;
   Bypass = src->Bypass;
+  ForeignClass = src->ForeignClass;    // survives copy/paste and undo
+  ForeignType = src->ForeignType;
 
   sCopyMem(EditData,src->EditData,sizeof(sU32)*Class->ParaWords);
 
@@ -1858,14 +1862,34 @@ template <class streamer> void wOp::Serialize_(streamer &s)
         cl = Doc->FindClass(L"UnknownOp",L"AnyType");
         Doc->UnknownOps++;
         sVERIFY(cl);
+
+        // Remember what this operator claimed to be. Without this the
+        // substitution is silent and irreversible: the name is the only thing
+        // left to say which module would have to be registered to load the
+        // document properly, and it is what lets a writer put the original
+        // identity back.
+        ForeignClass = classname;
+        ForeignType = typenam;
       }
       Init(cl);
       Name = opname;
     }
     else
     {
-      classname = Class->Name;
-      typenam = Class->OutputType->Symbol;
+      // An operator we substituted writes back what it originally was, not
+      // "UnknownOp". Its PARAMETERS are still lost — the reader skipped them
+      // because UnknownOp declares none — so this preserves identity and
+      // geometry, not content. See wz4port/patches/07.
+      if(!ForeignClass.IsEmpty())
+      {
+        classname = ForeignClass;
+        typenam = ForeignType;
+      }
+      else
+      {
+        classname = Class->Name;
+        typenam = Class->OutputType->Symbol;
+      }
       s | Name;
       s | classname;
       s | typenam;

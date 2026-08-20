@@ -4,12 +4,12 @@ Read this first when picking the project up cold. It records where things
 stand, what has been decided and why, and what would otherwise have to be
 rediscovered the hard way.
 
-**Last updated:** phase 3, stage 3.3.
+**Last updated:** phase 3, stage 3.3 + the class-identity fix.
 **Status:** Phases 1 and 2 complete and verified. The operator runtime links and
 runs headless. **Phase 3 stage 3.3 done first (out of order, deliberately): all
-six bundled `.wz4` documents load** — 7,090 operators, 111 pages — which
-confirms the phase-2 serialisation surgery preserved the format. Stages 3.1
-(reader) and 3.2 (writer) next, with a blocker to fix first (see below).
+six bundled `.wz4` documents load** — 7,090 operators, 111 pages — confirming the
+phase-2 serialisation surgery preserved the format. A destructive-write bug found
+there is fixed (`patches/07`). Stages 3.1 (reader) and 3.2 (writer) next.
 
 ---
 
@@ -85,6 +85,7 @@ Clean build from scratch: **0 errors**. Warnings are expected and benign
 | `wz4gen` | The headless CLI. `list` works; `describe`/`convert`/`render` are phase 3 |
 | `core_connect` | Phase 2 gate: links `wz4core`, derives a graph from geometry (`ctest`) |
 | `load_*` (6 tests) | Every bundled `.wz4` document must load and be non-empty (`ctest`) |
+| `identity_*` (6 tests) | And survive a load/save/reload with every class intact (`ctest`) |
 | `simd_parity` | Verifies all 43 SSE2 intrinsics against scalar models |
 
 `simd_parity`: **70,184 checks, 0 failures** on arm64 via sse2neon.
@@ -116,10 +117,12 @@ wz4port/
     04-doc-headless-split.md   phase 2 stage 2.1
     05-wz4ops-headless.md      phase 2 stage 2.2
     06-doc-cpp-headless.md     phase 2 stage 2.4
+    07-retain-foreign-class.md phase 3 — stop writes destroying unknown ops
   compat/altona_missing.cpp    sCheckBreakKey — an upstream POSIX gap
   tools/opsmeta/               phase 2 stage 2.3 — .ops -> metadata JSON
     main.cpp  emit.cpp  json.cpp
     opsmeta.hpp  json.hpp
+  tools/wz4gen/main.cpp        phase 3 — the headless CLI: list, identity
   tests/
     simd_parity.cpp
     headless_core.cpp          phase 2 stage 2.1 gate
@@ -134,11 +137,14 @@ wz4port/
 
 ## Upstream footprint
 
-**56 files** (`git diff --name-only 8c8f82c -- altona_wz4`). The isolation
-invariant is that `git status` on `altona_wz4/` must never show anything not
-listed in `wz4port/patches/`.
+**59 files** (`git diff --name-only 8c8f82c -- altona_wz4`, **run after
+staging** — `git diff` does not see untracked files, which is how an earlier
+count came out at 56 and missed three additions).
 
-Five categories, worth keeping distinct. Only the last three — 24 files — are
+The isolation invariant is that `git status` on `altona_wz4/` must never show
+anything not listed in `wz4port/patches/`.
+
+Five categories, worth keeping distinct. Only the last three — 27 files — are
 structural; the other 32 are inert (30 encoding-only, 2 genuine clang errors).
 
 **Code changes — 2 files, 5 lines.** Both genuine C++ errors under clang, not
@@ -193,6 +199,15 @@ were extracted out of the gui library; two genuine clang errors fixed.
  M gui/color.cpp         storage moved out, member bound to it
  A gui/palette.hpp       ) the extracted swatch storage —
  A gui/palette.cpp       ) document data, not gui state
+```
+
+**Class identity on write — 2 files.** `patches/07`. `wOp` retains the original
+class and type name when it substitutes `UnknownOp`, and writes those back, so a
+build that does not know every module cannot damage a document.
+
+```
+ M wz4lib/doc_core.hpp   ForeignClass / ForeignType
+ M wz4lib/doc.cpp        set on substitution, used on write, copied by CopyFrom
 ```
 
 **Encoding only — 30 files, 72 characters.** Latin-1 → UTF-8, verified
@@ -575,22 +590,41 @@ of its inputs is an `UnknownOp`. Residual across all six: **15 connection errors
 and 1 unexplained**, every one a property of the documents (dangling `Load`
 names, six duplicate store names in `screens4/test.wz4`).
 
-### Blocker to fix before 3.2/3.4 can claim a round trip
+### Done: destructive-write fix — `patches/07`
 
-`wOp::Serialize_` substitutes `UnknownOp` on read (`doc.cpp:1854-1863`) and on
-write emits `classname = Class->Name` (`doc.cpp:1867`) — **the substituted
-name**. A `.wz4` → `.wz4t` → `.wz4` round trip therefore destroys the identity of
-every unregistered operator, and the §4.4 round-trip guarantee is unachievable
-as the code stands for all six documents.
+`wOp::Serialize_` substituted `UnknownOp` on read and wrote **that** name back,
+so any build not knowing every module silently damaged the document. Since
+phase 3 exists to write documents and all six bundled files contain unregistered
+classes, every conversion would have been destructive.
 
-Preferred fix: have `wOp` retain the original class and type name and write those
-back. Two `wDocName` fields and three lines in `Serialize_`. Decide and record at
-the start of 3.4.
+`wOp` now retains `ForeignClass`/`ForeignType` and writes those back.
+`wz4gen identity` verifies it and is a `ctest` case for all six documents —
+4,899 operators and 221 distinct class identities preserved on `example.wz4`,
+207 of them classes this build cannot load. Independently confirmed by reading
+the *resaved* file back through `wz4gen list`.
 
-A related consequence, already biting: because the original name is not
-retained, **the unknown classes cannot be counted by name**, so "how much texture
-content is actually reachable" cannot be measured until phase 4 registers
-`wz3_bitmap`.
+**Guarantee is precise: identity and geometry survive a load/save; parameter
+content of unregistered operators does not.** The reader discards their words,
+strings, links and array data in four places because `UnknownOp` declares no
+storage, and carrying that through is deliberately not done — it would be
+fidelity for render-graph, material and effect operators that are out of scope.
+
+Two corrections to what I wrote at the end of the last stage, both erring
+towards alarm:
+
+- "Two fields and three lines" understated it — I had looked only at the class
+  name, not at the four other things the reader skips.
+- "The §4.4 guarantee is not achievable" **misread this project's own phase
+  plan**: the 3.4 gate already says "limited to the subgraphs whose classes we
+  have registered". Re-read the gate before declaring it unmeetable.
+
+### Reachability risk: measured and retired
+
+Retaining the class name made the question answerable. Across the six documents,
+**817 `GenBitmap` operators** become reachable once phase 4 registers
+`wz3_bitmap`, and 1,424 `Wz4Mesh` for phase 6. In `example.wz4`: `Wz4Mesh` 1,424,
+`Wz4Render` 1,299 (out of scope), **`GenBitmap` 624**, materials 779 (out of
+scope). A real corpus, not a token one.
 
 ### Still to use from phase 2
 

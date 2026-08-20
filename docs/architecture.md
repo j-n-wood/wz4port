@@ -108,6 +108,7 @@ Enforced by the build — breaking these fails compilation and names the file:
 | The operator runtime links and runs with no GUI | `core_connect` (`ctest`), against `wz4core` built with the poison |
 | Connection-from-geometry behaves as documented | `core_connect`'s 14 checks against `01-existing-model.md` §2.2 |
 | The `.wz4` document format still reads | `load_*` — all six bundled documents, non-empty, via `ctest` |
+| A load/save by this build does not damage a document | `identity_*` — class identity tally preserved, all six documents |
 
 Enforced only by discipline — nothing catches a regression:
 
@@ -644,31 +645,42 @@ What was left was a five-node grammar — binary, unary, int, symbol, `input[n]`
 part was never the grammar; it was the 82 conditionals in the two gate modules alone, which
 is why getting the five nodes right matters.
 
-### A26 · `UnknownOp` substitution is lossy, and that breaks the round trip — standing problem
+### A26 · A degradation path must record what it degraded — resolved, standing
 
-*Phase 3.3.* Altona handles an unregistered operator class by substituting
-`UnknownOp` at read time (`doc.cpp:1854-1863`). That is the right behaviour and
-it is why a document full of out-of-scope operators still loads with its texture
+*Phase 3, `patches/07`.* Altona handles an unregistered operator class by
+substituting `UnknownOp` at read time (`doc.cpp:1854-1863`). Good behaviour, and
+the reason a document full of out-of-scope operators still loads with its texture
 subgraphs intact.
 
-But the substitution is **not recorded**. On write, `Serialize_` emits
-`classname = Class->Name` (`doc.cpp:1867`) — the substituted name. So:
+But the substitution was **not recorded**, and on write `Serialize_` emitted the
+substituted name. Any build that did not know every module silently rewrote every
+unrecognised operator as `UnknownOp` and damaged the document permanently.
 
-- a `.wz4` → `.wz4t` → `.wz4` round trip **destroys** the identity of every
-  unregistered operator, which makes the guarantee in `02-target-model.md` §4.4
-  unachievable for all six bundled documents;
-- the unknown classes cannot even be **counted by name**, so "how much texture
-  content is reachable" is unmeasurable until the classes in question are
-  registered.
+**A graceful-degradation path that discards what it degraded is fine for a reader
+and destructive in a writer.** Phase 3 is the first stage that writes, which is
+why this surfaced now and not in phase 2.
 
-Two ways out, to be decided at the start of 3.4: scope the round-trip gate to
-documents with no unknown classes (there are none), or have `wOp` retain the
-original class and type name and write those back — two `wDocName` fields and
-three lines. The second is preferred and is the smaller change.
+Fixed by retaining `wOp::ForeignClass`/`ForeignType` and writing those back.
+The guarantee is precise: **identity and geometry survive; parameter content of
+unregistered operators does not.** The reader discards their parameter words,
+strings, link names and array data in four separate places, because `UnknownOp`
+declares no storage — and carrying those through is deliberately not done, being
+fidelity for render-graph, material and effect operators this port does not
+support.
 
-Worth noting as a general shape: **a graceful-degradation path that discards
-what it degraded is fine for a reader and fatal for a writer.** Phase 3 is the
-first stage that writes.
+Two things this cost me, both recorded because the error direction matters:
+
+- I first sized it as "two fields and three lines", having looked only at the
+  class name and not at what else the reader skips.
+- I first called the §4.4 round-trip guarantee "not achievable", which was a
+  **misreading of my own phase plan** — the 3.4 gate already scoped it to "the
+  subgraphs whose classes we have registered". Re-read the gate before declaring
+  it unmeetable.
+
+The immediate payoff was unrelated to writing: retaining the name made
+"which modules would I have to register to load this?" answerable, which is how
+the phase-3 reachability risk got measured and retired (817 `GenBitmap`
+operators reachable across the six documents).
 
 ### A27 · Classify errors by cause, not by message — standing
 

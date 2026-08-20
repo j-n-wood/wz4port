@@ -327,6 +327,15 @@ public:
   wDocName Name;
   sBool Bypass;                   // bypass is only allowed for stack ops
   wClass *Class;
+
+  // If this operator's class was not registered when the document was read,
+  // Class is the UnknownOp placeholder and these hold what the file actually
+  // said. Empty otherwise. Serialize_ writes these back rather than
+  // "UnknownOp", so a document survives a load/save by a build that does not
+  // know every module. NOT serialised themselves, and note that the
+  // placeholder's PARAMETERS are still lost: see wz4port/patches/07.
+  wDocName ForeignClass;
+  wDocName ForeignType;
   class wPage *Page;              // backlink to page, updated while connecting
   sBool CycleCheck;
   sBool CheckedByBuild;           // set by build when it has performed all checks in this op. also used to calc --depend

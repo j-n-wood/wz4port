@@ -232,6 +232,50 @@ static void ListDocument(const sChar *filename)
           op->Class ? op->Class->Name : L"?",op->CalcErrorString);
   }
 
+  // What the unregistered operators actually were. wOp::ForeignClass retains
+  // the name the file gave, so this says exactly which modules would have to be
+  // registered — which is the useful input to planning phase 4 and 6.
+
+  struct Foreign { wDocName Class; wDocName Type; sInt Count; };
+  sArray<Foreign> foreign;
+
+  sFORALL(Doc->AllOps,op)
+  {
+    if(op->ForeignClass.IsEmpty())
+      continue;
+    Foreign *f = 0;
+    Foreign *scan;
+    sFORALL(foreign,scan)
+      if(scan->Class==op->ForeignClass && scan->Type==op->ForeignType)
+        f = scan;
+    if(f)
+    {
+      f->Count++;
+    }
+    else
+    {
+      f = foreign.AddMany(1);
+      f->Class = op->ForeignClass;
+      f->Type = op->ForeignType;
+      f->Count = 1;
+    }
+  }
+
+  sSortDown(foreign,&Foreign::Count);
+
+  sPrintF(L"\n  %d distinct unregistered class(es)",foreign.GetCount());
+  if(sGetShellSwitch(L"unknown"))
+  {
+    sPrintF(L":\n");
+    Foreign *f;
+    sFORALL(foreign,f)
+      sPrintF(L"    %5d  %-28s %s\n",f->Count,f->Class,f->Type);
+  }
+  else
+  {
+    sPrintF(L" (-unknown to list them)\n");
+  }
+
   sPrintF(L"\n  %d store(s)",Doc->Stores.GetCount());
   if(sGetShellSwitch(L"stores"))
   {
@@ -248,6 +292,156 @@ static void ListDocument(const sChar *filename)
 
 /****************************************************************************/
 /***                                                                      ***/
+/***   identity — does a document survive a load/save by this build?       ***/
+/***                                                                      ***/
+/****************************************************************************/
+
+// Loads, saves, reloads, and checks that every operator still claims the same
+// class. This is the test for wOp::ForeignClass: without it, a build that does
+// not know every module silently rewrites unregistered operators as UnknownOp
+// and the document is permanently damaged.
+//
+// It does NOT claim parameter fidelity for unregistered operators — the reader
+// skipped their parameter words, and this port deliberately does not carry
+// those through. See wz4port/patches/07.
+
+struct Ident { wDocName Class; wDocName Type; sInt Count; };
+
+static void TallyIdents(sArray<Ident> &out)
+{
+  wOp *op;
+  sFORALL(Doc->AllOps,op)
+  {
+    // What this operator claims to be: its retained original name if it was
+    // substituted, otherwise its real class.
+    wDocName cls = op->ForeignClass.IsEmpty()
+      ? (op->Class ? wDocName(op->Class->Name) : wDocName(L"?"))
+      : op->ForeignClass;
+    wDocName typ = op->ForeignType.IsEmpty()
+      ? (op->Class && op->Class->OutputType ? wDocName(op->Class->OutputType->Symbol) : wDocName(L"?"))
+      : op->ForeignType;
+
+    Ident *f = 0;
+    Ident *scan;
+    sFORALL(out,scan)
+      if(scan->Class==cls && scan->Type==typ)
+        f = scan;
+    if(f)
+    {
+      f->Count++;
+    }
+    else
+    {
+      f = out.AddMany(1);
+      f->Class = cls;
+      f->Type = typ;
+      f->Count = 1;
+    }
+  }
+  sSortDown(out,&Ident::Count);
+}
+
+static void CheckIdentity(const sChar *filename,const sChar *tempfile)
+{
+  sPrintF(L"identity: %s\n",filename);
+
+  if(!Doc->Load(filename) || Doc->AllOps.GetCount()==0)
+  {
+    sPrintF(L"wz4gen: could not load <%s>\n",filename);
+    sSetErrorCode();
+    return;
+  }
+
+  sArray<Ident> before;
+  TallyIdents(before);
+  sInt opsbefore = Doc->AllOps.GetCount();
+  sInt pagesbefore = Doc->Pages.GetCount();
+
+  if(!Doc->Save(tempfile))
+  {
+    sPrintF(L"wz4gen: could not save <%s>\n",tempfile);
+    sSetErrorCode();
+    return;
+  }
+
+  // Fresh document. wDocument's constructor points the global Doc at itself.
+  delete Doc;
+  Doc = new wDocument;
+
+  if(!Doc->Load(tempfile) || Doc->AllOps.GetCount()==0)
+  {
+    sPrintF(L"wz4gen: could not reload <%s>\n",tempfile);
+    sSetErrorCode();
+    return;
+  }
+
+  sArray<Ident> after;
+  TallyIdents(after);
+
+  sPrintF(L"  %d -> %d operator(s), %d -> %d page(s)\n",
+    opsbefore,Doc->AllOps.GetCount(),pagesbefore,Doc->Pages.GetCount());
+  sPrintF(L"  %d -> %d distinct class identit(ies)\n",
+    before.GetCount(),after.GetCount());
+
+  sInt bad = 0;
+
+  if(opsbefore!=Doc->AllOps.GetCount())
+  {
+    sPrintF(L"  FAIL operator count changed\n");
+    bad++;
+  }
+  if(pagesbefore!=Doc->Pages.GetCount())
+  {
+    sPrintF(L"  FAIL page count changed\n");
+    bad++;
+  }
+
+  Ident *b;
+  sFORALL(before,b)
+  {
+    Ident *a = 0;
+    Ident *scan;
+    sFORALL(after,scan)
+      if(scan->Class==b->Class && scan->Type==b->Type)
+        a = scan;
+    if(!a)
+    {
+      sPrintF(L"  FAIL %s.%s (%d) vanished\n",b->Type,b->Class,b->Count);
+      bad++;
+    }
+    else if(a->Count!=b->Count)
+    {
+      sPrintF(L"  FAIL %s.%s %d -> %d\n",b->Type,b->Class,b->Count,a->Count);
+      bad++;
+    }
+  }
+  sFORALL(after,b)
+  {
+    Ident *scan;
+    sBool found = 0;
+    sFORALL(before,scan)
+      if(scan->Class==b->Class && scan->Type==b->Type)
+        found = 1;
+    if(!found)
+    {
+      sPrintF(L"  FAIL %s.%s (%d) appeared\n",b->Type,b->Class,b->Count);
+      bad++;
+    }
+  }
+
+  if(bad)
+  {
+    sPrintF(L"  %d problem(s)\n",bad);
+    sSetErrorCode();
+  }
+  else
+  {
+    sPrintF(L"  ok: every operator kept its class through a save/reload\n");
+  }
+}
+
+/****************************************************************************/
+/***                                                                      ***/
 /***   main                                                               ***/
 /***                                                                      ***/
 /****************************************************************************/
@@ -256,12 +450,17 @@ static void Usage()
 {
   sPrint(L"wz4gen — headless Werkkzeug4\n");
   sPrint(L"\n");
-  sPrint(L"usage: wz4gen list [document.wz4] [-pages] [-stores]\n");
+  sPrint(L"usage: wz4gen list [document.wz4] [-pages] [-stores] [-unknown] [-errors]\n");
+  sPrint(L"       wz4gen identity <document.wz4> <scratch.wz4>\n");
   sPrint(L"\n");
   sPrint(L"  list          registered operators, by output type\n");
   sPrint(L"  list <doc>    the operators in a document, with a class tally\n");
   sPrint(L"    -pages      also list every page\n");
   sPrint(L"    -stores     also list every store name\n");
+  sPrint(L"    -unknown    also list the unregistered classes, by name\n");
+  sPrint(L"    -errors     also list connection and calc errors\n");
+  sPrint(L"  identity      load, save, reload, and check every operator kept\n");
+  sPrint(L"                its class — including ones this build cannot load\n");
   sPrint(L"\n");
   sPrint(L"Switches go after the filename: Altona's shell parser treats the\n");
   sPrint(L"token after a -switch as that switch's first parameter.\n");
@@ -288,6 +487,20 @@ void sMain()
       ListDocument(file);
     else
       ListRegistered();
+  }
+  else if(sCmpString(command,L"identity")==0)
+  {
+    const sChar *file = sGetShellParameter(0,1);
+    const sChar *temp = sGetShellParameter(0,2);
+    if(!file || !temp)
+    {
+      sPrint(L"usage: wz4gen identity <document.wz4> <scratch.wz4>\n");
+      sSetErrorCode();
+    }
+    else
+    {
+      CheckIdentity(file,temp);
+    }
   }
   else
   {

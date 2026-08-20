@@ -111,26 +111,52 @@ remains across all six documents: **15 connection errors and 1 unexplained error
 them are properties of the documents themselves — dangling `Load` link names, and six duplicate
 store names in `screens4/test.wz4`. Nothing attributable to the port.
 
-#### Blocker found for the 3.4 round-trip gate
+#### Destructive-write problem found, and fixed — `patches/07`
 
-`wOp::Serialize_` substitutes `UnknownOp` for an unregistered class on read
-(`doc.cpp:1854-1863`) and then, on write, emits `classname = Class->Name`
-(`doc.cpp:1867`) — **the substituted name**. So a `.wz4` → `.wz4t` → `.wz4` round trip would
-write back `UnknownOp` and destroy the original operator's identity permanently.
+`wOp::Serialize_` substituted `UnknownOp` for an unregistered class on read
+(`doc.cpp:1854-1863`) and then, on write, emitted `classname = Class->Name` — **the
+substituted name**. Any build that did not know every module silently rewrote every
+unrecognised operator as `UnknownOp` and damaged the document for good. Since phase 3 exists
+to *write* documents, and all six bundled files contain unregistered classes, every
+conversion would have been destructive.
 
-The round-trip guarantee in `02-target-model.md` §4.4 is therefore **not achievable as the
-code stands**, for any document containing an unregistered class — which is all six.
+Fixed by having `wOp` retain `ForeignClass`/`ForeignType` and write those back.
 
-The risk table below already anticipated needing to "carry raw parameter words through
-unmodelled operators unchanged"; this is the concrete mechanism. Two options for 3.4:
+**Two corrections to how this was first written up**, both worth recording because the first
+version was wrong in the direction of alarm:
 
-1. **Scope the gate** to documents whose classes are all registered — but there are none, and
-   there will not be until phase 4 at the earliest.
-2. **Have `wOp` retain the original class and type name** when it substitutes, and write those
-   back instead of `UnknownOp`'s. Two `wDocName` fields and three lines in `Serialize_`.
+- *"Two `wDocName` fields and three lines"* understated it. The reader discards more than the
+  name: parameter words (`:1881`), strings (`:1898`), link names (`:1913`) and array data
+  (`:1963`) are all dropped, because `UnknownOp` declares no storage. Retaining those too
+  would mean replaying a raw record per foreign operator, and that is deliberately not done —
+  it is fidelity for render-graph, material and effect operators this port does not support.
+- *"The §4.4 guarantee is not achievable"* misread this document. The 3.4 gate already says
+  **"limited to the subgraphs whose classes we have registered."** The guarantee was never
+  scoped to unregistered operators, so there was no gate to renegotiate.
 
-Option 2 is preferred and is the right size. Decide and record at the start of 3.4; it must
-land before the writer can claim a round trip.
+The precise guarantee now established: **identity and geometry survive a load/save; parameter
+content of unregistered operators does not.** A resaved document is not byte-identical, and the
+difference is visible — reloading a resaved `example.wz4` reports 4,481 unknown-class reads
+against the original's 4,687, the gap being default-operator instances that also are not
+written.
+
+`wz4gen identity` tests exactly this and is a `ctest` case for all six documents: 4,899
+operators and 221 distinct class identities preserved on `example.wz4`, 207 of them classes
+this build cannot load.
+
+#### The reachability risk, now measurable
+
+Retaining the name made the second risk below answerable, and it resolves favourably. Across
+the six documents, **817 `GenBitmap` operators** become reachable once phase 4 registers
+`wz3_bitmap`, and 1,424 `Wz4Mesh` for phase 6. `example.wz4` alone:
+
+| Output type | Operators | Status |
+|---|---:|---|
+| `Wz4Mesh` | 1,424 | phase 6 |
+| `Wz4Render` | 1,299 | out of scope |
+| `GenBitmap` | 624 | **phase 4** |
+| `ModShader` / `ModMtrl` / `ModShaderSampler` / `SimpleMtrl` | 779 | out of scope |
+| `Wz4Particles`, `Sph*`, `Wz4BSP`, … | ~250 | out of scope |
 
 ### 3.1 — Reader
 
@@ -176,6 +202,6 @@ to the subgraphs whose classes we have registered.
 
 | Risk | Assessment |
 |---|---|
-| ~~Round-trip is lossy for parameters we do not model~~ | **Confirmed and worse than stated**, in 3.3. It is not just parameters: the *class identity* is lost, because `Serialize_` writes back the substituted `UnknownOp` name. Must be fixed before 3.4's gate — see the two options above |
-| Bundled documents depend on out-of-scope classes so heavily that little texture content is reachable | **Confirmed as a real concern.** With only `basic` registered, 91% of `example.wz4` is `UnknownOp`. How much becomes reachable once `wz3_bitmap` is registered is not yet known — it cannot be measured until phase 4 links the generator implementation, and `wOp` does not retain the original class name, so the unknown classes cannot even be counted by name today. Assume the per-operator suite in phase 4 carries the correctness load, and treat document round-tripping as a bonus |
+| Round-trip is lossy for parameters we do not model | **Confirmed, and accepted.** Identity and geometry now survive (`patches/07`); parameter content of unregistered operators does not, deliberately. The gate is scoped to registered subgraphs, so this is within its terms |
+| ~~Bundled documents depend on out-of-scope classes so heavily that little texture content is reachable~~ | **Retired — measured, and it is fine.** 817 `GenBitmap` operators across the six documents become reachable when phase 4 registers `wz3_bitmap`; 624 in `example.wz4` alone. 1,424 `Wz4Mesh` for phase 6. The per-operator suite still carries the correctness load, but the documents are a real corpus, not a token one |
 | Sugar expansion produces layouts that collide | Low. `CheckDest` validates on construction and the error names the offending operator |
