@@ -1097,6 +1097,65 @@ and A43 (assert the pipeline's precision, not the artefact's): **assert the thin
 you need, never a proxy for it.** A found path is a proxy. An exit code is a
 proxy. A lower-precision artefact is a proxy.
 
+### A46 · Altona macro-defines `new`, so third-party headers need a shield — standing
+
+*Phase 5.1.* `base/types.hpp:1763` ends with
+
+```cpp
+#define new sDEFINE_NEW
+```
+
+a 2005 memory-tracking idiom over a keyword. Any header included afterwards that
+*declares* an operator new is mangled beyond repair. `imgui.h` declares one, for
+placement new, and the result was four cascading parse errors inside ImGui saying
+things like "function cannot return function type" — none of which points at the
+macro.
+
+Fixed in `wz4port/editor/imgui_wz4.hpp`, which wraps the ImGui includes in
+`#pragma push_macro("new")` / `#undef new` / `pop_macro`. All editor code includes
+ImGui through it and never directly.
+
+Include order alone would also work — ImGui before Altona in a single translation
+unit — and that was the first instinct. Rejected because it is **unenforceable**:
+the rule would be "ImGui first, in every editor source file, forever", and the
+punishment for forgetting is a wall of errors in third-party code. A wrapper
+states the hazard once, in the place that owns it.
+
+Generalisable to this codebase: it macro-defines a keyword, so **any** new
+third-party header is a candidate for the same treatment. Check for macro
+collisions before blaming the library.
+
+### A47 · A process-global allocator cannot outlive-mismatch its process — standing
+
+*Phase 5.1.* Altona replaces the global `operator new` and `delete`
+(`base/types.hpp:1713`). On macOS that interposes for **every dylib in the
+process**, and Altona unregisters its memory handlers as it shuts down after
+`sMain` returns. Static destructors run after that, free through the still-live
+interposed `delete`, and `sFreeMem_` finds no handler owning the pointer and calls
+`sFatal` (`base/types.cpp:4776`).
+
+Result: four `FATAL ERROR: pointer ... seems not to belong to any sMemoryHandler`
+lines on every clean, successful exit of the editor. Nothing is corrupted —
+Altona detects the foreign pointer and refuses it — but a tool must not print
+FATAL ERROR when it succeeded.
+
+No earlier tool in this port hit it, because none linked a dylib that owns C++
+objects. The GUI frameworks are the first.
+
+The editor now ends the process at the bottom of `sMain` instead of unwinding
+through teardown. The cost is that this one binary gets no leak report from
+Altona at exit; every other tool still does, which is where that check earns its
+keep anyway.
+
+Two things worth carrying forward:
+
+- The ordering is **not ours to fix**. It is a property of interposing an
+  allocator whose lifetime is shorter than the process, and the fix is to stop
+  the process while the allocator is still alive.
+- The message went to stdout **with a zero exit code**, so every check that
+  looked only at the status passed. `editor_shot.cmake` now greps for
+  `FATAL ERROR` explicitly. Same shape as A39: the status is a proxy.
+
 ---
 
 ## Part 3 — where inference lost to measurement

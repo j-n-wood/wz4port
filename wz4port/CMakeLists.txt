@@ -531,6 +531,93 @@ target_compile_definitions(wz4gen PRIVATE
   "WZ4GEN_META_DIR=L\"${WZ4_META_DIR}\""
 )
 
+#############################################################################
+##  wz4ed — the editor (phase 5)                                           ##
+#############################################################################
+
+# Dear ImGui + GLFW + OpenGL 3.3 core, both vendored and pinned — see
+# third_party/VENDORED.md for the versions and why GLFW is built from source
+# while FreeType is a system package.
+#
+# The editor brings its own window and uses wz4lib purely as a headless library.
+# Nothing of Altona's GUI is compiled, which is what phases 2 and 3 were for.
+
+set(WZ4_IMGUI_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui")
+set(WZ4_GLFW_DIR  "${CMAKE_CURRENT_SOURCE_DIR}/third_party/glfw")
+
+if(EXISTS "${WZ4_IMGUI_DIR}/imgui.cpp" AND EXISTS "${WZ4_GLFW_DIR}/CMakeLists.txt")
+
+  find_package(OpenGL)
+
+  if(NOT OPENGL_FOUND)
+    message(STATUS "OpenGL not found: the editor is not built")
+  else()
+    # GLFW's own options, set before add_subdirectory so its examples, tests and
+    # docs directories are never referenced — they are not vendored.
+    set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(GLFW_BUILD_TESTS    OFF CACHE BOOL "" FORCE)
+    set(GLFW_BUILD_DOCS     OFF CACHE BOOL "" FORCE)
+    set(GLFW_INSTALL        OFF CACHE BOOL "" FORCE)
+    add_subdirectory("${WZ4_GLFW_DIR}" "${CMAKE_BINARY_DIR}/glfw" EXCLUDE_FROM_ALL)
+
+    add_library(imgui STATIC
+      "${WZ4_IMGUI_DIR}/imgui.cpp"
+      "${WZ4_IMGUI_DIR}/imgui_draw.cpp"
+      "${WZ4_IMGUI_DIR}/imgui_tables.cpp"
+      "${WZ4_IMGUI_DIR}/imgui_widgets.cpp"
+      "${WZ4_IMGUI_DIR}/imgui_demo.cpp"
+      "${WZ4_IMGUI_DIR}/backends/imgui_impl_glfw.cpp"
+      "${WZ4_IMGUI_DIR}/backends/imgui_impl_opengl3.cpp"
+    )
+    target_include_directories(imgui PUBLIC
+      "${WZ4_IMGUI_DIR}"
+      "${WZ4_IMGUI_DIR}/backends"
+    )
+    target_link_libraries(imgui PUBLIC glfw ${OPENGL_LIBRARIES})
+
+    # ImGui is third-party C++ and does NOT get altona_flags. In particular it
+    # must not be built with -fshort-wchar: it is compiled against the system
+    # headers and its own wchar_t use has to match the platform's, not Altona's.
+    # That is also why every string crossing between the two goes through an
+    # explicit converter in editor/main.cpp rather than being assigned across.
+    target_compile_options(imgui PRIVATE -Wno-unused-function)
+
+    add_executable(wz4ed "${CMAKE_CURRENT_SOURCE_DIR}/editor/main.cpp")
+    target_link_libraries(wz4ed PRIVATE wz4t wz4tex imgui)
+    target_compile_options(wz4ed PRIVATE
+      "SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/tests/gui_poison.h"
+    )
+    target_compile_definitions(wz4ed PRIVATE
+      "WZ4ED_META_DIR=L\"${WZ4_META_DIR}\""
+    )
+    message(STATUS "editor: wz4ed will be built")
+
+    # GUI tests need a graphical session. On by default because the common case
+    # is a developer at a desk; turn off for ssh or headless CI.
+    option(WZ4_GUI_TESTS "Run tests that open a window" ON)
+
+    if(WZ4_GUI_TESTS)
+      add_test(NAME wz4ed_shell COMMAND "${CMAKE_COMMAND}"
+        "-DWZ4ED=$<TARGET_FILE:wz4ed>"
+        "-DDOC=${CMAKE_CURRENT_SOURCE_DIR}/tests/tex/ops_gen.wz4t"
+        "-DMETA=${WZ4_META_DIR}"
+        "-DSELECT=bricks"
+        "-DOUT=${CMAKE_BINARY_DIR}/editor-shot/shell.png"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/editor_shot.cmake")
+      set_tests_properties(wz4ed_shell PROPERTIES DEPENDS opsmeta_gate)
+
+      # One window at a time: GLFW and the platform frameworks are not built for
+      # several of these racing each other, and a flaky GUI test is worse than
+      # none.
+      set_tests_properties(wz4ed_shell PROPERTIES RUN_SERIAL TRUE)
+    endif()
+  endif()
+
+else()
+  message(STATUS "third_party/imgui or third_party/glfw missing:"
+                 " the editor is not built")
+endif()
+
 # Every .wz4 document in the tree must load. This is the cheapest available
 # check that the serialisation surgery of phase 2 preserved the format —
 # stages 2.1 and 2.4 both had to work to keep wEditOptions and wDocOptions

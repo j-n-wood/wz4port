@@ -4,15 +4,18 @@ Read this first when picking the project up cold. It records where things
 stand, what has been decided and why, and what would otherwise have to be
 rediscovered the hard way.
 
-**Last updated:** end of phase 4. **Phase 4 is COMPLETE.**
-**Status:** Phases 1–4 complete and verified. **All 34 `GenBitmap` operators run
-on macOS arm64**, with 93 reviewed test cases and 90 byte-exact goldens that are
-bit-identical between the NEON and SSE2 builds. `ctest` is **125 tests** on
-arm64, **122** on x86-64 (the three `Text` cases need FreeType, which does not
-link for that slice — correct graceful degradation).
+**Last updated:** phase 5, stage 5.1.
+**Status:** Phases 1–4 complete and verified; **phase 5 has started and there is
+a window on screen.** All 34 `GenBitmap` operators run on macOS arm64, with 93
+reviewed test cases and 90 byte-exact goldens that are bit-identical between the
+NEON and SSE2 builds. `ctest` is **126 tests** on arm64.
 
-Priority 1 — procedural texture generation — is done. Next is **phase 5**, a
-Dear ImGui editor on top of it, or **phase 6**, geometry.
+**`wz4ed` is the editor.** Stage 5.1 gives it a window, a menu bar, an operator
+list with derived input counts, and a metadata-driven inspector. Run it as
+`wz4ed <doc.wz4t>`; add `-shot <file.png>` to render two frames, screenshot and
+exit, which is how a GUI gets a regression test here.
+
+Next: **5.2**, the grid canvas.
 
 **SSE2-vs-NEON parity is real and was runnable here**, contrary to the plan's
 assumption that it needed a Linux box: `sh wz4port/tests/tex/parity_x86_64.sh`
@@ -80,7 +83,7 @@ about the build.
 | 2 — Headless op runtime + metadata | **Done**, phase gate passed |
 | 3 — Text graph format + CLI | **Done**, phase gate passed |
 | 4 — Texture library + tests | **Done**, phase gate passed. All 34 operators run |
-| 5 — Texture GUI | Not started |
+| 5 — Texture GUI | **In progress.** 5.1 done, gate passed |
 | 6 — Geometry | Not started |
 | 7 — Animated geometry | Not started |
 
@@ -124,6 +127,9 @@ Clean build from scratch: **0 errors**. Warnings are expected and benign
 | `identity_*` (6 tests) | And survive a load/save/reload with every class intact (`ctest`) |
 | `checkmeta` | The metadata reads back consistently: 370 classes, 2,728 params (`ctest`) |
 | `simd_parity` | Verifies all 43 SSE2 intrinsics against scalar models |
+| **`wz4ed`** | **The editor** (phase 5). ImGui + GLFW + GL 3.3, vendored and pinned |
+| `imgui` | Vendored ImGui v1.92.9b, built without `altona_flags` — see below |
+| `wz4ed_shell` | Stage 5.1 gate: the editor starts, draws and screenshots (`ctest`) |
 
 `simd_parity`: **70,184 checks, 0 failures** on arm64 via sse2neon.
 
@@ -192,7 +198,13 @@ wz4port/
     headless_core.cpp          phase 2 stage 2.1 gate
     core_connect.cpp           phase 2 gate — links wz4core, derives a graph
     gui_poison.h               tripwire, force-included into every headless target
+  editor/main.cpp              phase 5 — wz4ed: window, panes, menus, panels
+  editor/imgui_wz4.hpp         include ImGui through this, never directly (A46)
+  tests/editor_shot.cmake      run the editor, screenshot it, check the PNG
   third_party/sse2neon.h       pinned v1.9.1, MIT, 11,222 lines
+  third_party/imgui/           pinned v1.92.9b, MIT — core + glfw/gl3 backends
+  third_party/glfw/            pinned 3.5.1, zlib — src/include/CMake only
+  third_party/VENDORED.md      versions, checksums, and what was pruned
 .gitignore                     new, repo root
 .claude/settings.local.json    gitignored tool allowlist
 ```
