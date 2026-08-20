@@ -107,6 +107,7 @@ Enforced by the build — breaking these fails compilation and names the file:
 | Every conditional symbol resolves | `opsmeta` errors rather than emitting `offset: -1` |
 | The operator runtime links and runs with no GUI | `core_connect` (`ctest`), against `wz4core` built with the poison |
 | Connection-from-geometry behaves as documented | `core_connect`'s 14 checks against `01-existing-model.md` §2.2 |
+| The `.wz4` document format still reads | `load_*` — all six bundled documents, non-empty, via `ctest` |
 
 Enforced only by discipline — nothing catches a regression:
 
@@ -642,6 +643,55 @@ downstream. Reading the parser closed both:
 What was left was a five-node grammar — binary, unary, int, symbol, `input[n]`. The awkward
 part was never the grammar; it was the 82 conditionals in the two gate modules alone, which
 is why getting the five nodes right matters.
+
+### A26 · `UnknownOp` substitution is lossy, and that breaks the round trip — standing problem
+
+*Phase 3.3.* Altona handles an unregistered operator class by substituting
+`UnknownOp` at read time (`doc.cpp:1854-1863`). That is the right behaviour and
+it is why a document full of out-of-scope operators still loads with its texture
+subgraphs intact.
+
+But the substitution is **not recorded**. On write, `Serialize_` emits
+`classname = Class->Name` (`doc.cpp:1867`) — the substituted name. So:
+
+- a `.wz4` → `.wz4t` → `.wz4` round trip **destroys** the identity of every
+  unregistered operator, which makes the guarantee in `02-target-model.md` §4.4
+  unachievable for all six bundled documents;
+- the unknown classes cannot even be **counted by name**, so "how much texture
+  content is reachable" is unmeasurable until the classes in question are
+  registered.
+
+Two ways out, to be decided at the start of 3.4: scope the round-trip gate to
+documents with no unknown classes (there are none), or have `wOp` retain the
+original class and type name and write those back — two `wDocName` fields and
+three lines. The second is preferred and is the smaller change.
+
+Worth noting as a general shape: **a graceful-degradation path that discards
+what it degraded is fine for a reader and fatal for a writer.** Phase 3 is the
+first stage that writes.
+
+### A27 · Classify errors by cause, not by message — standing
+
+*Phase 3.3.* Loading `example.wz4` with only `basic` registered produces 638
+"errors". Reported raw, that number says the port is broken. It is not: two
+distinct messages share one root cause.
+
+- `UnknownOp` is declared with **zero inputs** (`basic_ops.ops:239`), so any
+  operator it replaced still sits in geometry feeding it — *"too many inputs"*,
+  637 times.
+- `UnknownOp`'s output type is `AnyType`, which satisfies no typed input, so a
+  **real** consumer above it fails — *"input has wrong type"*, once per
+  `MakeTexture(BitmapBase)` fed by an unregistered generator.
+
+`wz4gen` therefore classifies by cause: an operator is placeholder fallout if it
+**or any of its inputs** is an `UnknownOp`. What is left is 15 connection errors
+and 1 unexplained across 7,090 operators, and all of those are properties of the
+documents — dangling `Load` names and duplicate store names in decade-old
+scratch files.
+
+The first classification attempt keyed on the message and mislabelled the
+`MakeTexture` failures as "the ones that matter". Diagnostics that a human will
+act on need the residual to be genuinely residual, or the number gets ignored.
 
 ---
 

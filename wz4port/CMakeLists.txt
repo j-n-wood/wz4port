@@ -398,6 +398,42 @@ target_compile_options(headless_core_gate PRIVATE
 )
 
 #############################################################################
+##  wz4gen — headless CLI (phase 3)                                        ##
+#############################################################################
+
+add_executable(wz4gen "${CMAKE_CURRENT_SOURCE_DIR}/tools/wz4gen/main.cpp")
+target_link_libraries(wz4gen PRIVATE wz4core)
+target_compile_options(wz4gen PRIVATE
+  "SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/tests/gui_poison.h"
+)
+
+# Every .wz4 document in the tree must load. This is the cheapest available
+# check that the serialisation surgery of phase 2 preserved the format —
+# stages 2.1 and 2.4 both had to work to keep wEditOptions and wDocOptions
+# byte-compatible, and nothing else verifies that.
+#
+# wz4gen sets the error code on a failed load AND on a load that yields zero
+# operators, so an empty read cannot pass silently.
+#
+# The plan named five documents; there are six. screens4/test.wz4 is included
+# because it is the only one using Call/Input subroutines heavily.
+
+set(WZ4_DOCS
+  "demos/example/example.wz4"
+  "demos/the_cube/fr-062_party.wz4"
+  "demos/the_cube/fr-062_texts_kb.wz4"
+  "demos/easterparty/teaser1.wz4"
+  "demos/easterparty/teaser2.wz4"
+  "wz4/screens4/test.wz4"
+)
+
+foreach(_doc ${WZ4_DOCS})
+  get_filename_component(_name "${_doc}" NAME_WE)
+  add_test(NAME load_${_name}
+    COMMAND wz4gen list "${FR_ROOT}/altona_wz4/${_doc}")
+endforeach()
+
+#############################################################################
 ##  core_connect — the phase 2 gate                                        ##
 #############################################################################
 

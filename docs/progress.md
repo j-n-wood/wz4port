@@ -4,11 +4,12 @@ Read this first when picking the project up cold. It records where things
 stand, what has been decided and why, and what would otherwise have to be
 rediscovered the hard way.
 
-**Last updated:** end of phase 2.
-**Status:** Phases 1 and 2 complete and verified. **The operator runtime now
-links and runs headless** — `core_connect` builds a document and derives the
-graph from block geometry with no GUI, no graphics API and no window system.
-Phase 3 (the `.wz4t` text format and CLI) not started.
+**Last updated:** phase 3, stage 3.3.
+**Status:** Phases 1 and 2 complete and verified. The operator runtime links and
+runs headless. **Phase 3 stage 3.3 done first (out of order, deliberately): all
+six bundled `.wz4` documents load** — 7,090 operators, 111 pages — which
+confirms the phase-2 serialisation surgery preserved the format. Stages 3.1
+(reader) and 3.2 (writer) next, with a blocker to fix first (see below).
 
 ---
 
@@ -50,7 +51,7 @@ about the build.
 | 0 — Documentation (`docs/00`–`02`) | **Done**, reviewed and approved |
 | 1 — Toolchain and portable base | **Done**, gate passed |
 | 2 — Headless op runtime + metadata | **Done**, phase gate passed |
-| 3 — Text graph format + CLI | **Next** |
+| 3 — Text graph format + CLI | **In progress.** 3.3 done (first, deliberately). 3.1/3.2 next |
 | 4 — Texture library + tests | Not started |
 | 5 — Texture GUI | Not started |
 | 6 — Geometry | Not started |
@@ -81,7 +82,9 @@ Clean build from scratch: **0 errors**. Warnings are expected and benign
 | `headless_ops_gate` | Generates and compiles both op modules `-headless`, GUI poisoned |
 | `opsmeta_gate` | Emits + validates metadata for all 33 `.ops` modules into `build/meta/` |
 | **`wz4core`** | **The operator runtime, GUI-free: doc, build, basic, script, generated basic_ops** |
+| `wz4gen` | The headless CLI. `list` works; `describe`/`convert`/`render` are phase 3 |
 | `core_connect` | Phase 2 gate: links `wz4core`, derives a graph from geometry (`ctest`) |
+| `load_*` (6 tests) | Every bundled `.wz4` document must load and be non-empty (`ctest`) |
 | `simd_parity` | Verifies all 43 SSE2 intrinsics against scalar models |
 
 `simd_parity`: **70,184 checks, 0 failures** on arm64 via sse2neon.
@@ -541,19 +544,55 @@ handler reporting through it is how Ctrl+C should interrupt a long generation.
   produced. The `basic` module's operators are almost all structural (`Nop`,
   `Group`, `Store`, `Load`), so the first real execution comes with the texture
   library in phase 4 — that is where `wExecutive::Execute` gets exercised.
-- **`.wz4` document loading is untested.** `wDocument::Load` compiles and
-  `Serialize_` is intact, including the palette and theme fields that stages 2.1
-  and 2.4 had to work to preserve. Nothing has yet opened a real `.wz4` file.
-  Worth doing early in phase 3: it is the cheapest available check that the
-  serialisation surgery preserved the format, and there are `.wz4` files in the
-  tree to try.
+- ~~`.wz4` document loading is untested.~~ **Resolved in 3.3:** all six bundled
+  documents load, 7,090 operators, and every one is a `ctest` case. The
+  serialisation surgery preserved the format.
 
 ---
 
-## Starting phase 3
+## Phase 3 — text graph format and CLI
 
 Full plan in `docs/05-phase-text-format.md`; target model in
-`02-target-model.md` §4. Two things from phase 2 feed straight into it:
+`02-target-model.md` §4.
+
+### Done: 3.3 — `.wz4` interoperation (taken out of order)
+
+The plan puts the reader first. 3.3 went first instead, because phase 2 left
+`.wz4` loading untested and stages 2.1/2.4 both had to work to keep the format
+byte-compatible — so loading a real document was the cheapest, highest-value
+check available, and doing it before building a text format on top de-risks the
+rest of the phase.
+
+**All six bundled documents load: 7,090 operators, 111 pages.** Each is now a
+`ctest` case. `wz4gen` fails on a zero-operator load as well as on an outright
+failure — `sLoadObject` can report success on a file it did not understand.
+
+Errors are classified **by cause, not by message**. Two different messages share
+one root cause: `UnknownOp` takes zero inputs, so operators it replaced report
+"too many inputs"; and its output type is `AnyType`, so real consumers above it
+report "input has wrong type". An operator is placeholder fallout if it or any
+of its inputs is an `UnknownOp`. Residual across all six: **15 connection errors
+and 1 unexplained**, every one a property of the documents (dangling `Load`
+names, six duplicate store names in `screens4/test.wz4`).
+
+### Blocker to fix before 3.2/3.4 can claim a round trip
+
+`wOp::Serialize_` substitutes `UnknownOp` on read (`doc.cpp:1854-1863`) and on
+write emits `classname = Class->Name` (`doc.cpp:1867`) — **the substituted
+name**. A `.wz4` → `.wz4t` → `.wz4` round trip therefore destroys the identity of
+every unregistered operator, and the §4.4 round-trip guarantee is unachievable
+as the code stands for all six documents.
+
+Preferred fix: have `wOp` retain the original class and type name and write those
+back. Two `wDocName` fields and three lines in `Serialize_`. Decide and record at
+the start of 3.4.
+
+A related consequence, already biting: because the original name is not
+retained, **the unknown classes cannot be counted by name**, so "how much texture
+content is actually reachable" cannot be measured until phase 4 registers
+`wz3_bitmap`.
+
+### Still to use from phase 2
 
 - **The metadata is the parameter vocabulary.** `.wz4t` needs to name parameters
   and values; `build/meta/*.json` already carries every symbol, kind, choice
