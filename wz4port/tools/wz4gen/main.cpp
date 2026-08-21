@@ -4,20 +4,26 @@
 /***                                                                      ***/
 /****************************************************************************/
 
-// Phase 3. Commands arrive stage by stage:
+// Phase 3, extended by phases 4 and 6:
 //
-//   list [doc]        registered operators, or the operators in a document
-//   describe <class>  (3.4)
+//   list [doc]         registered operators, or the operators in a document
+//   describe <class>   (3.4)
 //   convert <in> <out> (3.2)
-//   render <doc> ...  (stubbed here, completed in phase 4)
+//   identity <doc>     load/save/reload with every class intact
+//   render <doc> ...   evaluate one store; -out .png for a bitmap (4.2),
+//                      .obj for a mesh (6.2)
+//   diff <a> <b>       why two renders differ, in numbers and as an image
 //
-// Everything here runs on wz4core, which has no GUI, no graphics API and no
-// window system linked in.
+// Everything here runs on wz4core/wz4tex/wz4geo, which have no GUI, no graphics
+// API and no window system linked in.
 
 #include "wz4lib/doc_core.hpp"
 #include "wz4lib/basic_ops.hpp"
 #include "wz4frlib/wz3_bitmap_ops.hpp"
 #include "wz4frlib/wz3_bitmap_code.hpp"    // GenBitmap, for render
+#include "wz4frlib/wz4_anim_ops.hpp"
+#include "wz4frlib/wz4_mesh_ops.hpp"
+#include "wz4frlib/wz4_mesh.hpp"           // Wz4Mesh, for render
 #include "util/image.hpp"                  // sImage::SavePNG
 #include "base/system.hpp"
 #include "meta.hpp"
@@ -35,9 +41,13 @@
 // wDocument's constructor calls this; it is the seam that chooses which
 // operator libraries exist.
 //
-// Order matters: wz3_bitmap's GenBitmap derives from basic's BitmapBase, so
-// basic has to register its types first. sREGOPS runs types on pass 0 and
-// operators on pass 1, which is what makes cross-module inheritance work.
+// Order matters: wz3_bitmap's GenBitmap derives from basic's BitmapBase and
+// wz4_mesh's Wz4Mesh derives from basic's MeshBase, so basic has to register its
+// types first. sREGOPS runs types on pass 0 and operators on pass 1, which is
+// what makes cross-module inheritance work.
+//
+// The mesh modules joined in stage 6.2. wz3_bitmap comes before wz4_mesh because
+// two mesh operators take a bitmap input.
 
 void RegisterWZ4Classes()
 {
@@ -45,6 +55,8 @@ void RegisterWZ4Classes()
   {
     sREGOPS(basic,0);
     sREGOPS(wz3_bitmap,0);
+    sREGOPS(wz4_anim,0);
+    sREGOPS(wz4_mesh,0);
   }
 }
 
@@ -924,11 +936,126 @@ static void Usage()
   sPrint(L"  describe      the full parameter description of one operator\n");
   sPrint(L"  checkmeta     read all the metadata and check it hangs together\n");
   sPrint(L"  convert       .wz4 <-> .wz4t, direction from the extensions\n");
-  sPrint(L"  render        evaluate one operator, optionally to a PNG\n");
+  sPrint(L"  render        evaluate one operator; -out .png for a bitmap, .obj for a mesh\n");
   sPrint(L"  diff          compare two PNGs: how much, where, and a diff image\n");
   sPrint(L"\n");
   sPrint(L"Switches go after the filename: Altona's shell parser treats the\n");
   sPrint(L"token after a -switch as that switch's first parameter.\n");
+}
+
+/****************************************************************************/
+/***   render, mesh half — stage 6.2                                      ***/
+/****************************************************************************/
+
+// The bitmap reporter above prints "uniform or structured, plus a checksum",
+// because that is nearly all an image will tell you without being looked at. A
+// mesh tells you much more, and every line here is something a reviewer can
+// check against what the operator claims to do:
+//
+//   counts        the first thing wrong when a generator miscounts a ring
+//   arity         triangles vs quads — several operators promise one or other
+//   degenerate    a face with a repeated vertex position; upstream has a
+//                 predicate for it, and it is the classic symptom of a
+//                 tesselation off-by-one
+//   bounds        catches a missing or doubled transform, and is exact rather
+//                 than approximate for most generators
+//   checksum      over every vertex position, for 6.3 to lock
+//
+// Floats go through wFormatFloat, not Altona's %f, which renders 4.0f as
+// "4.00000023" (architecture.md A18).
+
+static void PrintVec(const sChar *label,const sVector31 &v)
+{
+  sChar x[32],y[32],z[32];
+  wFormatFloat(x,sCOUNTOF(x),v.x);
+  wFormatFloat(y,sCOUNTOF(y),v.y);
+  wFormatFloat(z,sCOUNTOF(z),v.z);
+  sPrintF(L"  %s %s %s %s\n",label,x,y,z);
+}
+
+static void ReportMesh(Wz4Mesh *mesh,const sChar *out)
+{
+  const sInt vc = mesh->Vertices.GetCount();
+  const sInt fc = mesh->Faces.GetCount();
+
+  sInt tris = 0,quads = 0,other = 0,degenerate = 0;
+  for(sInt i=0;i<fc;i++)
+  {
+    switch(mesh->Faces[i].Count)
+    {
+    case 3:  tris++;  break;
+    case 4:  quads++; break;
+    default: other++; break;
+    }
+    if(mesh->IsDegenerateFace(i))
+      degenerate++;
+  }
+
+  sPrintF(L"  %d vertices, %d faces (%d tri, %d quad",vc,fc,tris,quads);
+  if(other)
+    sPrintF(L", %d OTHER",other);
+  sPrintF(L"), %d clusters\n",mesh->Clusters.GetCount());
+
+  if(degenerate)
+    sPrintF(L"  %d degenerate face(s)\n",degenerate);
+
+  // FNV over the raw position words. Bit-exact and endian-stable enough for the
+  // one thing it is for — telling two renders on this machine apart — and 6.3
+  // is where it gets locked, after the outputs have been reviewed.
+  if(vc>0)
+  {
+    sVector31 lo = mesh->Vertices[0].Pos, hi = lo;
+    sU64 sum = 0;
+    for(sInt i=0;i<vc;i++)
+    {
+      const sVector31 &p = mesh->Vertices[i].Pos;
+      lo.x = sMin(lo.x,p.x); hi.x = sMax(hi.x,p.x);
+      lo.y = sMin(lo.y,p.y); hi.y = sMax(hi.y,p.y);
+      lo.z = sMin(lo.z,p.z); hi.z = sMax(hi.z,p.z);
+      sum = sum*1099511628211ULL ^ sU64(*(const sU32 *)&p.x);
+      sum = sum*1099511628211ULL ^ sU64(*(const sU32 *)&p.y);
+      sum = sum*1099511628211ULL ^ sU64(*(const sU32 *)&p.z);
+    }
+    PrintVec(L"min",lo);
+    PrintVec(L"max",hi);
+    sPrintF(L"  checksum %08x%08x\n",sU32(sum>>32),sU32(sum));
+  }
+
+  if(!out)
+    return;
+
+  // Dispatch on the extension, as `convert` does. OBJ is the only mesh format
+  // this build can write — SaveOBJ is upstream's, in wz4_mesh_obj.cpp.
+  if(sFindString(out,L".obj")<0)
+  {
+    sPrintF(L"wz4gen: <%s> is not a .obj — a mesh cannot be written as an image\n",out);
+    sSetErrorCode();
+    return;
+  }
+
+  if(!mesh->SaveOBJ(out))
+  {
+    sPrintF(L"wz4gen: could not write <%s>\n",out);
+    sSetErrorCode();
+    return;
+  }
+
+  // SaveOBJ returns success without checking that anything landed —
+  // sTextFileWriter swallows a failed open — so the file is read back. Same
+  // lesson as the PNG runner in 4.2, which passed on a directory that did not
+  // exist (architecture.md A39).
+  sDInt size = 0;
+  sU8 *bytes = sLoadFile(out,size);
+  if(!bytes || size<=0)
+  {
+    sPrintF(L"wz4gen: SaveOBJ reported success but <%s> is missing or empty\n",out);
+    sSetErrorCode();
+    delete[] bytes;
+    return;
+  }
+  delete[] bytes;
+
+  sPrintF(L"  wrote %s (%d bytes)\n",out,sInt(size));
 }
 
 /****************************************************************************/
@@ -1149,10 +1276,10 @@ void sMain()
   }
   else if(sCmpString(command,L"render")==0)
   {
-    // Stubbed until phase 4. Everything up to the evaluation is real, so this
-    // reports honestly how far it gets rather than pretending to be missing:
-    // the graph loads and the target operator resolves; what is absent is a
-    // texture library to evaluate and an image writer to save.
+    // Evaluates one store and reports what came out, dispatching on the result
+    // TYPE rather than on the requested output format — a GenBitmap can be
+    // written as a PNG (phase 4) and a Wz4Mesh as an OBJ (stage 6.2), and asking
+    // for the wrong one is an error rather than a silent no-op.
     const sChar *file = sGetShellParameter(0,1);
     const sChar *which = sGetShellParameter(L"op",0);
     const sChar *out = sGetShellParameter(L"out",0);
@@ -1282,6 +1409,11 @@ void sMain()
                 sPrintF(L"  wrote %s\n",out);
               }
             }
+          }
+          else if(Doc->FindType(L"Wz4Mesh") &&
+                  obj->IsType(Doc->FindType(L"Wz4Mesh")))
+          {
+            ReportMesh((Wz4Mesh *)obj,out);
           }
           else
           {

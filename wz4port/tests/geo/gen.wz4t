@@ -1,0 +1,41 @@
+wz4t 1
+
+// Stage 6.2: the smallest graph that exercises `wz4gen render` for meshes and
+// gives the OBJ writer something whose geometry is predictable by hand.
+//
+// Two independent stacks, because connections here come from geometry — an
+// operator reads whatever sits directly above it. Default operator width is 3,
+// so x=0 and x=4 cannot touch.
+//
+//   cube          6 quads, 24 vertices, spans -0.5..0.5 on every axis
+//   cube_wide     the same cube scaled 4x in x only: -2..2 by -0.5..0.5
+//   sphere        a quad grid; the poles are where a generator miscounts
+//
+// Deliberately small numbers. A 6-face mesh can be read in full in the OBJ,
+// which is what makes the first review of the writer's output possible at all.
+
+page "geo"
+
+stack at 0,0 {
+  op Wz4Mesh.Cube {
+    name = cube
+    Tesselate = 1, 1, 1
+    Scale = 1, 1, 1
+  }
+
+  // One axis only, so a swapped or dropped component is obvious in the bounds
+  // rather than hidden by symmetry.
+  op Wz4Mesh.Transform {
+    name = cube_wide
+    Scale = 4, 1, 1
+  }
+}
+
+stack at 4,0 {
+  op Wz4Mesh.Sphere {
+    name = sphere
+    Slices = 8
+    Segments = 4
+    Diameter = 1, 1, 1
+  }
+}

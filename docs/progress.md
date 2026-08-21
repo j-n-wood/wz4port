@@ -87,7 +87,34 @@ textures rather than mentioning them, so `LoadXSI` comes from
 `wz4port/compat/mesh_xsi_stub.cpp` and refuses — a shim in preference to a patch.
 The OBJ and LWO readers and the OBJ writer link, but none has been run yet.
 
-Next: **6.2** — wire `SaveOBJ` into `wz4gen render` by output extension.
+**Stage 6.2 is done too. `wz4gen render` writes OBJ; 135/135 ctest.**
+
+`wz4gen` registers the mesh modules and links `wz4geo`. The mesh branch of
+`render` dispatches on the output extension and reports counts, tri/quad arity,
+degenerate faces, bounds and a position checksum — much more than the bitmap
+branch can, because a mesh will tell you things an image will not without being
+looked at.
+
+The gate said "a valid OBJ that opens in a mesh viewer", which a test cannot do.
+The oracle used instead is upstream's own **`LoadOBJ`** — a full `sScanner`
+grammar that shares no code with `SaveOBJ` and validates every index it reads.
+Write, read back, require the geometry to survive. The `Sphere` case is the one
+that earns its place: 96 faces split **24 triangles / 72 quads**, and the split
+survives exactly. A cube is the shape most likely to round-trip by accident.
+
+`tests/mesh_obj.cpp` ends with a **negative case** — a face index one past the
+end must be rejected — because without it none of the positive assertions mean
+anything.
+
+**And a near-miss worth recording (A53).** The round-trip test took its output
+directory from `sGetShellParameter(0,1)`, copying `wz4gen`, whose positional 0 is
+its *command*. There is no command here, so the argument was silently ignored and
+every file went to the build root — and **every assertion still passed**, because
+they all used the same wrong path. Caught by looking at where the files actually
+were. Same family as the `sGetShellInt` mistake in 5.6.
+
+Next: **6.3** — a case per mesh operator, with structural assertions and golden
+OBJs.
 
 **`wz4ed` is the editor.** It has a window, a menu bar, a metadata-driven
 inspector, and the stacking canvas: blocks coloured by output type, selection,
@@ -222,7 +249,7 @@ about the build.
 | 3 — Text graph format + CLI | **Done**, phase gate passed |
 | 4 — Texture library + tests | **Done**, phase gate passed. All 34 operators run |
 | 5 — Texture GUI | **Done**, phase gate passed. `wz4ed` edits textures |
-| 6 — Geometry | **6.1 done** — `wz4geo` links, 45 of 47 operators register, a `Cube` evaluates |
+| 6 — Geometry | **6.1–6.2 done** — `wz4geo` links, 45 of 47 operators register, `wz4gen render` writes OBJ |
 | 7 — Animated geometry | Not started |
 
 ---
@@ -259,7 +286,7 @@ Clean build from scratch: **0 errors**. Warnings are expected and benign
 | `wz4t_read` | Stage 3.1b gate: a hand-written case parses and connects (`ctest`) |
 | `wz4t_round_*` (4) | Stage 3.2 gate: read→write→read preserves every word (`ctest`) |
 | `docround_*` (6) | **Phase 3 gate:** `.wz4`→`.wz4t`→`.wz4` over every document (`ctest`) |
-| `wz4gen` | The headless CLI: `list` (`-inputs`), `describe`, `checkmeta`, `convert`, `identity`, `render`, `diff` |
+| `wz4gen` | The headless CLI: `list` (`-inputs`), `describe`, `checkmeta`, `convert`, `identity`, `render` (PNG or OBJ), `diff` |
 | `core_connect` | Phase 2 gate: links `wz4core`, derives a graph from geometry (`ctest`) |
 | `load_*` (6 tests) | Every bundled `.wz4` document must load and be non-empty (`ctest`) |
 | `identity_*` (6 tests) | And survive a load/save/reload with every class intact (`ctest`) |
@@ -276,6 +303,8 @@ Clean build from scratch: **0 errors**. Warnings are expected and benign
 | `undo_page` | **Phase 5 gate:** every edit kind undoes and redoes, array rows included |
 | **`wz4geo`** | **The mesh engine** (phase 6): wz4_mesh + obj/lwo + anim + bspline + generated ops |
 | `mesh_register` | Stage 6.1 gate: 45 of 47 operators register, and a `Cube` evaluates and measures |
+| `mesh_obj` | **Stage 6.2 gate:** OBJ write→read round-trips a Cube and a Sphere, plus a reject case |
+| `mesh_render_cli` | And that `wz4gen render` reaches the writer — matched on bounds, not just counts |
 
 `simd_parity`: **70,184 checks, 0 failures** on arm64 via sse2neon.
 
@@ -361,6 +390,8 @@ wz4port/
   tests/connect_passes.cpp     stage 5.3 gate: Hide, Sort, Bypass
   tests/palette_insert.cpp     stage 5.4 gate: every class inserts for real
   tests/mesh_register.cpp      stage 6.1 gate: the registry, then a Cube measured
+  tests/mesh_obj.cpp           stage 6.2 gate: OBJ round-trip, LoadOBJ as the oracle
+  tests/geo/gen.wz4t           stage 6.2: Cube, Cube->Transform, Sphere
   third_party/sse2neon.h       pinned v1.9.1, MIT, 11,222 lines
   third_party/imgui/           pinned v1.92.9b, MIT — core + glfw/gl3 backends
   third_party/glfw/            pinned 3.5.1, zlib — src/include/CMake only

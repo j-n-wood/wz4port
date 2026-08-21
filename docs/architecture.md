@@ -1328,6 +1328,37 @@ same in every remaining `#if sPLATFORM==sPLAT_WINDOWS ... #else` in this tree:
 the `#else` arms are the unvisited half of the dump, and a compiler is the only
 thing that has ever looked at them.
 
+### A53 · A self-consistent test can pass on the wrong data entirely — standing
+
+*Phase 6.2.* `mesh_obj` took its output directory from `sGetShellParameter(0,1)`,
+copied from `wz4gen`, whose positional 0 is its **command** and whose files are
+therefore at index 1. There is no command in a test binary, so the argument was
+silently ignored, the path fell back to `.`, and every OBJ landed in the build
+root instead of `build/obj/`.
+
+**All fifteen assertions still passed.** They had to: the test wrote to
+`objpath`, read back from `objpath`, and compared the two. Nothing in it ever
+referred to where the file was *supposed* to be, so the wrong answer was
+perfectly self-consistent. It was found by listing the directory.
+
+This is a different failure from A39 ("the status is a proxy"). There the
+assertion was too weak; here the assertions were strong and *all of them were
+about the same wrong object*. The distinction matters because more assertions
+would not have helped.
+
+Two things that do help, both applied:
+
+- **Make the input non-optional.** The test now fails with a usage message if the
+  directory argument is missing, so the fallback that hid the bug is gone.
+- **Check at least one thing against an outside reference** — here, that the
+  directory ctest was told about is the directory the files are in. A test whose
+  every claim is relative to its own state can only prove internal consistency.
+
+Third instance of the Altona shell-parameter API biting: `sGetShellInt` versus
+`sGetShellParameterInt` in 5.6, the switch/filename ordering in `wz4ops`, and now
+the positional index. The API is easy to call in a way that compiles, runs, and
+means nothing.
+
 ---
 
 ## Part 3 — where inference lost to measurement

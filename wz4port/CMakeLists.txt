@@ -565,7 +565,7 @@ target_compile_options(wz4t PRIVATE
 )
 
 add_executable(wz4gen "${CMAKE_CURRENT_SOURCE_DIR}/tools/wz4gen/main.cpp")
-target_link_libraries(wz4gen PRIVATE wz4t wz4tex)
+target_link_libraries(wz4gen PRIVATE wz4t wz4geo)
 target_compile_options(wz4gen PRIVATE
   "SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/tests/gui_poison.h"
 )
@@ -1253,6 +1253,48 @@ target_compile_options(mesh_register PRIVATE
   "SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/tests/gui_poison.h"
 )
 add_test(NAME mesh_register COMMAND mesh_register)
+
+#############################################################################
+##  mesh_obj — the stage 6.2 gate                                          ##
+#############################################################################
+
+# "A valid OBJ" needs an oracle, and upstream's own parser is one: LoadOBJ
+# shares no code with SaveOBJ and validates every index it reads. The negative
+# case at the end of the test is what makes the positive ones mean anything.
+
+# SaveOBJ does not create its output directory, and sTextFileWriter swallows the
+# failed open — exactly how the 4.2 PNG runner passed on a directory that did
+# not exist (architecture.md A39). Make it here, once.
+file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/obj")
+
+add_executable(mesh_obj
+  "${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_obj.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/editor/docedit.cpp"
+)
+target_link_libraries(mesh_obj PRIVATE wz4geo)
+target_include_directories(mesh_obj PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}/editor")
+target_compile_options(mesh_obj PRIVATE
+  "SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/tests/gui_poison.h"
+)
+add_test(NAME mesh_obj COMMAND mesh_obj "${CMAKE_BINARY_DIR}/obj")
+
+# The one thing the round-trip test cannot cover: that `wz4gen render` reaches
+# the writer at all, and reports the mesh rather than falling through to its
+# "produced a Wz4Mesh" default.
+#
+# `cube_wide` rather than `cube`, and the BOUNDS are matched as well as the
+# counts. A cube scaled 4x in x only spans -2..2 by -0.5..0.5, so this fails if
+# the chain did not connect, if Transform was skipped, or if the scale landed on
+# the wrong component — none of which a face count would notice.
+add_test(NAME mesh_render_cli COMMAND wz4gen render
+  "${CMAKE_CURRENT_SOURCE_DIR}/tests/geo/gen.wz4t" -op cube_wide
+  -out "${CMAKE_BINARY_DIR}/obj/cli_cube_wide.obj"
+  -meta "${WZ4_META_DIR}")
+set_tests_properties(mesh_render_cli PROPERTIES
+  DEPENDS opsmeta_gate
+  PASS_REGULAR_EXPRESSION
+    "6 faces \\(0 tri, 6 quad\\), 1 clusters.*min -2 -0\\.5 -0\\.5.*max 2 0\\.5 0\\.5")
 
 #############################################################################
 ##  SIMD parity test                                                       ##

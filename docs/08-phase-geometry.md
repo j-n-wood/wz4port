@@ -236,11 +236,50 @@ asserts 45 of 47 operators register with `ConvertFromChaosMesh` and `SetMaterial
 then evaluates a `Cube`: 6 faces, all quads, 24 vertices, bounds exactly -0.5..0.5 on every axis.
 133/133 ctest.
 
-### 6.2 — OBJ export and `wz4gen render` for meshes
+### 6.2 — OBJ export and `wz4gen render` for meshes — **done**
 
-`wz4_mesh_obj.cpp` already exports OBJ. Wire it into `wz4gen render` by output extension.
+`wz4gen` now registers `wz4_anim` and `wz4_mesh` and links `wz4geo`. `render` grew a mesh branch
+that dispatches on the output extension, as `convert` does.
 
-**Gate:** a `Cube` operator round-trips to a valid OBJ that opens in a mesh viewer.
+What the mesh branch reports is deliberately richer than the bitmap branch's "uniform or
+structured, plus a checksum" — an image tells you almost nothing without being looked at, a mesh
+tells you a great deal:
+
+```
+cube_wide: Wz4Mesh.Transform
+  24 vertices, 6 faces (0 tri, 6 quad), 1 clusters
+  min -2 -0.5 -0.5
+  max 2 0.5 0.5
+  checksum e340d418a0000000
+  wrote obj/cli_cube_wide.obj (2306 bytes)
+```
+
+Every line is something a reviewer can check against what the operator claims: counts, arity,
+degenerate-face count (upstream has the predicate), bounds, and a position checksum for 6.3 to
+lock. Floats go through `wFormatFloat`, not Altona's `%f` (A18).
+
+**The gate said "opens in a mesh viewer", which a test cannot do.** The oracle used instead is
+upstream's own `LoadOBJ` — a full `sScanner` grammar that shares no code with `SaveOBJ` and
+validates every index against the counts it has seen. Write, read back, require the geometry to
+survive. `tests/mesh_obj.cpp`:
+
+- **Cube:** 6 quads in, 6 quads out, bounds identical, 24 vertices both sides.
+- **Sphere:** 96 faces — **24 triangles at the poles and 72 quads** — and the arity split survives
+  exactly. This is the case worth having: a cube is the shape most likely to round-trip by
+  accident, since every coordinate has the same magnitude.
+- **A negative case.** A face index one past the end — the exact off-by-one a broken 1-based
+  writer produces — must be *rejected*. Without this, none of the above means anything: a parser
+  that accepted everything would pass every positive assertion.
+
+Positions are compared with an epsilon, not bit-exactly, because `sScanner::ScanFloat` loses one
+ULP (A34) — requiring equality would be asserting something known to be false.
+
+`mesh_render_cli` covers the one thing the round-trip cannot: that `render` reaches the writer at
+all. It matches the **bounds** as well as the counts, on a `Cube → Transform` chain scaled 4x in x
+only, so it fails if the chain did not connect, if `Transform` was skipped, or if the scale landed
+on the wrong component.
+
+**Gate — met.** 135/135 ctest.
 
 ### 6.3 — Per-operator test cases
 
