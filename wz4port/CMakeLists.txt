@@ -589,6 +589,7 @@ if(EXISTS "${WZ4_IMGUI_DIR}/imgui.cpp" AND EXISTS "${WZ4_GLFW_DIR}/CMakeLists.tx
       "${CMAKE_CURRENT_SOURCE_DIR}/editor/docedit.cpp"
       "${CMAKE_CURRENT_SOURCE_DIR}/editor/params.cpp"
       "${CMAKE_CURRENT_SOURCE_DIR}/editor/preview.cpp"
+      "${CMAKE_CURRENT_SOURCE_DIR}/editor/undo.cpp"
     )
     target_link_libraries(wz4ed PRIVATE wz4t wz4tex imgui)
     target_compile_options(wz4ed PRIVATE
@@ -1146,6 +1147,32 @@ target_compile_options(params_edit PRIVATE
 )
 add_test(NAME params_edit COMMAND params_edit)
 set_tests_properties(params_edit PROPERTIES DEPENDS opsmeta_gate)
+
+#############################################################################
+##  undo_page — the stage 5.7 gate, and the phase 5 gate                   ##
+#############################################################################
+
+# Undo is snapshot-based, so the stack arithmetic is the easy part. The risk is
+# COMPLETENESS: a snapshot that silently drops parameter words, strings, link
+# names or array rows restores something that looks right and is not. Each is
+# checked separately, and array rows — the most easily lost, because they are
+# heap-allocated per row rather than living in the word block — get a full
+# insert/undo/redo cycle.
+#
+# None of it needs a window.
+
+add_executable(undo_page
+  "${CMAKE_CURRENT_SOURCE_DIR}/tests/undo_page.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/editor/undo.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/editor/docedit.cpp"
+)
+target_link_libraries(undo_page PRIVATE wz4tex)
+target_include_directories(undo_page PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}/editor")
+target_compile_options(undo_page PRIVATE
+  "SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/tests/gui_poison.h"
+)
+add_test(NAME undo_page COMMAND undo_page)
 
 # The other half of 5.3's gate: the derived graph the editor's inspector shows
 # must be the one the headless library derives. They agree by construction — both

@@ -4,15 +4,17 @@ Read this first when picking the project up cold. It records where things
 stand, what has been decided and why, and what would otherwise have to be
 rediscovered the hard way.
 
-**Last updated:** phase 5, stage 5.6.
-**Status:** Phases 1–4 complete and verified; **phase 5 is a working texture
-editor** — palette, insert, delete, move, resize, Hide, Bypass, a
-metadata-generated parameter panel, and a live preview. All 34 `GenBitmap`
-operators run on macOS arm64, with 93 reviewed test cases and 90 byte-exact
-goldens that are bit-identical between the NEON and SSE2 builds. `ctest` is
-**131 tests** on arm64.
+**Last updated:** end of phase 5. **Phase 5 is COMPLETE.**
+**Status:** Phases 1–5 complete and verified. **`wz4ed` is a working texture
+editor**: it opens a document, shows the stacking canvas, offers all 34 texture
+operators, inserts/deletes/moves/resizes them under the original's collision
+rules, edits every parameter from a panel generated entirely from metadata,
+previews the result live, and undoes all of it. `ctest` is **132 tests** on
+arm64; the 90 texture goldens remain bit-identical between the NEON and SSE2
+builds.
 
-Only **5.7, document-level undo**, remains in the phase.
+**Priorities 1 is done end to end** — generate textures, and edit them.
+Next is **phase 6, geometry**.
 
 **`wz4ed` is the editor.** It has a window, a menu bar, a metadata-driven
 inspector, and the stacking canvas: blocks coloured by output type, selection,
@@ -66,8 +68,19 @@ Zoom is upstream's exact mapping, **2^(zoom−8)** on a 0..15 clamp, read out of
 `wPaintInfo::CalcRect` (`doc.cpp:584`) rather than guessed — the `Zoom2D` field
 is documented only as "8 = normal size" and nothing else in the dump reads it.
 
-Next: **5.7**, document-level undo — the phase gate, and the one place the plan
-sets out to be *better* than the original rather than faithful to it.
+**Undo is snapshot-based, not command-based** — a deliberate departure from the
+plan. Upstream already had a whole-page serialiser (`wPage::Serialize`, written
+for the clipboard, covering words, strings, links and array rows), so there was
+nothing to reimplement. An inverse per command is a correctness surface that
+grows with every feature; a snapshot cannot be wrong about what it captured. Five
+states of history cost 2.4 KB. `architecture.md` A49.
+
+Coalescing came free: deferring the snapshot until `ImGui::IsAnyItemActive()` is
+false turns a whole drag — slider or canvas block — into one undo entry.
+
+**Copy/paste is the one thing to add next**, and it now sits on a proven
+foundation: the serialiser is known to round-trip everything, so what remains is
+rebasing onto the cursor and the all-or-nothing pre-validation.
 
 **SSE2-vs-NEON parity is real and was runnable here**, contrary to the plan's
 assumption that it needed a Linux box: `sh wz4port/tests/tex/parity_x86_64.sh`
@@ -135,7 +148,7 @@ about the build.
 | 2 — Headless op runtime + metadata | **Done**, phase gate passed |
 | 3 — Text graph format + CLI | **Done**, phase gate passed |
 | 4 — Texture library + tests | **Done**, phase gate passed. All 34 operators run |
-| 5 — Texture GUI | **In progress.** 5.1–5.6 done; only 5.7 (undo) remains |
+| 5 — Texture GUI | **Done**, phase gate passed. `wz4ed` edits textures |
 | 6 — Geometry | Not started |
 | 7 — Animated geometry | Not started |
 
@@ -187,6 +200,7 @@ Clean build from scratch: **0 errors**. Warnings are expected and benign
 | `connect_inputs` | And that `wz4gen list -inputs` agrees with the editor's inspector |
 | `palette_insert` | Stage 5.4 gate: all 67 offerable classes insert, connect and delete |
 | `params_edit` | Stage 5.5 gate: 140 parameters addressable, and edits reach the generator |
+| `undo_page` | **Phase 5 gate:** every edit kind undoes and redoes, array rows included |
 
 `simd_parity`: **70,184 checks, 0 failures** on arm64 via sse2neon.
 
@@ -261,6 +275,7 @@ wz4port/
   editor/docedit.hpp/.cpp        insert and delete, with no UI attached
   editor/params.hpp/.cpp       stage 5.5 — the panel, generated from metadata
   editor/preview.hpp/.cpp      stage 5.6 — evaluate and show the bitmap
+  editor/undo.hpp/.cpp         stage 5.7 — page snapshots, no UI attached
   editor/imgui_wz4.hpp         include ImGui through this, never directly (A46)
   tests/editor_shot.cmake      run the editor, screenshot it, check the PNG
   tests/canvas_rules.cpp       stage 5.2 gate, without a window

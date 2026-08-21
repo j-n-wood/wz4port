@@ -485,25 +485,102 @@ and the texture operators declare none. No 3D path: dispatch is on the result ob
 `GenBitmap` is the only type this pane accepts; a mesh would need the render pass that phase 6
 brings.
 
-### 5.7 — Document-level undo
+### 5.7 — Document-level undo — **done**
 
 The original has only per-operator, single-level, panel-scoped undo — no undo for insert,
 delete, move, resize or paste. We fix this.
 
-Approach: command-pattern undo stack over document mutations. Every canvas and panel edit
-becomes an undoable command. Coalesce drag operations into one entry, and parameter
-drag-edits into one entry per gesture.
+~~Approach: command-pattern undo stack over document mutations.~~ **Snapshots, not commands.**
+Coalesce drag operations into one entry, and parameter drag-edits into one entry per gesture.
 
-**Gate — phase gate.** Insert, move, resize, delete, paste and parameter edits all undo and
-redo correctly. Full editing session on a real document without losing work.
+**Gate — passed, and with it the phase gate.** `undo_page` is 43 checks with no window: insert,
+delete, move, resize, parameter words, array rows, names, `Hide`, `Bypass`, and the stack
+arithmetic including redo-branch discard. Five states of history cost 2,400 bytes.
+
+#### Why not the command pattern
+
+The plan called for an inverse per operation. That was rejected on contact with the code, because
+**upstream already has a whole-page serialiser**: `wPage::Serialize` covers the ops array, and
+through `wOp::Serialize` each operator's parameter words, strings, link names *and* array rows. It
+exists for the clipboard, so it is code that already works and is already exercised. The
+serialise-to-memory idiom was copied from `sSetClipboardObject` (`base/windows.hpp:92`) —
+`sCreateGrowMemFile`, an `sWriter`, then map the bytes out.
+
+An inverse per command is a correctness surface that grows with every editing feature and is
+wrong in exactly the cases nobody tests. A snapshot cannot be wrong about what it captured. The
+cost is memory, and at these sizes it is not a cost: a 37-operator page is a couple of KB, the
+stack is capped at 64 states, and the whole history of the test session was 2.4 KB.
+
+So the interesting risk moved from *arithmetic* to *completeness* — a snapshot that silently drops
+array rows restores something that looks right and is not. That is what `undo_page` spends most of
+its checks on, and array rows get a full insert/undo/redo cycle because they are heap-allocated
+per row rather than living in the word block.
+
+#### Two things the implementation had to get right
+
+**`ArrayNew` asserts its target is empty.** `wPage::Serialize_` reads its ops through
+`sReader::ArrayNew`, which `sVERIFY(a.GetCount()==0)` and then allocates every element itself
+(`serialize.hpp:196`) — it exists to fill a *freshly constructed* object, which is how the
+clipboard uses it. Restoring into a live page therefore has to clear `Ops` first. The assertion
+fired on the very first undo, which is the right way round: an `sVERIFY` is a better messenger
+than a page half-read over another one.
+
+**Restoring replaces every operator**, so any operator pointer held across an undo dangles. The
+header says so, the editor drops its selection, and the preview re-evaluates on a bumped revision
+rather than comparing against an address that may have been reused. The test holds indices, never
+pointers.
+
+#### Coalescing is one line, because ImGui already knows
+
+A parameter drag reports a change on every frame the mouse moves; thirty entries for one drag
+would make undo useless. So the snapshot is **deferred until `ImGui::IsAnyItemActive()` is false**
+— which coalesces a `DragFloat` gesture *and* a canvas block drag for free, since the canvas holds
+its `InvisibleButton` active for the length of the drag. No per-widget gesture tracking.
+
+Undo labels name what will be undone rather than what will be returned to, so the menu reads
+"Undo insert Perlin".
+
+#### Not done
+
+**Copy and paste**, still. It has now been deferred from 5.2, 5.4 and here, and it deserves a
+straight statement rather than a third deferral: the snapshot machinery this stage built is most
+of what paste needs — `sSetClipboardArray(ops,sSerId::wStackOp)` is upstream's own idiom and the
+serialiser is now known to round-trip everything. What is missing is the *rebasing* onto the
+cursor and the all-or-nothing pre-validation of every pasted block (`gui.cpp:5223`). It is a small
+piece of work on a known foundation, and it is the first thing to add to this editor.
 
 ---
 
-## Deliverables
+## Deliverables — all delivered
 
 - `wz4port/editor/` — application, canvas, panel, palette, preview, undo
-- `wz4port/third_party/` — ImGui, GLFW
-- A texture editor running on macOS arm64 and Linux x86-64
+- `wz4port/third_party/` — ImGui v1.92.9b, GLFW 3.5.1, both pinned
+- A texture editor running on macOS arm64, and building for x86-64
+
+**Phase 5 is complete.** `wz4ed` opens a document, shows the stacking canvas, offers all 34
+texture operators from the palette, inserts and deletes and moves and resizes them under the
+original's collision rules, edits every parameter of every operator from a panel generated
+entirely from metadata, previews the result live, and undoes all of it.
+
+`ctest` is **132 tests**. Five of them are this phase's gates and none needs a window except
+`wz4ed_shell`: `canvas_rules` (30), `connect_passes` (27), `palette_insert` (22), `params_edit`
+(18), `undo_page` (43).
+
+### What is deliberately absent, collected
+
+Tree pages, the store browser, custom editors, the wiki, presets, autosave, handles/gizmos and
+the embedded scripting language — all on the original exclusion list, none needed for texture
+work. Beyond those, four things surfaced during the phase and are recorded where they arose:
+
+| Gap | Why | Where |
+|---|---|---|
+| **Copy/paste** | Needs cursor rebasing and all-or-nothing pre-validation on top of the now-proven serialiser | 5.7 |
+| **Conditional parameter visibility** | Schema v1 carries no `if(expr)` trees; 4 parameters on 2 operators | 5.5 |
+| **Tied Ctrl-dragging of vectors** | `tie` has zero uses corpus-wide | 5.5 |
+| **File dialogs** | Paths are editable as text; a picker is UI work with no bearing on the model | 5.1 |
+
+The conditional-visibility one is the only gap that needs work *outside* the editor — teaching
+`opsmeta` to emit expressions and bumping the schema to v2.
 
 ## Deliberately not included
 

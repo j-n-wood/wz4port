@@ -1157,6 +1157,47 @@ Two habits from it:
 Same shape as A39 and A45 once more: the local build is a *proxy* for the
 committed build, and this is the case where the proxy and the thing disagree.
 
+### A49 · Prefer a snapshot to an inverse — standing
+
+*Phase 5.7.* `07-phase-texture-gui.md` specified command-pattern undo: an inverse
+per operation. It was rejected on contact with the code, and the reasoning
+generalises.
+
+**Upstream already had a whole-page serialiser.** `wPage::Serialize` covers the
+ops array and, through `wOp::Serialize`, every operator's parameter words,
+strings, link names and array rows. It exists for the clipboard, so it is code
+that already works and is already exercised on the format that matters. The
+serialise-to-memory idiom came from `sSetClipboardObject`
+(`base/windows.hpp:92`).
+
+An inverse per command is a **correctness surface that grows with every editing
+feature**, and it is wrong in precisely the combinations nobody tests — undo a
+resize that also broke a connection, undo a paste that partly collided. A
+snapshot cannot be wrong about what it captured. It can only be wrong about
+*what it captures*, which is one question asked once and answerable by a test.
+
+The trade is memory, and it is worth measuring before assuming it matters: the
+entire history of the undo test session was **2.4 KB**. A 37-operator page is a
+couple of KB. Capped at 64 states, this is free.
+
+So the risk moves from arithmetic to **completeness**, and that is a better place
+for it — "does the snapshot include array rows" is a checkable question, where
+"is the inverse of every operation correct under every combination" is not.
+
+Two implementation notes worth carrying:
+
+- `sReader::ArrayNew` asserts its target is empty (`serialize.hpp:196`); it fills
+  a freshly constructed object. Restoring into a live page must clear first.
+- Restoring **replaces every object**, so any pointer held across a restore
+  dangles. Hold indices. The editor drops its selection and re-evaluates the
+  preview on a bumped revision rather than comparing an address that may have
+  been reused.
+
+And the coalescing came free: deferring the snapshot until
+`ImGui::IsAnyItemActive()` is false turns a whole drag gesture into one entry,
+for both a slider and a canvas drag, with no per-widget gesture tracking. When
+the toolkit already knows something, ask it.
+
 ### A46 · Altona macro-defines `new`, so third-party headers need a shield — standing
 
 *Phase 5.1.* `base/types.hpp:1763` ends with

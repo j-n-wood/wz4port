@@ -35,6 +35,7 @@
 #include "docedit.hpp"
 #include "params.hpp"
 #include "preview.hpp"
+#include "undo.hpp"
 
 #include <GLFW/glfw3.h>
 #include <stdio.h>                  // fflush, for the exit path at the bottom
@@ -119,6 +120,22 @@ struct wEditor
   // every frame of the drag.
   sInt Revision;
 
+  wUndo Undo;
+
+  // An edit happened this frame and has not been snapshotted yet. The snapshot
+  // is deferred until no ImGui item is active, which is what COALESCES a gesture
+  // into one undo entry: a parameter drag reports a change on every frame it
+  // moves, and thirty entries for one drag would make undo useless.
+  sBool Dirty;
+  sString<64> DirtyWhat;
+
+  void MarkDirty(const sChar *what)
+  {
+    Dirty = 1;
+    DirtyWhat = what;
+    Revision++;
+  }
+
   // `bool`, not sBool: ImGui takes bool* for its toggles and sBool is an int.
   bool ShowDemo;
   bool ShowList;
@@ -131,6 +148,8 @@ struct wEditor
     ShowDemo = false;
     ShowList = false;
     Revision = 0;
+    Dirty = 0;
+    DirtyWhat = L"";
     Status = L"no document";
   }
 
@@ -168,6 +187,12 @@ struct wEditor
     Doc->Connect();
     DocPath = path;
     Canvas.FitPending = 1;          // frame the whole graph, not a corner of it
+
+    // The baseline the first undo returns to. Without it there is nothing
+    // behind the first edit and undo would be a no-op exactly once.
+    Undo.Reset(Doc->Pages.GetCount() ? Doc->Pages[0] : 0);
+    Dirty = 0;
+    Revision++;
 
     sInt ops = 0;
     for(sInt p=0;p<Doc->Pages.GetCount();p++)
@@ -207,6 +232,10 @@ struct wEditor
     Selected = op;
     Canvas.CursorY += op->SizeY;    // so repeated insertion builds a stack
     Status.PrintF(L"inserted %s",cl->Name);
+
+    sString<64> what;
+    what.PrintF(L"insert %s",cl->Name);
+    MarkDirty(what);
     return 1;
   }
 
@@ -220,8 +249,26 @@ struct wEditor
     {
       Selected = 0;
       Status.PrintF(L"deleted %d operator(s)",n);
+      MarkDirty(n==1 ? L"delete" : L"delete several");
     }
     return n!=0;
+  }
+
+  // Restoring replaces every wStackOp on the page, so every operator pointer the
+  // editor holds has to go. Selected is the only one; the canvas keeps deltas
+  // rather than pointers, and bumping Revision makes the preview re-evaluate
+  // instead of comparing against an address that may have been reused.
+  void AfterUndoRedo(wPage *page)
+  {
+    Selected = 0;
+    if(page)
+    {
+      for(sInt i=0;i<page->Ops.GetCount();i++)
+        page->Ops[i]->Select = 0;
+    }
+    Doc->Connect();
+    Dirty = 0;
+    Revision++;
   }
 
   // Selects by store name. Exists for -select, which is what lets the
@@ -451,12 +498,15 @@ static sBool DrawInspector()
     // walks the outputs, which is what makes an edit to a Perlin invalidate the
     // Blur that reads it rather than only itself.
     Doc->Change(op);
-    Ed->Revision++;
+    Ed->MarkDirty(L"parameter");
     Ed->Status.PrintF(L"changed %s",
       op->Class ? (const sChar *) op->Class->Name : L"operator");
   }
   if(pc & wPC_CONNECT)
+  {
     changed = 1;                    // ConnectMsg: the caller reconnects
+    Ed->MarkDirty(L"rename or link");
+  }
 
   return changed;
 }
@@ -475,6 +525,11 @@ static void DrawFrame(GLFWwindow *window,sBool &quit)
   const ImGuiViewport *vp = ImGui::GetMainViewport();
   const float menuh = ImGui::GetFrameHeight();
 
+  // Declared before the menu bar because the Edit menu sets them, and applied
+  // right at the end of the frame — see the note down there.
+  sBool undo = 0;
+  sBool redo = 0;
+
   if(ImGui::BeginMainMenuBar())
   {
     if(ImGui::BeginMenu("File"))
@@ -487,6 +542,25 @@ static void DrawFrame(GLFWwindow *window,sBool &quit)
       ImGui::Separator();
       if(ImGui::MenuItem("Quit","Ctrl+Q"))
         quit = 1;
+      ImGui::EndMenu();
+    }
+    if(ImGui::BeginMenu("Edit"))
+    {
+      // The labels say what will be undone, not what will be returned to, which
+      // is the difference between "Undo insert Perlin" and "Undo".
+      sString<96> ul,rl;
+      const sChar *u = Ed->Undo.UndoLabel();
+      const sChar *r = Ed->Undo.RedoLabel();
+      ul.PrintF(L"Undo %s",u ? u : L"");
+      rl.PrintF(L"Redo %s",r ? r : L"");
+
+      if(ImGui::MenuItem(wUtf8(ul),"Ctrl+Z",false,Ed->Undo.CanUndo()!=0))
+        undo = 1;
+      if(ImGui::MenuItem(wUtf8(rl),"Ctrl+Shift+Z",false,Ed->Undo.CanRedo()!=0))
+        redo = 1;
+      ImGui::Separator();
+      ImGui::TextDisabled("%d/%d states, %d bytes",
+        Ed->Undo.Position()+1,Ed->Undo.Depth(),sInt(Ed->Undo.Bytes()));
       ImGui::EndMenu();
     }
     if(ImGui::BeginMenu("View"))
@@ -573,7 +647,10 @@ static void DrawFrame(GLFWwindow *window,sBool &quit)
       // Moving a block one cell can make or break an input, so a drag is a
       // structural change and not a cosmetic one.
       if(Ed->Canvas.Draw(page))
+      {
         reconnect = 1;
+        Ed->MarkDirty(L"move or resize");
+      }
       Ed->Selected = Ed->Canvas.SingleSelection(page);
     }
     else
@@ -621,6 +698,15 @@ static void DrawFrame(GLFWwindow *window,sBool &quit)
       sString<1024> path(Ed->DocPath);
       Ed->LoadDoc(path);
     }
+    if(ImGui::IsKeyPressed(ImGuiKey_Z,false))
+    {
+      if(ImGui::GetIO().KeyShift)
+        redo = 1;
+      else
+        undo = 1;
+    }
+    if(ImGui::IsKeyPressed(ImGuiKey_Y,false))
+      redo = 1;                     // the other common binding
   }
 
   if(ImGui::IsKeyPressed(ImGuiKey_Home,false))
@@ -643,6 +729,7 @@ static void DrawFrame(GLFWwindow *window,sBool &quit)
         if(h) op->Hide = op->Hide ? 0 : 1;
         if(b) op->Bypass = op->Bypass ? 0 : 1;
         reconnect = 1;
+        Ed->MarkDirty(h ? L"hide" : L"bypass");
       }
     }
 
@@ -687,6 +774,31 @@ static void DrawFrame(GLFWwindow *window,sBool &quit)
   {
     Doc->Connect();
     Ed->Revision++;                 // a structural change invalidates the preview
+  }
+
+  // Undo and redo are applied after everything else has had its say, so a frame
+  // that both edits and undoes cannot interleave the two.
+  if(undo && page && Ed->Undo.Undo(page))
+  {
+    Ed->Status.PrintF(L"undo (%d/%d)",Ed->Undo.Position()+1,Ed->Undo.Depth());
+    Ed->AfterUndoRedo(page);
+  }
+  else if(redo && page && Ed->Undo.Redo(page))
+  {
+    Ed->Status.PrintF(L"redo (%d/%d)",Ed->Undo.Position()+1,Ed->Undo.Depth());
+    Ed->AfterUndoRedo(page);
+  }
+  else if(Ed->Dirty && page)
+  {
+    // Deferred until nothing is being manipulated, which is what turns a whole
+    // drag gesture into ONE undo entry. ImGui reports a DragFloat as active for
+    // every frame the mouse is down, and the canvas holds its InvisibleButton
+    // active for the length of a block drag, so both coalesce for free.
+    if(!ImGui::IsAnyItemActive())
+    {
+      Ed->Undo.Push(page,Ed->DirtyWhat);
+      Ed->Dirty = 0;
+    }
   }
 
   (void)window;
