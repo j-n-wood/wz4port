@@ -21,19 +21,21 @@
 //
 // WHAT THIS DELIBERATELY DOES NOT DO
 //
-// It does not implement Serialize. Wz4Mesh::Serialize is unreachable in this
-// build and arguably in the whole dump — nothing calls it, wObject declares no
-// virtual Serialize, and .wz4 documents store operators rather than evaluated
+// It does not implement a WORKING Serialize. Wz4Mesh::Serialize is unreachable in
+// this build and arguably in the whole dump — nothing calls it, wObject declares
+// no virtual Serialize, and .wz4 documents store operators rather than evaluated
 // meshes. A faithful stub would also be impractical: the real
 // SimpleMtrl::Serialize_ does s.OnceRef() on three Texture2D handles
 // (wz4_mtrl2.cpp:779), which would drag the texture object type and the render
 // library in behind it.
 //
-// Leaving Serialize alone means the inherited Wz4Mtrl::Serialize applies, and
-// that already does exactly the right thing: sFatal("no serialize for this
-// material type yet"). If the dead path ever comes alive it stops loudly instead
-// of silently misreading a stream. A stub that "worked" by reading nothing would
-// desync everything after it.
+// The two Serialize overloads therefore carry upstream's own base-class bodies,
+// verbatim: sFatal("no serialize for this material type yet"). Declaring them is
+// not optional — Wz4Mesh::Serialize's cluster loop (wz4_mesh.cpp:486-507) streams
+// c.Mtrl through sReader/sWriter, whose templates need the member to exist even
+// on a path never taken — and SimpleMtrl inherits them rather than overriding, so
+// the dead path stops loudly instead of silently misreading a stream. A stub that
+// "worked" by reading nothing would desync everything after it.
 //
 // See wz4port/patches/10-mesh-headless.md and docs/08-phase-geometry.md.
 
@@ -42,6 +44,7 @@
 
 #include "base/types.hpp"
 #include "base/graphics.hpp"
+#include "base/serialize.hpp"
 #include "wz4lib/doc_core.hpp"
 
 /****************************************************************************/
@@ -63,7 +66,10 @@ public:
     sInt SkinMatCount,const sMatrix34CM *SkinMats,sInt *SkinMatMap) {}
   virtual sBool SkipPhase(sInt flags,sInt lightenv) { return 1; }
 
-  // Serialize is NOT overridden. See the note at the top of this file.
+  // Verbatim from wz4_mtrl2.hpp:60-61. See the note at the top of this file for
+  // why these stay fatal rather than becoming a stub that reads nothing.
+  virtual void Serialize(sReader &stream) { sFatal(L"no serialize for this material type yet"); }
+  virtual void Serialize(sWriter &stream) { sFatal(L"no serialize for this material type yet"); }
 
   sString<64> Name;
   sF32 ShellExtrude;
@@ -88,9 +94,12 @@ public:
   }
 
   // Texture assignment is accepted and dropped: the parameter type is the render
-  // library's texture object, which this build does not have. Taking void * lets
-  // the one call site (Wz4Mesh::ConvertFrom) compile without this header needing
-  // to know what a Texture2D is.
+  // library's texture object, which this build does not have, and void * lets a
+  // caller pass one without this header needing to know what a Texture2D is.
+  // Nothing in the headless build calls it today — the two call sites,
+  // Wz4Mesh::ConvertFrom and the XSI loader, are both compiled out. It stays
+  // because it is part of the class's shape upstream, and dropping it would make
+  // the stand-in diverge from what a later phase re-enabling either path expects.
   void SetTex(sInt stage,void *tex,sInt tflags=0) {}
 
   sInt Flags;

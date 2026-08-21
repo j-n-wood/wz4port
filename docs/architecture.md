@@ -1257,6 +1257,77 @@ Two things worth carrying forward:
   looked only at the status passed. `editor_shot.cmake` now greps for
   `FATAL ERROR` explicitly. Same shape as A39: the status is a proxy.
 
+### A50 · A `.ops` operator declaration cannot be preprocessor-guarded — standing
+
+*Phase 6.1.* Patch 05 established `#ifndef WZ4_HEADLESS` in `.ops` files as the
+way to exclude something from a headless build, and it works for four cases. It
+cannot exclude an **operator**, for two independent reasons:
+
+- `code` and `header` blocks are verbatim C++ and pass straight through, which is
+  why a guard inside one works. `operator` and `type` are *parsed*
+  (`parse.cpp:37-75`), and a `#` line at that level is a syntax error. Only an
+  operator's body can be guarded — what patch 05 did to `Screenshot`.
+- The body is usually not the problem anyway. What breaks is the **registration**,
+  because an input type is emitted as a bare global owned by another module:
+  `in[0].Type = Wz4MtrlType;`. Guarding the body leaves that line behind.
+
+So `wz4ops` grew a per-operator `headless = 0;` directive (patch 11). The general
+shape is worth carrying: **the unit of exclusion has to match the unit the
+generator emits.** A guard placed inside verbatim text can only remove verbatim
+text; anything the generator *derives* — registration tables, offsets, type
+references — needs the generator to know.
+
+Two rejected alternatives, both recorded because each looked cheaper:
+
+- **A new bit in the `flags = ` choice list.** Those map to runtime `wCF_` bits
+  the document model reads. This is a directive to the generator, and giving it a
+  runtime bit would misdescribe it.
+- **Registering a phantom `Wz4Mtrl` type** so the symbol resolves. Worse than
+  omitting the operator: nothing headless can produce a `Wz4Mtrl`, so
+  `SetMaterial` would sit in the palette permanently unusable and the phantom
+  would show up in the inspector as a real type. *An operator that cannot work is
+  worse than an operator that is honestly absent.*
+
+### A51 · A generated header's macros are part of its contract — standing
+
+*Phase 6.1.* Patch 05 emitted `#define WZ4_HEADLESS 1` into the generated `.cpp`
+only, which was sufficient for every guard it wrote — they were all in `code`
+blocks, and `code` goes to the `.cpp`. `header` goes to the `.hpp`, and **the
+`.hpp` is read by every consumer of the module**, not just by its own `.cpp`.
+
+Guarding the mesh module's header block therefore worked in the generated file and
+failed in `wz4_mesh.cpp`, which includes the same header and does not define the
+macro. The error names the `.ops` line, which is the confusing part — the guard
+looks correct because it *is* correct, just evaluated in a translation unit that
+never heard of the flag:
+
+```
+wz4_mesh_ops.ops:11:10: fatal error: 'wz4lib/poc_ops.hpp' file not found
+```
+
+Generalisation: when a generator emits a configuration macro, the macro belongs
+wherever the generated code that tests it can be *included*, not wherever it is
+compiled. Emitting it in one of a matched `.hpp`/`.cpp` pair is a latent bug
+waiting for the second consumer.
+
+### A52 · Untested platform branches rot silently — standing
+
+*Phase 6.1.* Two upstream defects in `wz4_mesh.cpp` were found by the simple act
+of compiling it for a non-Windows target for the first time:
+
+- `Wz4Mesh::ConvertFrom` dereferences an **incomplete type** — `chaosmesh_code.hpp`
+  is commented out of the includes at line 12 while the body reads
+  `src->Clusters[i]->Material->Material->Flags`.
+- `MakePath`'s `#else` stub lost track of the real signature: `weldThreshold` was
+  added to the declaration and to the Windows definition, never to the stub, so
+  the non-Windows branch defined a function that matched nothing.
+
+Neither is a porting difficulty. Both are code that **has never been compiled**,
+in a file whose Windows path is exercised constantly. Worth expecting more of the
+same in every remaining `#if sPLATFORM==sPLAT_WINDOWS ... #else` in this tree:
+the `#else` arms are the unvisited half of the dump, and a compiler is the only
+thing that has ever looked at them.
+
 ---
 
 ## Part 3 — where inference lost to measurement
@@ -1291,6 +1362,13 @@ adopted because of this list.
 | Extracting a declaration is enough to decouple | It compiles; it does not link. The definitions needed extracting too (A23) |
 | `script.cpp` might be excludable | `wExecutive::Execute` drives `ScriptContext` directly (A19) |
 | A headless build needs a new mechanism to strip painting | `sCOMMANDLINE` already existed and was already defined here (A22) |
+| `wz4_mesh.hpp` needs `Wz4Mtrl` extracted into its own header | It needs a forward declaration. Its one use is a pointer (6.1) |
+| The mesh library's materials exposure is the render section | Also `ConvertFrom` and the object serialiser, in three separate places (6.1) |
+| A stand-in that overrides nothing inherits upstream's fatal `Serialize` | There is nothing to inherit from — `wObject` has no `Serialize`, and the streaming templates require the member to exist (6.1) |
+| A `#ifndef WZ4_HEADLESS` guard can drop an operator | Only verbatim text can be guarded; the registration is derived (A50) |
+| One `#define` in the generated `.cpp` is enough | The `.hpp` is read by every consumer of the module, not just its own `.cpp` (A51) |
+| `wz4_mesh.cpp`'s non-Windows path is untried but sound | Two things in it have never compiled: an incomplete-type dereference and a stub whose signature drifted (A52) |
+| The 47 mesh operators are the exposure to measure | 45 are clean; the survey's own count of *includes* (five foreign) overstated it by an order of magnitude (6.1) |
 
 ---
 
@@ -1350,8 +1428,8 @@ there.
 tree uses any of them — all 383 emitted `ties` arrays are empty. The first real
 use should be treated as new code, not as covered ground.
 
-**Upstream footprint is 48 files and will keep growing.** Two categories are
-inert (30 encoding-only, 2 genuine language errors); the other 16 are structural
-and are the ones a future merge would conflict on. Upstream is a frozen 2014
-dump, so this is a bookkeeping cost rather than a merge risk — but the
-enumeration in `wz4port/patches/` is the only thing keeping it honest.
+**Upstream footprint is 68 files and will keep growing.** Two categories are
+inert (30 encoding-only, 2 genuine language errors); the rest are structural and
+are the ones a future merge would conflict on. Upstream is a frozen 2014 dump, so
+this is a bookkeeping cost rather than a merge risk — but the enumeration in
+`wz4port/patches/` is the only thing keeping it honest.

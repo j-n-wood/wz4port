@@ -374,6 +374,12 @@ void Document::_Operator()
       op->GridColumns = Scan.ScanInt();
       Scan.Match(';');
     }
+    else if(Scan.IfName(L"headless"))     // wz4port, see Op::Headless
+    {
+      Scan.Match('=');
+      op->Headless = Scan.ScanInt();
+      Scan.Match(';');
+    }
     else if(Scan.IfName(L"flags"))
     {
       Scan.Match('=');

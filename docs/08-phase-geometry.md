@@ -203,23 +203,38 @@ Recorded as `wz4port/patches/10-mesh-headless.md`. **Not patch 04** — the surv
 
 ## Stages
 
-### 6.1 — Split and build `wz4geo`
+### 6.1 — Split and build `wz4geo` — **done**
 
-Perform the render split and the four header changes above; build `wz4_mesh.cpp` (remainder),
-`wz4_bsp.cpp`, `bspline.cpp` and the importers against `wz4core`.
+Order was the order the dependencies force: headers first, then the headless material, then the
+renderer, then the ops module. Getting a clean compile of `wz4_mesh.hpp` alone was the first
+checkpoint and was worth reaching before touching the `.cpp` — the phase-2 equivalent
+(`headless_core_gate`) earned its keep by being a compile-only target.
 
-`Text3D` and `Path3D` are stubbed initially — two operators of 47, not worth blocking on. Same
-treatment as `GenBitmap.Text` in phase 4.1: stub behind a flag, leave the mesh empty rather than
-failing, so a graph containing one still evaluates.
+`Text3D` and `Path3D` needed no stubbing after all: they **register and link**, because their
+Windows-only bodies already had an `#else` arm that calls `sFatal`. Correcting one stale signature
+in that arm was the whole cost (patch 10, change 3c). They will still refuse at *runtime* until
+6.6, which is the same position `GenBitmap.Text` was in after 4.1 — but the operators are present,
+so a graph containing one loads and every other operator in it evaluates.
 
-Order matters, and it is the order the dependencies force: headers first (1, 2, 5), then the
-headless material (4), then the split (3). Getting a clean compile of `wz4_mesh.hpp` alone is the
-first checkpoint, and it is worth reaching before touching the `.cpp` at all — the phase-2
-equivalent (`headless_core_gate`) earned its keep by being a compile-only target.
+What the plan did not anticipate, and cost the most: **an operator declaration cannot be
+preprocessor-guarded.** `wz4ops` gained a per-operator `headless = 0;` directive
+(patch 11, `architecture.md` A50), and `-headless` now defines `WZ4_HEADLESS` in the generated
+`.hpp` as well as the `.cpp` (A51).
 
-**Gate:** `wz4geo` compiles and links headlessly on macOS arm64, **45 of 47** operators register
-(`ConvertFromChaosMesh` and `SetMaterial` are guarded out, as `GenBitmap.Text` was in 4.1), and a
-`Cube` evaluates to a mesh with the expected vertex and face counts.
+`wz4_bsp.cpp` is **not** in the library yet. Nothing in the 45 registered operators referenced it
+at link time, so it stays out until something needs it — 6.3 will say, since the CSG and fracturing
+operators are the ones that would pull it in.
+
+`wz4_mesh_xsi.cpp` stays out too, and is the one importer that cannot simply follow: across its
+2,142 lines it *constructs* materials and textures rather than mentioning them. `LoadXSI` comes
+from `wz4port/compat/mesh_xsi_stub.cpp` and refuses. The OBJ and LWO readers and the OBJ writer
+compile and link, and `Import`/`Export` register — but none of them has been *run* yet. 6.2
+exercises the writer; a reader case belongs with 6.3.
+
+**Gate — met.** `wz4geo` compiles and links headlessly on macOS arm64; `tests/mesh_register.cpp`
+asserts 45 of 47 operators register with `ConvertFromChaosMesh` and `SetMaterial` absent *by name*,
+then evaluates a `Cube`: 6 faces, all quads, 24 vertices, bounds exactly -0.5..0.5 on every axis.
+133/133 ctest.
 
 ### 6.2 — OBJ export and `wz4gen render` for meshes
 

@@ -267,6 +267,14 @@ public:
   sU32 FileOutMask;
   sPoolString FileInFilter;
   sInt Flags;
+  // wz4port: 0 means "omit this operator entirely under -headless". Written in
+  // the .ops as `headless = 0;`. Needed where an operator's INPUT names a type
+  // owned by a module the headless build cannot compile: the input type is
+  // emitted as a `FooType` global from that module's generated header, so no
+  // amount of guarding inside the code block can save it. A preprocessor guard
+  // cannot do this job either — the .ops grammar has no top-level #if, only
+  // verbatim code blocks. See wz4port/patches/11-wz4ops-headless-op.md.
+  sInt Headless;
   sInt HideArray;
   sInt GroupArray;
   sInt GridColumns;

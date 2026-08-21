@@ -3,6 +3,8 @@
 **Files:** 4 in `tools/wz4ops/`, 3 headers, 2 `.ops` files
 **Phase:** 2 (headless op runtime), stage 2.2
 **Status:** applied
+**Extended by:** patch 11 — a per-operator `headless = 0;` opt-out, and
+`WZ4_HEADLESS` now defined in the generated `.hpp` as well as the `.cpp`
 **Wider context:** `docs/architecture.md` entries A11–A15
 
 ## Why
@@ -77,7 +79,10 @@ is deliberate: reindenting 130 lines to add one condition would bury the
 change.
 
 `-headless` also emits `#define WZ4_HEADLESS 1` at the top of the generated
-`.cpp`, which is what the `.ops` guards below key off.
+`.cpp`, which is what the `.ops` guards below key off. (Patch 11 emits it in the
+generated `.hpp` too — the guards this patch needed were all in `code` blocks,
+but a `header` block goes to the `.hpp`, and the `.hpp` is read by every consumer
+of the module rather than only by the generated `.cpp`.)
 
 ### 2. Type `externals` — a signature rule, not a blanket skip
 

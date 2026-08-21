@@ -238,12 +238,14 @@ target_include_directories(altona_flags INTERFACE "${WZ4_GEN_DIR}")
 
 wz4_add_ops(GEN_BASIC  wz4lib   "${ALTONA_MAIN}/wz4lib/basic_ops.ops")
 wz4_add_ops(GEN_BITMAP wz4frlib "${WZ4_DIR}/wz4frlib/wz3_bitmap_ops.ops")
+wz4_add_ops(GEN_ANIM   wz4frlib "${WZ4_DIR}/wz4frlib/wz4_anim_ops.ops")
+wz4_add_ops(GEN_MESH   wz4frlib "${WZ4_DIR}/wz4frlib/wz4_mesh_ops.ops")
 
 # Phase 1 gate: proves the generator runs natively and produces the
 # registration entry points the runtime expects. Kept alongside the headless
 # output because it is what proves -headless is inert when it is off: the two
 # generated trees must differ only in what the flag suppresses.
-add_custom_target(wz4ops_gate ALL DEPENDS ${GEN_BASIC} ${GEN_BITMAP})
+add_custom_target(wz4ops_gate ALL DEPENDS ${GEN_BASIC} ${GEN_BITMAP} ${GEN_ANIM} ${GEN_MESH})
 
 #############################################################################
 ##  opsmeta_gate — phase 2 stage 2.3                                       ##
@@ -317,6 +319,8 @@ add_custom_target(opsmeta_gate ALL DEPENDS ${META_BASIC} ${META_BITMAP} ${META_A
 
 wz4_add_ops(GENHL_BASIC  wz4lib   "${ALTONA_MAIN}/wz4lib/basic_ops.ops"      HEADLESS)
 wz4_add_ops(GENHL_BITMAP wz4frlib "${WZ4_DIR}/wz4frlib/wz3_bitmap_ops.ops"   HEADLESS)
+wz4_add_ops(GENHL_ANIM   wz4frlib "${WZ4_DIR}/wz4frlib/wz4_anim_ops.ops"     HEADLESS)
+wz4_add_ops(GENHL_MESH   wz4frlib "${WZ4_DIR}/wz4frlib/wz4_mesh_ops.ops"     HEADLESS)
 
 # Compiles both headless operator modules with the GUI poisoned. This is the
 # stage 2.2 gate, and it is the only thing that proves -headless produces code
@@ -498,6 +502,45 @@ if(WZ4_FONT_SOURCES)
   target_include_directories(wz4tex PRIVATE ${FREETYPE_INCLUDE_DIRS})
   target_link_libraries(wz4tex PUBLIC ${FREETYPE_LIBRARIES})
 endif()
+
+#############################################################################
+##  wz4geo — the geometry library (phase 6)                                ##
+#############################################################################
+
+# wz4_mesh.cpp is the mesh engine: topology, the generators, the deformers and
+# the solvers. Its renderer (the `/*** Painting ***/` region) and the wz3
+# ChaosMesh import are compiled out by WZ4PORT_HEADLESS_MTRL, and materials
+# collapse to the stand-in in compat/include/wz4_mtrl_headless.hpp. That flag and
+# the three upstream one-liners it guards are patch 10; the two operators dropped
+# from the registry, and the `headless = 0;` directive that drops them, are
+# patch 11.
+#
+# Links wz4tex, not just wz4core: two mesh operators take a bitmap input
+# (Select's mask and Displace's height field), so the type registry needs
+# GenBitmap present, and the generated header includes wz3_bitmap_ops.hpp.
+
+add_library(wz4geo STATIC
+  "${WZ4_DIR}/wz4frlib/wz4_mesh.cpp"
+  "${WZ4_DIR}/wz4frlib/wz4_mesh_obj.cpp"
+  "${WZ4_DIR}/wz4frlib/wz4_mesh_lwo.cpp"
+  "${WZ4_DIR}/wz4frlib/wz4_anim.cpp"
+  "${WZ4_DIR}/wz4frlib/bspline.cpp"
+  "${COMPAT_DIR}/mesh_xsi_stub.cpp"
+  "${GENHL_ANIM}"
+  "${GENHL_MESH}"
+)
+# wz4_anim.cpp includes "wz4_anim_ops.hpp" unqualified, so the generated
+# wz4frlib subdirectory goes on the path as well — same as genvector.hpp in
+# wz4tex.
+target_include_directories(wz4geo PUBLIC
+  "${WZ4_GENHL_DIR}"
+  "${WZ4_GENHL_DIR}/wz4frlib"
+)
+target_compile_definitions(wz4geo PUBLIC WZ4PORT_HEADLESS_MTRL=1)
+target_link_libraries(wz4geo PUBLIC wz4tex)
+target_compile_options(wz4geo PRIVATE
+  "SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/tests/gui_poison.h"
+)
 
 #############################################################################
 ##  wz4gen — headless CLI (phase 3)                                        ##
@@ -1189,6 +1232,27 @@ set_tests_properties(connect_inputs PROPERTIES
   DEPENDS opsmeta_gate
   PASS_REGULAR_EXPRESSION
     "atlas +Atlas +at +8,13 +9x1 +<- Flat@x8, Flat@x11, Flat@x14")
+
+#############################################################################
+##  mesh_register — the stage 6.1 gate                                     ##
+#############################################################################
+
+# Registration is a table and evaluation is the engine, so both are checked:
+# 45 of 47 operators present with the two dropped ones named, then a Cube run
+# through the mesh engine and measured. See tests/mesh_register.cpp for why the
+# bounding box is the assertion that earns its place.
+
+add_executable(mesh_register
+  "${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_register.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/editor/docedit.cpp"
+)
+target_link_libraries(mesh_register PRIVATE wz4geo)
+target_include_directories(mesh_register PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}/editor")
+target_compile_options(mesh_register PRIVATE
+  "SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/tests/gui_poison.h"
+)
+add_test(NAME mesh_register COMMAND mesh_register)
 
 #############################################################################
 ##  SIMD parity test                                                       ##

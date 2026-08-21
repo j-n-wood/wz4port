@@ -32,7 +32,18 @@ sBool Document::Output()
   HPP.PrintF(L"#define HEADER_WZ4OPS_%s\n",ProjectName);
   HPP.Print(L"\n");
   if(Headless)
+  {
+    // wz4port: the .cpp defines this too (below), but a `header` block also has
+    // to be able to test it, and the .hpp is read by every consumer of the
+    // module — not just the generated .cpp. Without it, a guarded include in a
+    // header block takes the non-headless branch whenever anything else includes
+    // this header, which is how it was found.
+    HPP.Print(L"#ifndef WZ4_HEADLESS\n");
+    HPP.Print(L"#define WZ4_HEADLESS 1\n");
+    HPP.Print(L"#endif\n");
+    HPP.Print(L"\n");
     HPP.Print(L"#include \"wz4lib/doc_core.hpp\"\n");
+  }
   else
     HPP.Print(L"#include \"wz4lib/doc.hpp\"\n");
 
@@ -602,6 +613,12 @@ void Document::OutputOps()
 
   sFORALL(Ops,op)
   {
+    if(Headless && !op->Headless)   // wz4port, see Op::Headless
+    {
+      sPrintF(L"wz4ops -headless: skipping operator %s.%s (headless = 0)\n",op->OutputType,op->Name);
+      continue;
+    }
+
     Sep(CPP);
 
     // parameter struct
@@ -1343,6 +1360,9 @@ void Document::OutputMain()
 
   sFORALL(Ops,op)
   {
+    if(Headless && !op->Headless)   // wz4port, see Op::Headless
+      continue;                     // already reported by OutputOps
+
     CPP.Print(L"\n");
     CPP.Print (L"  cl= new wClass;\n");
     CPP.PrintF(L"  cl->Name = L%q;\n",op->Name);

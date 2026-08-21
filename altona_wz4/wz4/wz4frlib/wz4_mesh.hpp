@@ -179,7 +179,11 @@ public:
   void MergeVertices();           // merge identical vertices and kill unused vertices
   sBool IsDegenerateFace(sInt face) const; // degenerate face: one in which a vertex position occurs twice
   void RemoveDegenerateFaces();
+#if !WZ4PORT_HEADLESS_MTRL
+  // wz4port: the wz3 legacy import. Guarded out with its one caller, the
+  // ConvertFromChaosMesh operator — see wz4port/patches/10-mesh-headless.md.
   void ConvertFrom(class ChaosMesh *);
+#endif
 
   void InsertClusterAfter(Wz4MeshCluster *cl,sInt pos);
   void SplitClustersAnim(sInt maxMats); // split clusters for bone vertex shader

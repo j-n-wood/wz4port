@@ -9,13 +9,17 @@ rediscovered the hard way.
 editor**: it opens a document, shows the stacking canvas, offers all 34 texture
 operators, inserts/deletes/moves/resizes them under the original's collision
 rules, edits every parameter from a panel generated entirely from metadata,
-previews the result live, and undoes all of it. `ctest` is **132 tests** on
+previews the result live, and undoes all of it. `ctest` is **133 tests** on
 arm64; the 90 texture goldens remain bit-identical between the NEON and SSE2
 builds.
 
 **Priority 1 is done end to end** — generate textures, and edit them.
 
-**Phase 6 has begun with a plan correction, not code.** `08-phase-geometry.md`'s
+**Phase 6 is under way: stage 6.1 is done** — `wz4geo` builds and links
+headlessly, 45 of 47 mesh operators register, and a `Cube` evaluates to a
+measured mesh. Details below.
+
+**Phase 6 began with a plan correction, not code.** `08-phase-geometry.md`'s
 central simplifying assumption — "materials are out of scope, so `Wz4Mtrl`
 becomes an opaque handle the headless library never dereferences" — is **wrong**:
 mesh *serialisation* constructs a `SimpleMtrl` and calls `Prepare()` on it, and
@@ -28,9 +32,19 @@ What the survey got exactly right: the render split is clean. **Zero** graphics
 references outside `wz4_mesh.cpp` lines 4,424–5,287, and both boundaries are
 banner comments.
 
-**6.1 checkpoint reached: `wz4_mesh.hpp` compiles headlessly** (`patches/10`),
-and the 132-test suite is unaffected. Three upstream files touched, all guarded
-on `WZ4PORT_HEADLESS_MTRL` so the unguarded build is unchanged.
+**Stage 6.1 is done. `wz4geo` builds, links and registers; 133/133 ctest.**
+
+`tests/mesh_register.cpp` is the gate: 45 of 47 operators output `Wz4Mesh`, with
+`ConvertFromChaosMesh` and `SetMaterial` asserted absent *by name*, then a `Cube`
+is evaluated and measured — 6 faces, all quads, 24 vertices, bounds exactly
+-0.5..0.5 on every axis. The bounding box is the assertion that would catch a
+Transform or vertex-layout error; golden meshes are 6.3's job.
+
+Documented in `patches/10` (the library) and `patches/11` (the ops module and the
+`wz4ops` change it needed). Everything is guarded on `WZ4PORT_HEADLESS_MTRL` or
+`WZ4_HEADLESS`, so the unguarded build is unchanged — proved on the output, not
+just by inspection: the non-headless generated module still emits both dropped
+operators in full.
 
 Two planned changes came out **smaller** than the plan, both because it assumed a
 dependency measurement did not support: `wz4_mesh.hpp` needs only a **forward
@@ -39,15 +53,41 @@ declaration** of `Wz4Mtrl` (its one use is a pointer), and the renderer is
 patching it, and the plan's other reason for moving evaporated with the first
 change.
 
-Still outstanding for 6.1: the ops module. `wz4_mesh_ops.ops` includes four
-*other* generated op modules, which the survey missed — but the exposure is
-small: of 47 mesh operators only **two** name a type from another module
-(`ConvertFromChaosMesh`, `SetMaterial`), so 45 register with nothing outside the
-mesh library. Those two get the `GenBitmap.Text` treatment from 4.1.
+One thing came out **larger**, and it is the entry worth reading: **an operator
+declaration cannot be preprocessor-guarded.** `.ops` `code`/`header` blocks are
+verbatim C++ and pass through, but `operator` is *parsed*, and the thing that
+actually breaks is the derived registration (`in[0].Type = Wz4MtrlType;`) rather
+than the operator body. So `wz4ops` gained a per-operator `headless = 0;`
+directive. See `architecture.md` A50, with two rejected alternatives — a new
+runtime flag bit, and registering a phantom `Wz4Mtrl` type. The latter is the
+one that reads as cheaper and is worse: an operator nothing can feed is worse
+than an operator honestly absent.
 
-Also found: `Wz4Mesh::ConvertFrom(ChaosMesh*)` dereferences an **incomplete
-type** — `chaosmesh_code.hpp` is commented out of the includes while the body
-uses it. As shipped, `wz4_mesh.cpp` does not compile.
+A related trap, A51: patch 05 emitted `#define WZ4_HEADLESS 1` into the generated
+`.cpp` only, which was enough for guards in `code` blocks. `header` blocks land
+in the `.hpp`, and **the `.hpp` is read by every consumer of the module** — so the
+mesh module's guarded includes worked in the generated file and broke
+`wz4_mesh.cpp`. The `.hpp` now defines it too.
+
+Two upstream defects surfaced, both simply from compiling a non-Windows branch
+for the first time (A52): `Wz4Mesh::ConvertFrom` dereferences an **incomplete
+type** (`chaosmesh_code.hpp` is commented out of the includes while the body uses
+it), and `MakePath`'s `#else` stub had lost a parameter the declaration gained, so
+it defined nothing. Expect more in every remaining `#else` in this tree.
+
+Also nicer than expected: **`Text3D` and `Path3D` needed no stub.** Their
+Windows-only bodies already had an `#else` arm calling `sFatal`, so both register
+and link — one stale signature was the whole cost. They refuse at runtime until
+6.6, but a graph containing one loads and everything else in it evaluates.
+
+Not in the library yet, deliberately: `wz4_bsp.cpp` (nothing in the 45 operators
+referenced it at link time — 6.3 will say) and `wz4_mesh_xsi.cpp`, the one
+importer that cannot follow. Across 2,142 lines it *constructs* materials and
+textures rather than mentioning them, so `LoadXSI` comes from
+`wz4port/compat/mesh_xsi_stub.cpp` and refuses — a shim in preference to a patch.
+The OBJ and LWO readers and the OBJ writer link, but none has been run yet.
+
+Next: **6.2** — wire `SaveOBJ` into `wz4gen render` by output extension.
 
 **`wz4ed` is the editor.** It has a window, a menu bar, a metadata-driven
 inspector, and the stacking canvas: blocks coloured by output type, selection,
@@ -182,7 +222,7 @@ about the build.
 | 3 — Text graph format + CLI | **Done**, phase gate passed |
 | 4 — Texture library + tests | **Done**, phase gate passed. All 34 operators run |
 | 5 — Texture GUI | **Done**, phase gate passed. `wz4ed` edits textures |
-| 6 — Geometry | Not started |
+| 6 — Geometry | **6.1 done** — `wz4geo` links, 45 of 47 operators register, a `Cube` evaluates |
 | 7 — Animated geometry | Not started |
 
 ---
@@ -205,7 +245,7 @@ Clean build from scratch: **0 errors**. Warnings are expected and benign
 | `altona_util` | `scanner` + `scanconfig`, the slice the host tools need |
 | `wz4ops` | Upstream's `.ops` code generator, native arm64, now with `-headless` |
 | `opsmeta` | Ours: `.ops` → metadata JSON, using wz4ops' parser but not its emitter |
-| `wz4ops_gate` | Regenerates `basic_ops` + `wz3_bitmap_ops` into `build/generated/` |
+| `wz4ops_gate` | Regenerates `basic_ops`, `wz3_bitmap_ops`, `wz4_anim_ops`, `wz4_mesh_ops` into `build/generated/` — this is what proves `-headless` is inert when off |
 | `headless_core_gate` | Compiles `wz4lib/doc_core.hpp` alone, with the GUI poisoned |
 | `headless_ops_gate` | Generates and compiles both op modules `-headless`, GUI poisoned |
 | `opsmeta_gate` | Emits + validates metadata for all 33 `.ops` modules into `build/meta/` |
@@ -234,6 +274,8 @@ Clean build from scratch: **0 errors**. Warnings are expected and benign
 | `palette_insert` | Stage 5.4 gate: all 67 offerable classes insert, connect and delete |
 | `params_edit` | Stage 5.5 gate: 140 parameters addressable, and edits reach the generator |
 | `undo_page` | **Phase 5 gate:** every edit kind undoes and redoes, array rows included |
+| **`wz4geo`** | **The mesh engine** (phase 6): wz4_mesh + obj/lwo + anim + bspline + generated ops |
+| `mesh_register` | Stage 6.1 gate: 45 of 47 operators register, and a `Cube` evaluates and measures |
 
 `simd_parity`: **70,184 checks, 0 failures** on arm64 via sse2neon.
 
@@ -267,7 +309,11 @@ wz4port/
     07-retain-foreign-class.md phase 3 — stop writes destroying unknown ops
     08-texture-library.md      phase 4 stage 4.1
     09-guicolor-header.md      phase 4 stage 4.5 — reach the 2D layer headlessly
+    10-mesh-headless.md        phase 6 stage 6.1 — the mesh library
+    11-mesh-ops-headless.md    phase 6 stage 6.1 — the mesh ops module + wz4ops
   compat/altona_missing.cpp    sCheckBreakKey — an upstream POSIX gap
+  compat/include/wz4_mtrl_headless.hpp  phase 6 — the materials stand-in
+  compat/mesh_xsi_stub.cpp     phase 6 — LoadXSI refuses; the one importer that cannot port
   tools/opsmeta/               phase 2 stage 2.3 — .ops -> metadata JSON
     main.cpp  emit.cpp  json.cpp
     opsmeta.hpp  json.hpp
@@ -314,6 +360,7 @@ wz4port/
   tests/canvas_rules.cpp       stage 5.2 gate, without a window
   tests/connect_passes.cpp     stage 5.3 gate: Hide, Sort, Bypass
   tests/palette_insert.cpp     stage 5.4 gate: every class inserts for real
+  tests/mesh_register.cpp      stage 6.1 gate: the registry, then a Cube measured
   third_party/sse2neon.h       pinned v1.9.1, MIT, 11,222 lines
   third_party/imgui/           pinned v1.92.9b, MIT — core + glfw/gl3 backends
   third_party/glfw/            pinned 3.5.1, zlib — src/include/CMake only
@@ -326,15 +373,15 @@ wz4port/
 
 ## Upstream footprint
 
-**60 files** (`git diff --name-only 8c8f82c -- altona_wz4`, **run after
+**68 files** (`git diff --name-only 8c8f82c -- altona_wz4`, **run after
 staging** — `git diff` does not see untracked files, which is how an earlier
 count came out at 56 and missed three additions).
 
 The isolation invariant is that `git status` on `altona_wz4/` must never show
 anything not listed in `wz4port/patches/`.
 
-Six categories, worth keeping distinct. Only the last four — 28 files — are
-structural; the other 32 are inert (30 encoding-only, 2 genuine clang errors).
+Eight categories, worth keeping distinct. Only the structural ones matter for a
+future merge; 32 files are inert (30 encoding-only, 2 genuine clang errors).
 
 **Code changes — 2 files, 5 lines.** Both genuine C++ errors under clang, not
 portability preferences.
@@ -405,6 +452,33 @@ needed became a shim in `wz4port/compat/`.
 ```
  M wz4frlib/wz3_bitmap_code.cpp   <emmintrin.h> -> "simd_compat.hpp";
                                  GenBitmap::Text guarded pending FreeType
+```
+
+**Mesh library — 3 files.** `patches/10`. All guarded on
+`WZ4PORT_HEADLESS_MTRL`, so the unguarded build is unchanged. Two of the three
+hunks in the `.cpp` fix code that **had never been compiled** on any non-Windows
+target (`architecture.md` A52).
+
+```
+ M wz4frlib/wz4_anim.hpp   doc.hpp -> doc_core.hpp (unguarded; correct either way)
+ M wz4frlib/wz4_mesh.hpp   forward-declare Wz4Mtrl; add util/image.hpp;
+                           guard ConvertFrom
+ M wz4frlib/wz4_mesh.cpp   guard the renderer (864 lines) and the ChaosMesh
+                           import; correct MakePath's stale stub signature
+```
+
+**Mesh operator module — 7 files, 3 of them already counted above** (patch 11
+edits `tools/wz4ops/doc.hpp`, `doc.cpp` and `output.cpp` again, and adds
+`parse.cpp`). `patches/11`. `wz4ops` gained a
+per-operator `headless = 0;` opt-out, because an operator *declaration* cannot be
+preprocessor-guarded and the thing that breaks is the derived registration, not
+the body (A50). It also now defines `WZ4_HEADLESS` in the generated `.hpp` (A51).
+
+```
+ M tools/wz4ops/{doc.hpp,doc.cpp,parse.cpp,output.cpp}   Op::Headless + the skips
+ M wz4frlib/wz4_mesh_ops.ops   guarded header block; 2 x headless = 0
+ M wz4frlib/wz4_mesh_obj.cpp   ) 1 x guarded include each — both name nothing
+ M wz4frlib/wz4_mesh_lwo.cpp   ) from the materials module they were including
 ```
 
 **Encoding only — 30 files, 72 characters.** Latin-1 → UTF-8, verified

@@ -6,7 +6,14 @@
 /**************************************************************************+*/
 
 #include "wz4_mesh.hpp"
+// wz4port: UNUSED here — nothing in this file names a material, a texture or a
+// material type; checked for Mtrl, Texture2D and Wz4MtrlType, none present. It
+// matters only because wz4_mtrl2_ops needs the asc-generated shader header this
+// port does not build. Same case as wz3_bitmap_ops.ops' poc_ops include in
+// patch 05. See wz4port/patches/11-mesh-ops-headless.md.
+#if !WZ4PORT_HEADLESS_MTRL
 #include "wz4_mtrl2_ops.hpp"
+#endif
 #include "util/scanner.hpp"
 #include "wz4lib/basic_ops.hpp"
 

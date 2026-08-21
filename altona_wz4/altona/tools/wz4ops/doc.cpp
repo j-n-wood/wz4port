@@ -160,6 +160,7 @@ Op::Op()
   TabType = L"";
   Code = 0;
   Flags = 0;
+  Headless = 1;                   // wz4port: opt OUT with `headless = 0;`
   HideArray = 0;
   ArrayNumbers = 0;
   GroupArray = 0;

@@ -6,7 +6,10 @@
 /**************************************************************************+*/
 
 #include "wz4_mesh.hpp"
+// wz4port: unused here, exactly as in wz4_mesh_obj.cpp — see the note there.
+#if !WZ4PORT_HEADLESS_MTRL
 #include "wz4_mtrl2_ops.hpp"
+#endif
 #include "util/scanner.hpp"
 #include "wz4lib/basic_ops.hpp"
 

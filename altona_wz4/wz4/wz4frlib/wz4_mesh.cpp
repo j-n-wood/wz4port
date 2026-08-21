@@ -836,6 +836,15 @@ void Wz4Mesh::RemoveDegenerateFaces()
 
 /****************************************************************************/
 
+#if !WZ4PORT_HEADLESS_MTRL
+
+// wz4port: as shipped this function cannot compile — chaosmesh_code.hpp is
+// commented out of the includes at the top of this file while the body below
+// dereferences ChaosMesh, ChaosMeshFace and Texture2D. It is guarded rather than
+// repaired: nothing in the texture/geometry scope this port targets reads a wz3
+// ChaosMesh, and the ConvertFromChaosMesh operator that calls it is dropped from
+// the headless registry to match.
+
 void Wz4Mesh::ConvertFrom(class ChaosMesh *src)
 {
   // convert faces
@@ -918,6 +927,8 @@ void Wz4Mesh::ConvertFrom(class ChaosMesh *src)
 
   MergeVertices();
 }
+
+#endif  // !WZ4PORT_HEADLESS_MTRL — end of the wz3 ChaosMesh import
 
 /****************************************************************************/
 
@@ -6669,7 +6680,10 @@ void Wz4Mesh::MakeText(const sChar *text,const sChar *font,sF32 height,sF32 extr
   sFatal(L"Wz4Mesh::MakeText() only for windows...");
 }
 
-void Wz4Mesh::MakePath(const sChar *path,sF32 extrude,sF32 maxErr,sInt flags)
+// wz4port: weldThreshold was added to the declaration and to the Windows
+// definition above, but not to this stub, so the non-Windows branch of this file
+// has never compiled. Signature corrected to match wz4_mesh.hpp:290.
+void Wz4Mesh::MakePath(const sChar *path,sF32 extrude,sF32 maxErr,sF32 weldThreshold,sInt flags)
 {
   sFatal(L"Wz4Mesh::MakePath() only for windows...");
 }
