@@ -10,7 +10,13 @@
 
 #include "base/types2.hpp"
 #include "base/math.hpp"
-#include "wz4lib/doc.hpp"
+// wz4port: was wz4lib/doc.hpp, which means "the document model AND the gui" and
+// so reaches doc_gui.hpp and the generated util/shaders.hpp. This header uses
+// none of that — checked: no wPaintInfo, wHandle, wGridFrameHelper,
+// wCustomEditor or sSimpleMaterial anywhere in it. Same one-line change patch 06
+// made to wz3_bitmap_code.hpp, for the same reason.
+// See wz4port/patches/10-mesh-headless.md.
+#include "wz4lib/doc_core.hpp"
 #include "wz4frlib/bspline.hpp"
 
 class Wz4Channel;

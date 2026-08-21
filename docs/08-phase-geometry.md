@@ -53,40 +53,173 @@ A polygon soup with half-edge adjacency computed on demand. Triangles and quads.
 
 ---
 
-## The one structural change
+## The structural changes
 
-`wz4_mesh.cpp` is banner-delimited, and the boundaries are already exactly where we need them:
+**This section was rewritten after measuring, before any code was written.** The survey's
+central simplifying assumption was wrong, and the correction changes what has to be patched.
+What follows is what the tree actually says.
+
+### Confirmed exactly as surveyed
+
+`wz4_mesh.cpp` is banner-delimited and the boundaries are where the survey said:
 
 | Lines | Content | Disposition |
 |---|---|---|
-| 1–4,424 | Components, serialisation, clusters, connectivity, transforms, topology, selection | **Take as-is.** Pure CPU; only 3 renderer touches, all `Doc->IsPlayer` flags |
-| **4,425–5,288** | `ChargeWire`/`ChargeSolid`/`ChargeBBox`/`Charge`/`BeforeFrame`/`Render`/`RenderInst`/`RenderBone*` | **Split out.** All 18 `sGeometry`/`sVertexFormat`/`sMaterial` references live here |
-| 5,289–5,854 | `MakeGrid`/`Cube`/`Torus`/`Disc`/`Sphere`/`Cylinder` | **Take as-is.** Pure CPU |
-| **5,855–6,650** | `MakeText`/`MakePath` — Font3D and SVG path | **Reimplement or stub.** Win32 GDI (`GetGlyphOutlineW`) + `glu32`, already platform-guarded with an `sFatal` fallback |
+| 1–4,423 | Components, serialisation, clusters, connectivity, transforms, topology, selection | **Take as-is** |
+| **4,424–5,287** | `ChargeWire`/`ChargeSolid`/`ChargeBBox`/`Charge`/`BeforeFrame`/`Render`/`RenderInst`/`RenderBone*` | **Split out** into `wz4_mesh_render.cpp` |
+| 5,288–5,854 | `MakeGrid`/`Cube`/`Torus`/`Disc`/`Sphere`/`Cylinder` | **Take as-is** |
+| **5,855–6,650** | `MakeText`/`MakePath` | **Stub, then 6.6.** Win32 GDI + `glu32` |
 | 6,651–7,406 | Plane splitting, wz3 min-mesh loading | **Take as-is** |
 
-Move 4,425–5,288 into `wz4_mesh_render.cpp` and pimpl the GPU handles in `Wz4MeshCluster`
-(`sGeometry *Geo[2]; sGeometry *InstanceGeo[4]; Wz4Mtrl *Mtrl;`). Mechanical — the section
-boundary is already a comment banner.
+The split points are the `/*** Painting ***/` and `/*** Generators ***/` banners, so they are
+exact rather than approximate. And the claim that matters held under measurement:
 
-Recorded as `wz4port/patches/04-mesh-render-split.md`.
+> **Zero** references to `sGeometry`, `sVertexFormat`, `sMaterial`, `sTexture`, `sCBuffer`,
+> `sSetTarget` or `sDrawRange` exist outside lines 4,424–5,287.
 
-**Materials are out of scope**, so `Wz4Mtrl` becomes an opaque handle the headless library
-never dereferences. Meshes carry material *assignments*; nothing renders them with a
-Werkkzeug material.
+`bspline.cpp` includes nothing but its own header and comes across untouched, as surveyed.
+
+### Wrong: "`Wz4Mtrl` becomes an opaque handle the library never dereferences"
+
+It is dereferenced, in three places outside the render section:
+
+- **Serialisation** (`wz4_mesh.cpp:483–509`) does `new SimpleMtrl`, `c.Mtrl->Prepare()` and
+  refcount traffic. A cluster's material is part of the mesh's *serialised form*.
+- **Copy and merge** (`:567`, `:639`, `:1081`, `:1170`) do `AddRef`/`Release`.
+- **`:902`** constructs a `SimpleMtrl` and calls `SetMtrl(...Flags)`.
+
+So meshes do not merely carry material *assignments*; the mesh library constructs and prepares
+concrete materials.
+
+### Wrong by omission: three headers cannot be included headlessly at all
+
+The survey measured `.cpp` dependencies and missed the `.hpp` chain, which is where phase 2's
+equivalent problem lived too:
+
+- **`wz4_mtrl2.hpp`** includes `wz4frlib/wz4_mtrl2_shader.hpp`, which **does not exist in the
+  tree** — it is generated from `wz4_mtrl2_shader.asc` by the `asc` shader compiler, which this
+  port does not build and which `CLAUDE.md` lists as out of scope. It also includes
+  `wz4lib/doc.hpp`.
+- **`wz4lib/doc.hpp`** includes `doc_gui.hpp` *unconditionally* (patch 04 split the file but kept
+  `doc.hpp` meaning "both"), so anything reaching it needs the GUI and the generated shader
+  library.
+- **`wz4_anim.hpp`**, which `wz4_mesh.hpp` also includes, reaches `wz4lib/doc.hpp` as well.
+- **`wz4_mesh_obj.cpp`** includes the generated `wz4_mtrl2_ops.hpp`.
+
+This is the same shape as the phase-2 blocker where `doc.hpp` reached `util/shaders.hpp`, and it
+has the same three-way answer: redirect an include, extract a dependency-free declaration, or
+provide a headless implementation.
+
+### The corrected work list, and its precedents
+
+| # | Change | Precedent | Status |
+|---|---|---|---|
+| 1 | `wz4_anim.hpp`: `doc.hpp` → `doc_core.hpp` | patch 06 did exactly this for `wz3_bitmap_code.hpp` | **done** |
+| 2 | ~~Extract `Wz4Mtrl` into `wz4_mtrl_iface.hpp`~~ → **forward-declare it** | — | **done, smaller** |
+| 3 | ~~Move lines 4,424–5,287 into `wz4_mesh_render.cpp`~~ → **guard them** | patch 05's `#ifndef WZ4_HEADLESS` | **done, smaller** |
+| 4 | A headless concrete material in `wz4port/compat/` | new | **done** |
+| 5 | `wz4_mesh_ops.ops`'s four cross-module includes | patch 05 | outstanding |
+| 6 | `wz4_mesh_obj.cpp`'s materials-ops include, for import | as (5) | outstanding |
+
+Two of those turned out **smaller than planned**, and both for the same reason —
+the plan assumed a dependency that measurement did not support:
+
+- **(2) needs only a forward declaration.** `wz4_mesh.hpp`'s single use of
+  materials is `Wz4Mtrl *Mtrl` — a pointer. The patch-04/06/09 extractions
+  existed because headless code needed the *definitions* (`sGuiTheme` by value,
+  `sGuiColor`'s enumerators); here it needs a name. It does need
+  `#include "util/image.hpp"` added, because `Displace()` takes an `sImageI16 *`
+  it had been getting transitively through the materials header.
+- **(3) is a guard, not a move.** The project rule prefers a patch to forking a
+  file, and moving 864 lines is nearer a fork: it risks transcription and creates
+  an upstream file to keep in step. The plan's other reason for moving — pimpl the
+  GPU handles out of the header — evaporated with (2). Flipping
+  `WZ4PORT_HEADLESS_MTRL` brings the renderer back in one step.
+
+**Checkpoint reached:** `wz4_mesh.hpp` compiles headlessly, and the existing
+132-test suite is unaffected.
+
+### Also missed by the survey: the ops module's cross-module dependencies
+
+`wz4_mesh_ops.ops`'s header block includes four *other* generated op modules —
+`wz4lib/poc_ops.hpp`, `chaosmesh_ops.hpp`, `wz4_anim_ops.hpp`,
+`wz4_mtrl2_ops.hpp` — plus `wz4_mtrl2.hpp` again.
+
+Measured, the exposure is small. Of the **47** mesh operators, exactly **two**
+name a type from another module:
+
+- `ConvertFromChaosMesh(ChaosMesh)` — the wz3 legacy path
+- `SetMaterial(Wz4Mesh,Wz4Mtrl)` — materials
+
+So **45 of 47 register with nothing outside the mesh library**, and the two get the
+treatment `GenBitmap.Text` got in 4.1: guarded out, documented, revisited later.
+
+One related find: `Wz4Mesh::ConvertFrom(ChaosMesh *)` dereferences an **incomplete
+type** — `chaosmesh_code.hpp` is commented out of `wz4_mesh.cpp`'s includes
+(`:12`) while the body reads `src->Clusters[i]->Material->Material->Flags`. As
+shipped, this file does not compile. It has to be guarded regardless of what this
+port wants.
+
+`Wz4Mtrl` itself is headless-compatible: it derives from `wObject` (which we compile) and its
+virtuals use only `base/graphics.hpp` and `base/math.hpp` types, both of which build. Only
+`SimpleMtrl` is not — it holds `SimpleShader*`, `Texture2D*` and a `sCBuffer<SimpleShaderVPara>`
+from the missing generated header.
+
+### The one decision without a precedent
+
+Serialisation names `SimpleMtrl` concretely, so the headless build needs *something* by that name.
+Two options:
+
+**(a) A headless `SimpleMtrl` in `wz4port/compat/`** — satisfying the constructor, `Prepare()`,
+`SetMtrl()` and the pure virtuals, and doing nothing. The two definitions never meet, because the
+real one lives in a translation unit this build does not compile, so unlike the `sGuiColor` case
+in patch 09 duplication here cannot collide.
+
+**(b) Guard the material branches out** with `#if`, so meshes load without materials.
+
+**(a) is chosen** — but the first rationale written here was wrong and is worth correcting rather
+than quietly replacing, because a future reader would otherwise believe more works than does.
+
+The claim was that (a) "keeps the serialised form intact". It does not, and it does not need to.
+`Wz4Mesh::Serialize` is **unreachable in this build, and arguably in the whole dump**: nothing
+calls it, and it cannot be reached generically either — `wObject` declares no virtual `Serialize`,
+and `AddRef`/`Release` are non-virtual inlines. Mesh *objects* are computed at runtime; `.wz4`
+documents store operators and parameters, not evaluated meshes.
+
+A faithful stub is not merely unnecessary but impractical: `SimpleMtrl::Serialize_`
+(`wz4_mtrl2.cpp:779`) does `s.OnceRef(Tex[i])` on three `Texture2D` handles, so reading one
+faithfully would drag in the texture object type and the render library behind it.
+
+So the requirement on the headless material is only that it **compile**. And the correct behaviour
+if the dead path ever comes alive is already there for free: `Wz4Mtrl::Serialize` is inherited and
+does `sFatal(L"no serialize for this material type yet")` — a loud stop rather than a desynced
+stream, which is exactly what you want from a path nobody has exercised. The headless material
+therefore does **not** override it.
+
+Recorded as `wz4port/patches/10-mesh-headless.md`. **Not patch 04** — the survey predates patches
+04 through 09.
 
 ---
 
 ## Stages
 
-### 6.1 — Split and build `libwz4geo`
+### 6.1 — Split and build `wz4geo`
 
-Perform the render split; build `wz4_mesh.cpp` (remainder), `wz4_bsp.cpp`, `bspline.cpp` and
-the three importers against `libwz4core`.
+Perform the render split and the four header changes above; build `wz4_mesh.cpp` (remainder),
+`wz4_bsp.cpp`, `bspline.cpp` and the importers against `wz4core`.
 
-`Text3D` and `Path3D` are stubbed initially — two operators of 47, not worth blocking on.
+`Text3D` and `Path3D` are stubbed initially — two operators of 47, not worth blocking on. Same
+treatment as `GenBitmap.Text` in phase 4.1: stub behind a flag, leave the mesh empty rather than
+failing, so a graph containing one still evaluates.
 
-**Gate:** `libwz4geo` compiles and links headlessly on macOS arm64.
+Order matters, and it is the order the dependencies force: headers first (1, 2, 5), then the
+headless material (4), then the split (3). Getting a clean compile of `wz4_mesh.hpp` alone is the
+first checkpoint, and it is worth reaching before touching the `.cpp` at all — the phase-2
+equivalent (`headless_core_gate`) earned its keep by being a compile-only target.
+
+**Gate:** `wz4geo` compiles and links headlessly on macOS arm64, **45 of 47** operators register
+(`ConvertFromChaosMesh` and `SetMaterial` are guarded out, as `GenBitmap.Text` was in 4.1), and a
+`Cube` evaluates to a mesh with the expected vertex and face counts.
 
 ### 6.2 — OBJ export and `wz4gen render` for meshes
 
@@ -143,8 +276,9 @@ on it.
 
 ## Deliverables
 
-- `wz4port/patches/04-mesh-render-split.md`
-- `wz4port/libwz4geo/`
+- `wz4port/patches/10-mesh-headless.md`
+- `wz4port/compat/mtrl_headless.cpp` — the concrete material the serialiser names
+- `wz4geo` target
 - `wz4port/tests/geo/` — cases, structural assertions, golden OBJs
 - 3D preview in the editor
 - OBJ export in `wz4gen`
@@ -153,7 +287,8 @@ on it.
 
 | Risk | Assessment |
 |---|---|
-| The render split is less clean than the banners suggest | Low-moderate. The 18 graphics references are all in one region; the risk is `Wz4MeshCluster`'s GPU members leaking into serialisation, which needs checking early |
+| ~~The render split is less clean than the banners suggest~~ | **Retired by measurement.** Zero graphics references outside lines 4,424–5,287, and the boundaries are banner comments |
+| The material dependency is deeper than the three call sites found | **The live risk, replacing the one above.** The GPU members *do* reach serialisation — that was the survey's stated worry and it turned out to be true. Three call sites are known; a fourth found late would mean revisiting the headless-material decision |
 | `Subdivide`/`Extrude`/`Bevel` are subtle and fail in ways structural assertions miss | Moderate. These are the hardest algorithms in the set. Mitigated by visual inspection alongside assertions |
 | XSI importer proves unusable without test assets | Low impact. OBJ and LWO cover the need; XSI is legacy |
 | Tessellation for `Text3D` diverges from GLU | Low. Both produce valid triangulations; only the triangulation differs, not the silhouette |

@@ -8,7 +8,15 @@
 #include "wz4frlib/wz4_mesh.hpp"
 #include "wz4frlib/wz4_mesh_ops.hpp"
 #include "util/algorithms.hpp"
+// wz4port: the real materials header needs the asc-generated shader header, which
+// this port does not build. The headless stand-in supplies only what the mesh
+// library names — see wz4port/compat/include/wz4_mtrl_headless.hpp for what it
+// deliberately does not do, and wz4port/patches/10-mesh-headless.md.
+#if WZ4PORT_HEADLESS_MTRL
+#include "wz4_mtrl_headless.hpp"
+#else
 #include "wz4frlib/wz4_mtrl2.hpp"
+#endif
 //#include "wz4frlib/chaosmesh_code.hpp"
 
 struct SolidVertex
@@ -4427,6 +4435,24 @@ gotone:
 /***                                                                      ***/
 /****************************************************************************/
 
+// wz4port: everything from here to the "Generators" banner is the renderer —
+// ChargeWire/ChargeSolid/ChargeBBox/Charge/BeforeFrame/Render/RenderInst/
+// RenderBone*. Measured: it holds EVERY reference in this file to sGeometry,
+// sVertexFormat, sMaterial, sTexture, sCBuffer, sSetTarget and sDrawRange, and
+// there are none outside it.
+//
+// docs/08-phase-geometry.md planned to MOVE this into a new wz4_mesh_render.cpp.
+// A guard is used instead, because the project's rule is to prefer a patch to
+// forking a file and moving 864 lines is nearer a fork than a patch: it risks
+// transcription, it creates an upstream file that has to be kept in step, and it
+// buys nothing a guard does not. The plan's other reason for moving — to pimpl
+// the GPU handles out of the header — turned out to be unnecessary once the
+// header proved to need only a forward declaration of Wz4Mtrl.
+//
+// Flipping WZ4PORT_HEADLESS_MTRL brings the renderer back in one step, which is
+// what a later phase wanting a real renderer would want.
+#if !WZ4PORT_HEADLESS_MTRL
+
 struct WireFormat
 {
   sVector31 Pos;
@@ -5284,6 +5310,8 @@ void Wz4Mesh::RenderBoneInst(sInt flags,sInt index,sInt mc,const sMatrix34CM *ma
     break;
   }
 }
+
+#endif  // !WZ4PORT_HEADLESS_MTRL — end of the renderer
 
 /****************************************************************************/
 /***                                                                      ***/
