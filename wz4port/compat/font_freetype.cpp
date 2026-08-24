@@ -38,6 +38,8 @@
 #include "base/windows.hpp"
 #include "gui/guicolor.hpp"
 
+#include "font_outline.hpp"       // stage 6.6c: glyph outlines for Text3D
+
 #include <ft2build.h>
 #include FT_FREETYPE_H
 #include FT_OUTLINE_H
@@ -477,6 +479,110 @@ void sFont2D::Print(sInt flags,sInt x,sInt y,const sChar *text,sInt len)
 
     pen += advance;
   }
+}
+
+/****************************************************************************/
+/***   Glyph outlines, for Text3D — stage 6.6c                            ***/
+/****************************************************************************/
+//
+// Here rather than in a file of its own because this one already owns the
+// FreeType handle and ResolveFont — the alias table, the macOS font directories
+// and the fallback that keeps a graph working when the named font is absent. See
+// compat/font_outline.hpp for the coordinate convention.
+
+sBool wLoadGlyphOutline(const sChar *font,sF32 height,sBool bold,sBool italic,
+  sInt ch,wGlyphOutline &out)
+{
+  out.Clear();
+
+  FT_Library ft = GetFreeType();
+  if(!ft)
+    return 0;
+
+  sString<1024> path;
+  if(!ResolveFont(font,path))
+  {
+    sPrintF(L"Text3D: no font file found for <%s>\n",font);
+    return 0;
+  }
+
+  sDInt bytes = 0;
+  sU8 *data = sLoadFile(path,bytes);
+  if(!data)
+  {
+    sPrintF(L"Text3D: could not read <%s>\n",(const sChar *)path);
+    return 0;
+  }
+
+  FT_Face face = 0;
+  if(FT_New_Memory_Face(ft,data,FT_Long(bytes),0,&face)!=0)
+  {
+    sPrintF(L"Text3D: FreeType could not open <%s>\n",(const sChar *)path);
+    delete[] data;
+    return 0;
+  }
+
+  // The same scale the Windows path uses: GDI is asked for height*128 and
+  // divides by 128, so the two produce the same units.
+  const sInt px = sMax(8,sInt(height*128.0f));
+  FT_Set_Pixel_Sizes(face,0,FT_UInt(px));
+
+  if(italic)
+  {
+    FT_Matrix m;
+    m.xx = 0x10000; m.xy = 0x03800;     // a 12 degree shear, as in sFont2D above
+    m.yx = 0;       m.yy = 0x10000;
+    FT_Set_Transform(face,&m,0);
+  }
+
+  // FT_LOAD_NO_BITMAP because a bitmap strike has no outline to walk, and
+  // NO_HINTING because hinting distorts an outline to fit a pixel grid — which
+  // is exactly wrong when the destination is geometry rather than pixels.
+  const FT_UInt index = FT_Get_Char_Index(face,FT_ULong(ch));
+  if(FT_Load_Glyph(face,index,FT_LOAD_NO_BITMAP|FT_LOAD_NO_HINTING)!=0)
+  {
+    FT_Done_Face(face);
+    delete[] data;
+    return 0;
+  }
+
+  if(bold)
+    FT_Outline_Embolden(&face->glyph->outline,px*64/24);
+
+  const sF32 scale = 1.0f/(64.0f*128.0f);
+  out.AdvanceX = face->glyph->advance.x * scale;
+
+  FT_BBox box;
+  FT_Outline_Get_CBox(&face->glyph->outline,&box);
+  out.BlackBoxX = (box.xMax-box.xMin) * scale;
+
+  const FT_Outline &ol = face->glyph->outline;
+  sInt first = 0;
+  for(sInt c=0;c<ol.n_contours;c++)
+  {
+    const sInt last = ol.contours[c];
+    for(sInt i=first;i<=last;i++)
+    {
+      wGlyphPoint *p = out.Points.AddMany(1);
+      p->X = ol.points[i].x * scale;
+      p->Y = ol.points[i].y * scale;
+
+      // FT_CURVE_TAG is the low 2 bits: 1 = on-curve, 0 = conic control,
+      // 2 = cubic control. TrueType uses conic and CFF uses cubic, so a build
+      // that handled only one would work for half the fonts on the machine —
+      // the same trap tess2d's winding test guards against.
+      const sInt tag = FT_CURVE_TAG(ol.tags[i]);
+      p->Kind = (tag==FT_CURVE_TAG_ON)    ? wGP_ON
+              : (tag==FT_CURVE_TAG_CUBIC) ? wGP_CUBIC
+                                          : wGP_CONIC;
+    }
+    out.ContourEnd.AddTail(out.Points.GetCount()-1);
+    first = last+1;
+  }
+
+  FT_Done_Face(face);
+  delete[] data;
+  return 1;
 }
 
 /****************************************************************************/

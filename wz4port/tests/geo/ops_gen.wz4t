@@ -89,7 +89,8 @@ stack at 20,0 {
   }
 }
 
-// Empty, warned, not fatal. See patch 12.
+// Straight edges and one angular counter (the 4), which is the easiest thing a
+// glyph walk can get right — so it is the first case, not the only one.
 stack at 24,0 {
   op Wz4Mesh.Text3D {
     name = g_text3d
@@ -97,6 +98,26 @@ stack at 24,0 {
     Font = "Arial"
     Height = 0.5
     Extrude = 0.1
+  }
+}
+
+// The demanding case, and each character is here for a reason:
+//
+//   o   a round counter — a HOLE bounded by curves, so it exercises conic
+//       flattening and tess2d's bridging together
+//   g   a descender, so the mesh must extend below the baseline
+//   8   two counters in one glyph, which is where hole classification by nesting
+//       depth earns its keep
+//   ' ' a space: an advance with no contours at all. If the layout skipped the
+//       advance for empty glyphs, "o g" would be as wide as "og"
+stack at 40,0 {
+  op Wz4Mesh.Text3D {
+    name = g_text3d_holes
+    Text = "og 8"
+    Font = "Arial"
+    Height = 0.5
+    Extrude = 0.1
+    MaxError = 0.02
   }
 }
 

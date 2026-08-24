@@ -541,6 +541,7 @@ target_include_directories(wz4geo PUBLIC
   "${WZ4_GENHL_DIR}"
   "${WZ4_GENHL_DIR}/wz4frlib"
   "${CMAKE_CURRENT_SOURCE_DIR}/geo"
+  "${COMPAT_DIR}"                   # font_outline.hpp, for Text3D in 6.6c
 )
 # WZ4PORT_TESS2D opens wz4_mesh.cpp's 2D extrusion region — the Text3D/Path3D
 # path that was entirely behind sPLAT_WINDOWS because of glu32. PUBLIC because the

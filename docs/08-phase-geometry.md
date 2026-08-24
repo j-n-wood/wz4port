@@ -853,7 +853,45 @@ callbacks stay undefined.
   degenerate faces that do not exist at any real extrude value. Several minutes went into chasing
   an artefact of the measurement.
 
-`MakeText` still warns and produces an empty mesh — it needs glyph outlines, which is 6.6c.
+#### 6.6c — `Text3D` — **done**
+
+`Text3D` produces extruded 3D text from FreeType outlines. **"wz4"** renders as letters with the
+4's counter as a real hole; **"og 8"** exercises every hazard at once and all of them work:
+
+| character | why it is in the string |
+|---|---|
+| `o` | a **round counter** — a hole bounded by curves, so conic flattening and tess2d's bridging together |
+| `g` | a **descender**, so the mesh must extend below the baseline (measured: y min −0.105) |
+| `8` | **two counters in one glyph**, which is where classifying holes by nesting depth earns its keep |
+| ` ` | a space: an advance with **no contours at all**. If layout skipped the advance for empty glyphs, `"og 8"` would be as wide as `"og8"` |
+
+The structure is deliberately the Windows one — same layout loop, per-character temp mesh,
+`Finish2DExtrusionOp` and chunk handling — with `GetGlyphOutlineW` and the `TTPOLYGONHEADER` walk
+replaced by `wLoadGlyphOutline` and an `FT_Outline` walk. Both feed the **same** Bézier subdivision
+helpers, so the two platforms flatten curves identically rather than merely similarly. The
+coordinate scale is chosen to match: GDI is asked for `height*128` and divides by 128; FreeType is
+asked for the same pixel size and its 26.6 outline is divided by 64·128.
+
+Four things the FreeType path has to handle that the Windows one never sees:
+
+- **A contour may start on a control point.** A `TTPOLYGONHEADER` always carries an on-curve start;
+  `FT_Outline` need not. The walk finds the first on-curve point and starts there, falling back to
+  the implied midpoint when a contour is *entirely* control points, which is legal.
+- **Conic *and* cubic.** TrueType uses quadratic control points, CFF/PostScript uses cubic. Handling
+  only one would work for half the fonts on the machine — the same trap tess2d's winding test guards.
+- **`FT_LOAD_NO_HINTING`**, because hinting distorts an outline to fit a pixel grid, which is exactly
+  wrong when the destination is geometry.
+- **Every glyph with a counter is a bridged hole**, so `MakeText` ends with the same
+  `RemoveDegenerateFaces()` `MakePath` needs.
+
+**Not golden-locked, deliberately.** The geometry comes from whichever Arial the host ships, and two
+macOS versions do not carry the same outlines — a byte-exact golden would be a false-failure
+generator, exactly as phase 4.5 concluded for `GenBitmap.Text`. The cases carry an explicit `NOLOCK`
+marker that a re-lock **preserves** rather than overwriting, so "do not lock this" cannot quietly
+become a lock. What is still asserted: the invariant battery, and `z` spanning exactly 0..0.1,
+which is exact because it is the extrude parameter.
+
+**Phase 6 is complete.** 151/151 ctest.
 
 ### 6.7 — `Extrude` builds side faces — **done**
 

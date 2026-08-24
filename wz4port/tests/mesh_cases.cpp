@@ -161,8 +161,21 @@ static const wExpect GenCases[] =
   { L"g_disc",   7,7,0, CL_OPEN,     NOB,0.0f,NOB,      NOB,0.0f,NOB, 0,0,1,
     L"Disc(7): a 7-triangle fan, flat, so zero extent on y" },
 
-  { L"g_text3d",  0,0,0, CL_ANY,     NOB,NOB,NOB,       NOB,NOB,NOB, 0,0,1,
-    L"Text3D: EMPTY and warned, not fatal — patch 12. Stage 6.6 implements it" },
+  { L"g_text3d",  NOC,NOC,NOC, CL_ANY, NOB,0.0f,0.0f,   NOB,NOB,0.1f, 0,0,1,
+    L"Text3D \"wz4\" on FreeType outlines, extruded 0.1. Face counts are NOT "
+    L"asserted and the checksum is NOLOCK: the geometry comes from whichever "
+    L"Arial the host ships. What IS exact is z 0..0.1 — the extrude parameter — "
+    L"and y starting at 0, since none of w, z or 4 descends below the baseline. "
+    L"Empty before 6.6c" },
+
+  { L"g_text3d_holes", NOC,NOC,NOC, CL_ANY, NOB,NOB,0.0f, NOB,NOB,0.1f, 0,0,1,
+    L"\"og 8\" — the demanding case, one character per hazard: `o` is a round "
+    L"counter, so a HOLE bounded by curves, exercising conic flattening and "
+    L"tess2d's bridging together; `g` descends below the baseline; `8` has TWO "
+    L"counters, which is where classifying holes by nesting depth earns its "
+    L"keep; and the space is an advance with no contours at all — if the layout "
+    L"skipped the advance for empty glyphs, \"og 8\" would be as wide as \"og8\". "
+    L"z is the only exact bound, for the same reason as above" },
 
   { L"g_path3d",  5,2,3, CL_CLOSED,  0.0f,-1.0f,0.0f,   1.0f,0.0f,0.1f, 0,0,1,
     L"Path3D on \"M 0 0 L 1 0 L 1 1 z\" extruded 0.1: a triangular prism, so "
@@ -469,6 +482,18 @@ struct wLock
   sU64 Checksum;
 };
 
+// A case whose output is not reproducible across machines, and so must not be
+// locked. Only the Text3D cases: the geometry comes from whichever Arial the host
+// has, and two macOS versions do not ship the same outlines. Same decision phase
+// 4.5 took for GenBitmap.Text, and for the same reason — a byte-exact golden on
+// a system font is a false-failure generator.
+//
+// The structural assertions still apply: the battery, the face arity, and the z
+// extent, which IS exact because it is the extrude parameter.
+//
+// -lock preserves this marker rather than overwriting it with today's value.
+#define NOLOCK 0xffffffffffffffffULL
+
 // WHAT THE REVIEW FOUND, which is why these are worth reading rather than just
 // diffing. The block cross-checks itself in three places, and all three hold
 // BIT-EXACTLY — a stronger statement than any of the tolerance-based assertions
@@ -500,7 +525,8 @@ static const wLock Locks[] =
   { L"g_torus",               0x7763506e1284c36eULL },
   { L"g_cylinder",            0x347fa988ddd9c861ULL },
   { L"g_disc",                0xab89217d712098a6ULL },
-  { L"g_text3d",              0x0000000000000000ULL },
+  { L"g_text3d",              NOLOCK },
+  { L"g_text3d_holes",        NOLOCK },
   { L"g_path3d",              0x3569ecf987077ffaULL },
   { L"g_path3d_hole",         0x2eabf2134db07369ULL },
   { L"g_import_missing",      0x0000000000000000ULL },
@@ -735,6 +761,18 @@ static void RunCase(const wExpect &e,wType *meshtype)
     // its members, which is a compile error 48 lines later.
     sString<64> name;
     name.PrintF(L"L%q,",e.Store);
+
+    // A deliberately unlocked case stays unlocked. Regenerating it with today's
+    // measurement would quietly turn a "do not lock this" decision into a lock,
+    // which is the one thing a re-lock step must not do on its own.
+    const wLock *prev = FindLock(e.Store);
+    if(prev && prev->Checksum==NOLOCK)
+    {
+      sPrintF(L"  { %-25s NOLOCK },\n",(const sChar *)name);
+      obj->Release();
+      return;
+    }
+
     sPrintF(L"  { %-25s 0x%08x%08xULL },\n",(const sChar *)name,
       sU32(f.Checksum>>32),sU32(f.Checksum));
   }
@@ -750,6 +788,11 @@ static void RunCase(const wExpect &e,wType *meshtype)
     {
       sPrintF(L"    FAIL  %s has no locked checksum (run with -lock)\n",e.Store);
       Failures++;
+    }
+    else if(lock->Checksum==NOLOCK)
+    {
+      sPrintF(L"          %s: not locked, output depends on the host's font\n",
+        e.Store);
     }
     else if(lock->Checksum!=f.Checksum)
     {

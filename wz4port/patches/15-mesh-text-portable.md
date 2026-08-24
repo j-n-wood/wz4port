@@ -2,7 +2,7 @@
 
 **Files:** 1 upstream (`wz4frlib/wz4_mesh.cpp`), **101 insertions, 0 deletions**
 **Phase:** 6 (geometry), stage 6.6b
-**Status:** applied — `Path3D` works; `MakeText` still needs 6.6c
+**Status:** applied — `Path3D` in 6.6b, `MakeText` on FreeType in 6.6c
 **Wider context:** `docs/08-phase-geometry.md` §6.6, `docs/architecture.md` A60
 
 ## Why
@@ -66,9 +66,18 @@ one region of one file and undone by the `#endif`.
    trailing empty face they left behind goes too, which is why `MakePath`'s
    `Faces.RemTail()` is guarded — removing the last face would now delete a real
    triangle.
-4. **`MakeText` keeps an inner Windows guard** and a warning stub elsewhere. It
-   needs glyph outlines, which is stage 6.6c. `MakePath` needs no font, which is
-   why it went first: it isolates a new tessellator against a real operator.
+4. **`MakeText` gets three arms**, on an inner guard: the Windows one unchanged,
+   a FreeType one added in 6.6c, and a warning stub when no font backend is built
+   (`WZ4PORT_HAVE_SFONT2D`, the same flag `GenBitmap.Text` uses). `MakePath` needs
+   no font, which is why it went first: it isolates a new tessellator against a
+   real operator before a font is added on top.
+
+   The FreeType arm keeps the Windows structure — same layout loop, per-character
+   temp mesh, `Finish2DExtrusionOp`, chunk handling — and swaps only the glyph
+   walk. Both feed the SAME Bézier subdivision helpers, so the platforms flatten
+   curves identically rather than merely similarly. It ends with the same extra
+   `RemoveDegenerateFaces()`, because every glyph with a counter is a bridged
+   hole.
 
 ## One addition that is not just a guard
 
@@ -105,5 +114,15 @@ derived.
 
 ## Behaviour
 
-`Path3D` produces geometry instead of warning. `Text3D` still warns and produces
-an empty mesh, until 6.6c.
+Both operators produce geometry instead of warning, when FreeType is present.
+Without it, `Text3D` keeps patch 12's warning and `Path3D` still works — it needs
+no font.
+
+Two differences from the Windows original, both consequences of ear clipping
+rather than a sweep line, and both stated in `geo/tess2d.hpp`:
+
+- a self-intersecting `Path3D` string is not handled;
+- bridged holes leave zero-area faces that need the extra `RemoveDegenerateFaces()`.
+
+Neither affects glyphs, which are non-self-intersecting with properly nested
+counters.

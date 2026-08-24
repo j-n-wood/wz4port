@@ -5,15 +5,17 @@ stand, what has been decided and why, and what would otherwise have to be
 rediscovered the hard way.
 
 **Last updated:** end of phase 5. **Phase 5 is COMPLETE.**
-**Status:** Phases 1–5 complete and verified. **`wz4ed` is a working texture
-editor**: it opens a document, shows the stacking canvas, offers all 34 texture
-operators, inserts/deletes/moves/resizes them under the original's collision
-rules, edits every parameter from a panel generated entirely from metadata,
-previews the result live, and undoes all of it. `ctest` is **151 tests** on
-arm64; the 90 texture goldens remain bit-identical between the NEON and SSE2
-builds.
+**Status:** Phases 1–6 complete and verified. **`wz4ed` is a working texture AND
+geometry editor**: it opens a document, shows the stacking canvas, offers all 34
+texture and 44 mesh operators, inserts/deletes/moves/resizes them under the
+original's collision rules, edits every parameter from a panel generated entirely
+from metadata, previews bitmaps flat and meshes in 3D, and undoes all of it.
+`ctest` is **151 tests** on arm64; the 90 texture goldens remain bit-identical
+between the NEON and SSE2 builds.
 
-**Priority 1 is done end to end** — generate textures, and edit them.
+**Priorities 1 and 2 are done end to end** — generate textures and geometry, and
+edit both. `Text3D` and `Path3D` work without `glu32` or GDI, on our own
+tessellator and FreeType outlines.
 
 **Phase 6 is under way: stage 6.1 is done** — `wz4geo` builds and links
 headlessly, 45 of 47 mesh operators register, and a `Cube` evaluates to a
@@ -423,8 +425,36 @@ One flaky observation worth recording: `wz4ed_shell` failed once in a full run a
 passed on every re-run. Three GL windows opening in quick succession is the likely
 cause. Not diagnosed further, but noted rather than ignored.
 
-Next: **6.6c** — `Text3D`, the last piece: FreeType glyph outlines and layout on
-top of a tessellator now known to work.
+**Stage 6.6c is done — and with it PHASE 6 IS COMPLETE.** 151/151 ctest.
+
+`Text3D` produces extruded 3D text from FreeType outlines. **"wz4"** renders as
+letters with the 4's counter as a real hole; **"og 8"** exercises every hazard at
+once, and all of them work: `o` is a round counter (a hole bounded by curves,
+so conic flattening and bridging together), `g` descends below the baseline,
+`8` has **two** counters — where classifying holes by nesting depth earns its
+keep — and the space is an advance with no contours, so `"og 8"` is wider than
+`"og8"`.
+
+The structure is deliberately the Windows one, with `GetGlyphOutlineW` and the
+`TTPOLYGONHEADER` walk replaced by an `FT_Outline` walk. Both feed the **same**
+Bézier subdivision helpers, so the platforms flatten curves identically rather
+than merely similarly, and the coordinate scale is chosen to match.
+
+Four things FreeType has that Windows never shows: a contour may **start on a
+control point** (handled, including the all-controls case); TrueType is conic
+while CFF is cubic, so handling one would work for half the fonts;
+`FT_LOAD_NO_HINTING`, because hinting distorts an outline to fit a pixel grid and
+the destination here is geometry; and every glyph with a counter is a bridged
+hole, so `MakeText` needs the same `RemoveDegenerateFaces()` `MakePath` does.
+
+**Not golden-locked, deliberately** — the geometry comes from the host's Arial,
+and two macOS versions do not ship the same outlines. Same conclusion phase 4.5
+reached for `GenBitmap.Text`. The cases carry an explicit `NOLOCK` marker that a
+re-lock **preserves** rather than overwriting, so "do not lock this" cannot
+quietly become a lock. Still asserted: the invariant battery and `z` spanning
+exactly the extrude depth.
+
+Next: **phase 7** — animated geometry, the third priority.
 
 **`wz4ed` is the editor.** It has a window, a menu bar, a metadata-driven
 inspector, and the stacking canvas: blocks coloured by output type, selection,
@@ -559,7 +589,7 @@ about the build.
 | 3 — Text graph format + CLI | **Done**, phase gate passed |
 | 4 — Texture library + tests | **Done**, phase gate passed. All 34 operators run |
 | 5 — Texture GUI | **Done**, phase gate passed. `wz4ed` edits textures |
-| 6 — Geometry | **Phase gate passed.** 6.1–6.5, 6.6a/b and 6.7 done; only 6.6c (Text3D) remains |
+| 6 — Geometry | **Done**, phase gate passed. All 45 operators, 3D preview, OBJ both ways, Text3D |
 | 7 — Animated geometry | Not started |
 
 ---
@@ -721,6 +751,9 @@ wz4port/
   geo/tess2d.hpp/.cpp          stage 6.6a — ear clipping with hole bridging, no glu32
   tests/tess2d_shapes.cpp        and its standalone test: counts and areas
   geo/mesh_tess.hpp/.cpp       stage 6.6b — the sink that replaces GLUtesselator
+  compat/font_outline.hpp      stage 6.6c — glyph outlines for Text3D, on FreeType
+                               (implemented in compat/font_freetype.cpp, which
+                                already owns the library handle and font lookup)
   tests/mesh_edit.cpp          stage 6.5 phase gate: build, edit, export, headless
   tests/mesh_cases.cpp         stage 6.3a Suite A: 48 derived cases, with derivations
                                (not mesh_ops.cpp — .gitignore eats *_ops.cpp, A48)

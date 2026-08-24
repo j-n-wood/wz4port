@@ -5934,6 +5934,9 @@ void Wz4Mesh::MakeCylinder(sInt segments,sInt slices,sInt top,sInt flags)
 
 #if WZ4PORT_TESS2D
 #include "mesh_tess.hpp"
+#if WZ4PORT_HAVE_SFONT2D
+#include "font_outline.hpp"       // stage 6.6c: Text3D's glyph outlines
+#endif
 
 // The GLU call names are mapped onto the sink rather than the twelve call sites
 // being rewritten. That is a deliberate choice about diff size: the bodies of
@@ -6511,16 +6514,217 @@ void Wz4Mesh::MakeText(const sChar *text,const sChar *font,sF32 height,sF32 extr
   DeleteDC(hDC);
 }
 
-#else   // wz4port: no glyph outlines yet — stage 6.6c. See patch 12 for why this
-        // warns and leaves the mesh empty rather than calling sFatal.
+#elif WZ4PORT_HAVE_SFONT2D
+
+// wz4port, stage 6.6c: the same function on FreeType outlines.
+//
+// The structure is deliberately the Windows one — same layout loop, same
+// per-character temp mesh, same Finish2DExtrusionOp, same chunk handling — with
+// GetGlyphOutlineW and the TTPOLYGONHEADER walk replaced by wLoadGlyphOutline and
+// an FT_Outline walk. Both feed the SAME Bezier subdivision helpers, so the two
+// platforms flatten curves identically rather than merely similarly.
+//
+// See wz4port/compat/font_outline.hpp for the coordinate convention, which is
+// chosen so the two agree.
 
 void Wz4Mesh::MakeText(const sChar *text,const sChar *font,sF32 height,sF32 extrude,sF32 maxErr,sInt flags)
 {
-  sPrintF(L"Wz4Mesh::MakeText: not implemented on this platform, mesh left empty (%s)\n",
+  sVERIFY(IsEmpty());
+
+  AddDefaultCluster();
+  height = sMax(height,8/128.0f);
+  maxErr = sMax(maxErr,height/300.0f); // avoid excessively high tesselation
+
+  GLUtesselator *tess = gluNewTess();
+
+  sF32 tolerance = height * 0.1f * maxErr;
+  tolerance *= tolerance;
+
+  sF32 xPos = 0, yPos = 0;
+  wGlyphOutline glyph;
+
+  for(sInt chr=0;text[chr];chr++)
+  {
+    if(text[chr] == '\n')
+    {
+      xPos = 0;
+      yPos -= height;
+      continue;
+    }
+
+    if(!wLoadGlyphOutline(font,height,(flags&4)!=0,(flags&8)!=0,text[chr],glyph))
+      break;                          // no font at all: it has already said so
+
+    // A space has an advance and no contours. Skipping the tessellation but
+    // keeping the advance is what makes "a b" wider than "ab".
+    if(glyph.ContourEnd.GetCount()==0)
+    {
+      xPos += glyph.AdvanceX;
+      continue;
+    }
+
+    Wz4Mesh *tempmesh = new Wz4Mesh;
+    gluTessBeginPolygon(tess,tempmesh);
+
+    sInt first = 0;
+    for(sInt c=0;c<glyph.ContourEnd.GetCount();c++)
+    {
+      const sInt last = glyph.ContourEnd[c];
+      const sInt count = last-first+1;
+      if(count<2)
+      {
+        first = last+1;
+        continue;
+      }
+
+      // FreeType may start a contour on a CONTROL point, which the Windows
+      // format never does — a TTPOLYGONHEADER always carries an on-curve start.
+      // When it happens the start is the midpoint of the last and first control
+      // points, which is the same implied-on-curve rule as two consecutive
+      // controls within a contour.
+      sInt start = -1;
+      for(sInt i=first;i<=last && start<0;i++)
+        if(glyph.Points[i].Kind==wGP_ON)
+          start = i;
+
+      sVector31 startPos;
+      if(start<0)
+      {
+        // Every point is a control point: an all-conic contour, which is legal.
+        startPos.Init(
+          xPos + (glyph.Points[first].X+glyph.Points[last].X)*0.5f,
+          yPos + (glyph.Points[first].Y+glyph.Points[last].Y)*0.5f,0.0f);
+        start = first;
+      }
+      else
+      {
+        startPos.Init(xPos+glyph.Points[start].X,yPos+glyph.Points[start].Y,0.0f);
+      }
+
+      gluTessBeginContour(tess);
+      tess3DAddPoint(tess,tempmesh,startPos);
+
+      // Walk the contour once from `start`, wrapping. i counts steps so the
+      // wrap-around is expressed once rather than at every use.
+      for(sInt step=1;step<=count;step++)
+      {
+        const sInt i = first + ((start-first+step)%count);
+        const wGlyphPoint &p = glyph.Points[i];
+        const sVector31 pp(xPos+p.X,yPos+p.Y,0.0f);
+
+        if(p.Kind==wGP_ON)
+        {
+          tess3DAddPoint(tess,tempmesh,pp);
+        }
+        else if(p.Kind==wGP_CONIC)
+        {
+          // The end point is the next on-curve point, or the implied midpoint
+          // between this control and the next when two controls run together.
+          const sInt j = first + ((start-first+step+1)%count);
+          const wGlyphPoint &q = glyph.Points[j];
+          sVector31 end(xPos+q.X,yPos+q.Y,0.0f);
+          if(q.Kind!=wGP_ON)
+            end = sAverage(pp,end);
+          else
+            step++;                   // the on-curve point is consumed here
+          tess3DAddQuadratic(tess,tempmesh,pp,end,tolerance);
+        }
+        else  // wGP_CUBIC — always in pairs, followed by an on-curve point
+        {
+          const sInt j = first + ((start-first+step+1)%count);
+          const sInt k = first + ((start-first+step+2)%count);
+          const sVector31 c2(xPos+glyph.Points[j].X,yPos+glyph.Points[j].Y,0.0f);
+          const sVector31 e (xPos+glyph.Points[k].X,yPos+glyph.Points[k].Y,0.0f);
+          tess3DAddCubic(tess,tempmesh,pp,c2,e,tolerance);
+          step += 2;
+        }
+      }
+
+      gluTessEndContour(tess);
+      first = last+1;
+    }
+
+    if(gluTessEndPolygon(tess)<0)
+      sPrintF(L"Text3D: could not tessellate '%c': %s\n",text[chr],tess->GetError());
+
+    if(tempmesh->Faces.GetCount())
+      tempmesh->Finish2DExtrusionOp(extrude,flags);
+
+    sInt vindex = Vertices.GetCount();
+    sInt findex = Faces.GetCount();
+
+    Wz4MeshVertex *vertex;
+    sFORALL(tempmesh->Vertices,vertex)
+    {
+      if(flags&2)
+      {
+        vertex->Weight[0]=1;
+        vertex->Index[0]=chr;
+      }
+      if(flags&16)
+      {
+        sSwap(vertex->Pos.x,vertex->Pos.z); vertex->Pos.x*=-1;
+        sSwap(vertex->Normal.x,vertex->Normal.z); vertex->Normal.x*=-1;
+        sSwap(vertex->Tangent.x,vertex->Tangent.z); vertex->Normal.x*=-1;
+      }
+      Vertices.AddTail(*vertex);
+    }
+
+    Wz4MeshFace *face;
+    sFORALL(tempmesh->Faces,face)
+    {
+      for(sInt i=0;i<face->Count;i++)
+        face->Vertex[i]+=vindex;
+      Faces.AddTail(*face);
+    }
+
+    delete tempmesh;
+
+    if(flags&2)
+    {
+      Wz4ChunkPhysics chunk;
+      chunk.Volume = 1.0f;
+      if(flags&4)
+      {
+        chunk.COM.Init(0,yPos,xPos+glyph.BlackBoxX*0.5f);
+        chunk.InertD.Init(-1,0,0);
+      }
+      else
+      {
+        chunk.COM.Init(xPos+glyph.BlackBoxX*0.5f,yPos,0);
+        chunk.InertD.Init(0,0,1);
+      }
+      chunk.InertOD.Init(0,0,0);
+      chunk.FirstVert = vindex;
+      chunk.FirstFace = findex;
+      chunk.FirstIndex = 0;
+      chunk.Temp = 0;
+      chunk.Normal=chunk.InertD;
+      chunk.Random.Init(0,1,0);
+      Chunks.AddTail(chunk);
+    }
+
+    xPos += glyph.AdvanceX;
+  }
+
+  gluDeleteTess(tess);
+
+  // As MakePath does, and for the same reason: a bridged hole leaves coincident
+  // edges that Finish2DExtrusionOp's flip step can turn into zero-area faces.
+  // Every glyph with a counter — o, e, a, 8 — has a hole.
+  RemoveDegenerateFaces();
+}
+
+#else   // no FreeType: Text3D keeps the patch-12 behaviour, warning and leaving
+        // the mesh empty so a graph containing one still evaluates.
+
+void Wz4Mesh::MakeText(const sChar *text,const sChar *font,sF32 height,sF32 extrude,sF32 maxErr,sInt flags)
+{
+  sPrintF(L"Wz4Mesh::MakeText: no font backend in this build, mesh left empty (%s)\n",
     text ? text : L"");
 }
 
-#endif  // sPLATFORM==sPLAT_WINDOWS — MakeText's glyph outlines
+#endif  // MakeText's glyph outlines
 
 static const sChar *skipWhitespace(const sChar *s)
 {
