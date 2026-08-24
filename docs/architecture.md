@@ -1415,11 +1415,19 @@ The corrected rule, in order:
 3. **Fidelity decides only what is left** — where the tree is ambiguous and there
    is no way to tell a choice from an accident.
 
-Two practical notes that survive unchanged. A crash can be fixed without weighing
-anything, because nothing can be authored against it. And a fix to a path that
-has never executed is not a two-character job: patch 10 found two defects in
-`wz4_mesh.cpp` code that had never been *compiled*, and the extrude side-face path
-has never been *run*.
+One practical note survives unchanged: a crash can be fixed without weighing
+anything, because nothing can be authored against it.
+
+**Postscript, stage 6.7: the trade-off did not exist.** The fix is `>>2` in two
+places, and the full sweep report for `example.wz4` — 2,192 lines including a
+checksum for every one of 1,097 evaluated meshes — is **byte-identical before and
+after**. `Adjacent[] == -1` means "no neighbour *at all*", so only a rim edge on a
+real mesh boundary was misread; every `Extrude` in the bundled documents extrudes
+a partial selection of a *closed* mesh, whose rim is interior edges that decoded
+correctly all along. Nothing changed, and the two rounds spent weighing fidelity
+against correctness were spent on a cost of zero.
+
+Which is the sharper lesson, and it is A56.
 
 ### A55 · An operator's first real input is where its bugs are — standing
 
@@ -1447,6 +1455,44 @@ The lesson is about test *design*, not diligence: the corpus sweep (Suite B) has
 far more coverage — 1,386 operators against 46 — and found none of these, because
 a sweep can only check invariants over inputs it did not choose. Breadth finds
 crashes in code paths; a chosen input finds *semantics*. Both suites, always.
+
+### A56 · Measure the cost of a change before arguing about whether to pay it — standing
+
+*Phase 6.7.* The `Extrude` adjacency defect got two rounds of deliberation about
+whether fixing it was worth breaking fidelity with the 2014 tool: an entry in this
+document, a paragraph in a patch, a deferred stage with a stated compatibility
+cost, and a test case written as a change-detector.
+
+**The cost was zero.** The fix is two characters, and the full sweep report for
+`example.wz4` — 2,192 lines, a checksum for each of 1,097 evaluated meshes — is
+byte-identical before and after. The other four documents contain no `Extrude` at
+all. One command, run *first*, would have collapsed the whole argument:
+
+```sh
+wz4gen sweep <doc> -v > before.txt    # then apply the fix, and diff
+```
+
+Why the cost was zero is the part worth understanding, because it was knowable
+too: `Adjacent[] == -1` means "no neighbour **at all**", so the bad decode only
+misread a rim edge on a *real mesh boundary*. Every `Extrude` in the bundled
+documents extrudes part of a *closed* mesh, where the rim is interior edges
+carrying genuine face indices — which decoded correctly either way. The defect
+only ever broke open meshes. That is also why it survived a decade.
+
+Three specific claims made while planning the change, all wrong:
+
+| Claimed | Measured |
+|---|---|
+| "the side-face path has almost certainly never executed" | it executes, and works — 62, 7 and 152-face results in `example.wz4` |
+| "`example.wz4`'s 14 `Extrude` operators will change geometry" | none of them changes |
+| "expect more than a two-character fix" | two characters |
+
+The generalisation is not "argue less". It is that **the blast radius of a change
+is usually cheaper to measure than to reason about**, and this project already had
+the instrument — the corpus sweep built one stage earlier, whose whole purpose is
+running every operator in the reference documents. Reaching for a principle when a
+measurement is one command away is the same error as A39 and A45 wearing different
+clothes: preferring the available proxy to the actual thing.
 
 ---
 
@@ -1493,7 +1539,9 @@ adopted because of this list.
 | A closed primitive's half-edges pair by vertex index | They do not: a `Wz4Mesh` splits a position wherever normals differ, so `Cube(2,3,4)` leaves exactly 72 unpaired — the six patch perimeters (6.3) |
 | Sweeping every store covers a document's operators | `example.wz4` has 54 stores yielding 15 meshes, and 1,180 mesh operators. The interesting ones are mid-graph (6.2) |
 | `TransformEx` with default flags transforms positions | It transforms **uv0**; `Flags` default to `0x33`. The mesh comes out identical and the operator reports success (A55) |
-| `Extrude` extrudes | Only faces already selected, and then it builds no sides, because of the `/4` decode (A54) |
+| `Extrude` extrudes | Only faces already selected (A55) — and it built no sides on an OPEN mesh, because of the `/4` decode (A54) |
+| Fixing the `Extrude` decode changes 14 operators in `example.wz4` | It changes nothing: 2,192 lines of checksummed sweep report, byte-identical (A56) |
+| The `Extrude` side-face path has never executed | It executes and works; only the boundary-edge branch of the rim test never ran (A56) |
 
 ---
 

@@ -271,17 +271,28 @@ static const wExpect TopoCases[] =
     L"surface must STILL pair up as closed. An inversion that broke pairing — "
     L"reversing some faces and not others — would show up here and nowhere else" },
 
-  // TODO(6.7): expect 5 quads once the >>2 fix lands. This row asserts the
-  // BROKEN answer on purpose, as a change-detector — see ops_topo.wz4t.
-  { L"p_extrude", 1,0,1, CL_OPEN, -0.5f,0.25f,-0.5f, 0.5f,0.25f,0.5f, 0,0,1,
-    L"ONE quad out, not five, and this asserts an upstream DEFECT: Extrude "
-    L"decodes the adjacency table with /4 where the rest of the file uses >>2 "
-    L"(wz4_mesh.cpp:3033, :3111), and a boundary edge is stored as -1, so "
-    L"-1/4 = 0 makes every rim edge look like it adjoins face 0. No rim, no "
-    L"sides. TO BE FIXED IN 6.7 — a four-edge rim must give 1 cap + 4 sides. "
-    L"If this row is failing and 6.7 has landed, that is the fix working: "
-    L"replace it with 5,0,5. What does work today is the cap — the island moves "
-    L"by Amount 0.25 along its own normal, which for a flat grid is y" },
+  { L"p_extrude", 5,0,5, CL_OPEN, -0.5f,0.0f,-0.5f, 0.5f,0.25f,0.5f, 0,0,1,
+    L"one open quad, all of it selected, so the rim is its four boundary edges: "
+    L"1 cap + 4 sides = 5 quads. The rim stays at y = 0 and the cap moves to "
+    L"y = Amount = 0.25, which is why the y bounds are 0..0.25 rather than "
+    L"0.25..0.25. Gave 1 quad before stage 6.7 fixed the /4 adjacency decode "
+    L"(patch 14)" },
+
+  { L"p_extrude_steps", 9,0,9, CL_OPEN, -0.5f,0.0f,-0.5f, 0.5f,0.25f,0.5f, 0,0,1,
+    L"the same rim at Steps = 2: 1 cap + 2*4 sides = 9 quads. Sides scale with "
+    L"Steps and the cap does not, so this separates `the rim was found` from "
+    L"`the rim was walked the right number of times` — a one-step case cannot "
+    L"tell whether Steps is read at all. Amount is the TOTAL, so the bounds are "
+    L"unchanged from p_extrude" },
+
+  { L"p_extrude_closed", 10,0,10, CL_CLOSED, -0.5f,-0.5f,-0.5f, 0.75f,0.5f,0.5f, 0,0,1,
+    L"the other rim path, and the one every Extrude in the bundled documents "
+    L"uses: one face of a closed cube selected, so the rim is four INTERIOR "
+    L"edges between a selected and an unselected face. 6 - 1 selected + 1 cap + "
+    L"4 sides = 10 quads, and the +x face moves out to 0.5 + 0.25 = 0.75 while "
+    L"nothing else moves. This path decoded correctly even with /4 — which is "
+    L"why the defect survived a decade and why the fix changed nothing in the "
+    L"corpus. Extruding outward from a closed surface leaves it closed" },
 
   { L"p_bevel", 26,8,18, CL_CLOSED, -0.5f,-0.5f,-0.5f, 0.5f,0.5f,0.5f, 0,0,1,
     L"a bevelled cube is exactly 6 shrunk faces + 12 edge quads + 8 corner "

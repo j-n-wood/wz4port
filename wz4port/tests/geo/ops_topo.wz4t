@@ -64,20 +64,18 @@ stack at 8,0 {
 // single quad are all misread as adjoining face 0. Everywhere else in the file
 // the same field is decoded with `>>2`, which does give -1.
 //
-// TODO(6.7): FIX THIS, and replace the expectation below with the real one.
+// FIXED in stage 6.7 (patch 14): the decode is `>>2` now, so the rim is found and
+// the sides are built. One step over a four-edge rim gives 1 cap + 4 sides = 5
+// quads, the rim stays at y = 0 and the cap moves to y = Amount.
 //
-// This case asserts the BROKEN answer — 1 quad — and only until stage 6.7 lands
-// the `>>2` fix. It is deliberately a change-detector: the moment the fix goes in
-// this case fails, which is the signal to swap in the derivation. One step over a
-// four-edge rim must give 1 cap + 4 sides = 5 quads, and Steps = 2 must give 9.
-//
-// It was first deferred on fidelity grounds — example.wz4's 14 Extrude operators
-// were authored against this behaviour. That reasoning was wrong: matching a 2014
-// binary is a tie-breaker for genuine ambiguity, not a reason to keep an operator
-// that cannot do its job. See docs/08-phase-geometry.md §6.7 and A54.
-//
-// What DOES work is the cap: the island moves by Amount along its own normal,
-// which for a flat grid is y. That part is derivable and stays true either way.
+// The defect was NARROWER than it first looked, and the narrowness is why it
+// survived a decade. `Adjacent[] == -1` means "no neighbour at all", so the wrong
+// decode only misreads a rim edge that lies on a REAL MESH BOUNDARY. For a
+// partial selection on a closed mesh — which is what every Extrude in the bundled
+// documents does — the rim is made of interior edges between a selected and an
+// unselected face, and those decode correctly either way. So the sides worked
+// there all along, and only open meshes were broken. p_extrude_closed below
+// covers that other path.
 stack at 12,0 {
   op Wz4Mesh.Grid { name = p_in_extrude  Tesselate = 1,1  Sides = "-"  Size = 1 }
   // Select's Flags is one word with five controls, and the reader matches values
@@ -96,6 +94,49 @@ stack at 12,0 {
     Center = 0, 0, 0
     LocalScale = 1
     UVOffset = 0, 0        // float2 — the parameter after it is only 2 words on
+  }
+}
+
+// The same rim, two steps. Sides scale with Steps and the cap does not, so this
+// separates "the rim was found" from "the rim was walked the right number of
+// times": 1 cap + 2*4 sides = 9 quads. A single-step case cannot tell the
+// difference between Steps being read and being ignored.
+stack at 68,0 {
+  op Wz4Mesh.Grid { name = p_in_extrude2  Tesselate = 1,1  Sides = "-"  Size = 1 }
+  op Wz4Mesh.Select { name = p_extrude2_sel  Flags = all, "-", set, "touched face" }
+  op Wz4Mesh.Extrude {
+    name = p_extrude_steps
+    Steps = 2
+    Amount = 0.25
+    Center = 0, 0, 0
+    LocalScale = 1
+    UVOffset = 0, 0
+  }
+}
+
+// The other rim path, and the one the bundled documents use: a PARTIAL selection
+// on a closed mesh, whose rim is made of interior edges rather than boundary
+// ones. This worked before the fix and must still work after it — that is the
+// point of having it. Select in cube mode with a small box at x = +0.5 catches
+// only the +x face.
+stack at 72,0 {
+  op Wz4Mesh.Cube { name = p_in_extrude3  Tesselate = 1,1,1  Scale = 1,1,1 }
+  op Wz4Mesh.Select {
+    name = p_extrude3_sel
+    Flags = cube, "-", set, "enclosed face"
+    Scale = 0.4, 2, 2
+    Rot = 0, 0, 0
+    Trans = 0.5, 0, 0
+    Random = 1
+    RandomSeed = 0
+  }
+  op Wz4Mesh.Extrude {
+    name = p_extrude_closed
+    Steps = 1
+    Amount = 0.25
+    Center = 0, 0, 0
+    LocalScale = 1
+    UVOffset = 0, 0
   }
 }
 

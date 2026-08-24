@@ -403,7 +403,7 @@ meaningful.
 
 ```
 Suite A   45 of 45 registered mesh operator(s) exercised
-          46 case(s), 461 check(s), 0 failure(s)
+          48 case(s), 483 check(s), 0 failure(s)   (46 before stage 6.7 added two)
 Suite B   1,386 mesh operators across 5 documents, 0 violations
           36 distinct operator classes, with the authors' own parameter values
 ```
@@ -422,7 +422,7 @@ Breadth finds crashes in code paths; a chosen input finds semantics (A55).
 | Finding | |
 |---|---|
 | **`BakeAnim` segfaults** on any mesh with no skeleton — every generated mesh | fixed, patch 13 |
-| **`Extrude` builds no side faces**: `/4` where the file elsewhere uses `>>2`, so a boundary half-edge stored as -1 decodes to face 0 | **to fix — stage 6.7** |
+| **`Extrude` builds no side faces on an open mesh**: `/4` where the file elsewhere uses `>>2`, so a boundary half-edge stored as -1 decodes to face 0 | fixed in 6.7, patch 14 |
 | **`TransformEx` defaults to uv0 → uv0**, so it moves texture coordinates and returns a mesh identical to its input, reporting success | case states `pos, pos` |
 | **Our own `.wz4t` reader** subscripted a value list before its bounds test — unreachable until a case wrote a partial list | fixed, plus a regression case |
 
@@ -430,11 +430,17 @@ I first deferred the `Extrude` fix on fidelity grounds — `example.wz4`'s 14 `E
 were authored against the broken behaviour, so changing it makes this port disagree with the tool
 the demos were built with. **That was the wrong call, and the user overruled it.** Fidelity to a
 2014 binary is a sensible *default* for resolving ambiguity, not a goal that outranks an operator
-doing its job: an extrude that cannot build sides is not a design choice anyone made, and this
-project is not obliged to inherit it. Scheduled as **6.7**, and A54 is amended.
+doing its job: an extrude that cannot build sides is not a design choice anyone made.
+
+And then the premise turned out to be false as well. **The fix changes nothing in any bundled
+document** — measured, byte-identical checksums — because the defect only ever affected *open*
+meshes and every `Extrude` in those documents works on a closed one. See 6.7 below and A56: the
+cost of the change was one command away from being known, and two rounds went into weighing a
+trade-off that did not exist.
 
 The general rule the two findings illustrate still holds — a deterministic wrong *answer* is part
-of the tool's behaviour and a *crash* is not — it just does not settle the question on its own.
+of the tool's behaviour and a *crash* is not — it just does not settle the question on its own,
+and it is worth less than a measurement.
 
 #### Two design points that did not survive contact
 
@@ -492,7 +498,7 @@ on it.
 
 **Gate:** `Text3D` produces correct extruded geometry for a simple string.
 
-### 6.7 — TODO: let `Extrude` build side faces
+### 6.7 — `Extrude` builds side faces — **done**
 
 **The defect.** `Wz4Mesh::Extrude` decodes the adjacency table with integer division in two
 places:
@@ -514,30 +520,47 @@ sInt n = adj[fi].Adjacent[j]/4;   // wz4_mesh.cpp:3111 — boundary edge collect
 Everywhere else in the file the field is decoded with `>>2`, which yields -1 for a boundary
 because the shift is arithmetic.
 
-**The fix** is `>>2` in both places. It is two characters, but the work is not:
+**The fix** is `>>2` in both places, and that was the whole patch — patch 14.
 
-1. **The side-face path has almost certainly never executed.** Nothing in this tree can have built
-   an extruded rim, so the code from the edge-loop sort (`:3126`) through the side quad
-   construction (`:3256` onwards) is untested by anything, ever. Patch 10 already found two
-   defects in `wz4_mesh.cpp` code that had never been compiled; expect the same here, and budget
-   for it rather than treating the two characters as the deliverable.
-2. **Verify against a derivable case.** A selected open quad has a four-edge rim, so one step must
-   give 1 cap + 4 sides = **5 quads**, and `Steps = 2` must give 1 + 8 = **9**. The existing
-   `p_extrude` case already sets this up and currently asserts the broken answer of 1 quad; it
-   becomes the real assertion. A cube with a *subset* of faces selected is the second case, and
-   the one that exercises island growth — which `:3033` also fixes.
-3. **Closedness becomes assertable.** Extruding a selected patch of a closed mesh should leave it
-   closed. `wMeshIsClosed` is already in place for that.
+#### The defect is far narrower than the plan assumed
 
-**Compatibility, stated plainly.** `example.wz4` has **14** `Extrude` operators and this will
-change the geometry they produce. That is accepted: the corpus sweep checks invariants rather than
-values, so it will not break, and no golden covers those documents.
+`Adjacent[] == -1` means "no neighbour **at all**", so the bad decode only ever misread a rim edge
+lying on a **real mesh boundary**. A rim made of *interior* edges — between a selected face and an
+unselected one — holds genuine face indices and decoded correctly either way.
 
-**Sequencing matters.** Do this **before 6.3b**, or `p_extrude`'s golden gets locked to the broken
-output and has to be re-locked immediately. If 6.3b runs first, exclude `p_extrude` from the lock.
+| Selection | Rim is | Before | After |
+|---|---|---|---|
+| all of an **open** mesh | boundary edges | **broken**, no sides | 1 cap + 4 sides |
+| part of a **closed** mesh | interior edges | correct | unchanged |
 
-**Gate:** a selected open quad extrudes to 5 quads at `Steps = 1` and 9 at `Steps = 2`; a partial
-selection on a closed mesh extrudes and stays closed; the corpus sweep still reports 0 violations.
+Every `Extrude` in the bundled documents is the second kind. That is why the defect survived a
+decade, and it is why the compatibility cost turned out to be **zero**.
+
+#### Three things the plan got wrong, all corrected by one measurement
+
+Running the sweep before and after — `wz4gen sweep example.wz4 -v`, 2,192 lines including a
+checksum for each of 1,097 evaluated meshes — gives a **byte-identical** diff. The other four
+documents contain no `Extrude` at all.
+
+| Plan said | Measured |
+|---|---|
+| the side-face path has almost certainly never executed | it executes and works — 62, 7 and 152-face results in `example.wz4` |
+| `example.wz4`'s 14 `Extrude` operators will change geometry | none of them changes |
+| expect more than a two-character fix | two characters |
+
+Recorded as A56. The instrument that settled it was the corpus sweep built one stage earlier,
+whose entire purpose is running every operator in the reference documents — so the measurement was
+one command away throughout.
+
+**Gate — met.** Three derivable cases, all exact:
+
+| Case | | |
+|---|---:|---|
+| `p_extrude` | 5 quads | one open quad, four boundary edges: 1 cap + 4 sides. Rim stays at y=0, cap moves to y=Amount |
+| `p_extrude_steps` | 9 quads | same rim at `Steps = 2`: 1 + 2×4. Sides scale with `Steps`, the cap does not — a one-step case cannot tell whether `Steps` is read at all |
+| `p_extrude_closed` | 10 quads | one face of a closed cube: 6 − 1 + 1 cap + 4 sides, +x out to 0.75, still closed. The interior-rim path, included so a future change to the decode cannot break it silently |
+
+Plus the corpus: 1,386 mesh operators across five documents, 0 violations. 141/141 ctest.
 
 ---
 

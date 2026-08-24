@@ -118,11 +118,11 @@ clean.** 141/141 ctest.
 
 ```
 Suite A   45 of 45 registered mesh operator(s) exercised
-          46 case(s), 461 check(s), 0 failure(s)
+          48 case(s), 483 check(s), 0 failure(s)
 Suite B   1,386 mesh operators across 5 documents, 0 violations
 ```
 
-**Two suites, doing different jobs.** Suite A (`tests/mesh_cases.cpp`) is 46
+**Two suites, doing different jobs.** Suite A (`tests/mesh_cases.cpp`) is 48
 hand-written cases whose expectations are *derived* and carry the derivation in
 the table; the derivation prints on failure, so "want 52, got 48" is actionable.
 Suite B (`wz4gen sweep`) evaluates every mesh operator in the five bundled
@@ -145,10 +145,10 @@ finds semantics (A55).
 
 - **`BakeAnim` segfaulted** on any mesh without a skeleton — that is every mesh a
   generator produces. Fixed (patch 13).
-- **`Extrude` builds no side faces.** It decodes the adjacency table with `/4`
-  where the rest of the file uses `>>2`, and a boundary half-edge is stored as
-  -1, so `-1/4 == 0` makes every rim edge look like it adjoins face 0. **To fix
-  in stage 6.7** — see below.
+- **`Extrude` built no side faces on an open mesh.** It decoded the adjacency
+  table with `/4` where the rest of the file uses `>>2`, and a boundary half-edge
+  is stored as -1, so `-1/4 == 0` made every boundary rim edge look like it
+  adjoins face 0. Fixed in **6.7** (patch 14) — see below.
 - **`TransformEx`'s `Flags` default to uv0 → uv0**, so left alone it moves texture
   coordinates, returns a mesh identical to its input, and reports success. Same
   shape as `Perlin`'s `FadeOff` default in 4.3.
@@ -172,11 +172,36 @@ anything, because nothing can be authored against it — which is why `BakeAnim`
 went in immediately and `Extrude` gets a scheduled stage with a stated
 compatibility cost.
 
-**6.7 is scheduled before 6.3b, deliberately.** Otherwise `p_extrude`'s golden
-gets locked to the broken output and has to be re-locked straight away. The
-`p_extrude` case currently asserts the *broken* answer of 1 quad as a
-**change-detector**: when the fix lands it fails, which is the signal to replace
-it with the derivation (1 cap + 4 sides = 5 quads at `Steps = 1`, 9 at 2).
+**Stage 6.7 is done — and the trade-off it was weighing did not exist.** 48 cases,
+483 checks, 141/141 ctest.
+
+The fix is `>>2` in two places (patch 14). The plan warned that it would change 14
+operators in `example.wz4` and that a never-executed code path would need real
+work. Both were wrong, and **one command settled it**: `wz4gen sweep example.wz4
+-v` before and after — 2,192 lines including a position-and-topology checksum for
+each of 1,097 evaluated meshes — is **byte-identical**. The other four documents
+contain no `Extrude` at all.
+
+The reason was knowable too. `Adjacent[] == -1` means "no neighbour **at all**",
+so the bad decode only misread a rim edge on a **real mesh boundary**. Every
+`Extrude` in the bundled documents extrudes part of a *closed* mesh, whose rim is
+interior edges carrying genuine face indices — those decoded correctly all along.
+The defect only ever broke **open** meshes, which is also why it survived a
+decade.
+
+Three planning claims, all wrong: the side-face path *does* execute and works (62,
+7 and 152-face results in `example.wz4`); nothing in the corpus changes; and it
+*was* a two-character fix. Recorded as **A56** — the blast radius of a change is
+usually cheaper to measure than to reason about, and the instrument here was the
+corpus sweep built one stage earlier, whose entire purpose is running every
+operator in the reference documents.
+
+Three new cases, derivable and exact: `p_extrude` **5** quads (1 cap + 4 sides,
+rim at y=0 and cap at y=Amount), `p_extrude_steps` **9** at `Steps = 2` (sides
+scale with Steps, the cap does not — a one-step case cannot tell whether Steps is
+read at all), and `p_extrude_closed` **10** (6 − 1 + 1 cap + 4 sides, +x out to
+0.75, still closed) which pins the interior-rim path so a future change to the
+decode cannot break it silently.
 
 **One design assumption did not survive contact:** closedness has to pair
 half-edges by **position**, not by vertex index. A `Wz4Mesh` splits a position
@@ -184,8 +209,8 @@ wherever normals or UVs differ, so index-pairing called `Cube(2,3,4)` open with
 exactly 72 unpaired half-edges — exactly the sum of its six grid patches'
 perimeters. That arithmetic is what identified the cause.
 
-Next: **6.7** — make `Extrude` build side faces, before 6.3b locks anything. Then
-6.3b (review the OBJ output, lock checksums), then 6.4, the 3D preview.
+Next: **6.3b** — review the OBJ output and lock checksums. Then 6.4, the 3D
+preview.
 
 **`wz4ed` is the editor.** It has a window, a menu bar, a metadata-driven
 inspector, and the stacking canvas: blocks coloured by output type, selection,
@@ -320,7 +345,7 @@ about the build.
 | 3 — Text graph format + CLI | **Done**, phase gate passed |
 | 4 — Texture library + tests | **Done**, phase gate passed. All 34 operators run |
 | 5 — Texture GUI | **Done**, phase gate passed. `wz4ed` edits textures |
-| 6 — Geometry | **6.1–6.3a done** — 45 of 47 operators register, all 45 have a case, OBJ in and out |
+| 6 — Geometry | **6.1–6.3a, 6.7 done** — 45 of 47 register, all 45 have a case, OBJ in and out |
 | 7 — Animated geometry | Not started |
 
 ---
@@ -377,7 +402,7 @@ Clean build from scratch: **0 errors**. Warnings are expected and benign
 | `mesh_obj` | **Stage 6.2 gate:** OBJ write→read round-trips a Cube and a Sphere, plus a reject case |
 | `mesh_render_cli` | And that `wz4gen render` reaches the writer — matched on bounds, not just counts |
 | `wz4geochk` | **Ours.** The mesh invariant battery, shared by `wz4gen sweep` and the cases |
-| `mesh_ops` | **Stage 6.3a Suite A:** 46 derived cases, 45 of 45 operators, coverage asserted |
+| `mesh_ops` | **Stage 6.3a Suite A:** 48 derived cases, 45 of 45 operators, coverage asserted |
 | `mesh_sweep_*` (5) | **Stage 6.3a Suite B:** 1,386 mesh operators in the bundled documents |
 
 `simd_parity`: **70,184 checks, 0 failures** on arm64 via sse2neon.
@@ -416,6 +441,7 @@ wz4port/
     11-mesh-ops-headless.md    phase 6 stage 6.1 — the mesh ops module + wz4ops
     12-mesh-text-nonfatal.md   phase 6 stage 6.3 — Text3D/Path3D warn, not abort
     13-mesh-bakeanim-null.md   phase 6 stage 6.3 — a segfault on unskinned input
+    14-mesh-extrude-sides.md   phase 6 stage 6.7 — Extrude finds an open rim
   compat/altona_missing.cpp    sCheckBreakKey — an upstream POSIX gap
   compat/include/wz4_mtrl_headless.hpp  phase 6 — the materials stand-in
   compat/mesh_xsi_stub.cpp     phase 6 — LoadXSI refuses; the one importer that cannot port
@@ -469,7 +495,7 @@ wz4port/
   tests/mesh_obj.cpp           stage 6.2 gate: OBJ round-trip, LoadOBJ as the oracle
   tests/geo/gen.wz4t           stage 6.2: Cube, Cube->Transform, Sphere
   geo/mesh_check.hpp/.cpp      ours: the mesh invariant battery + closedness
-  tests/mesh_cases.cpp         stage 6.3a Suite A: 46 derived cases, with derivations
+  tests/mesh_cases.cpp         stage 6.3a Suite A: 48 derived cases, with derivations
                                (not mesh_ops.cpp — .gitignore eats *_ops.cpp, A48)
   tests/geo/ops_gen.wz4t         the 9 generators
   tests/geo/ops_transform.wz4t   the 14 transforms
