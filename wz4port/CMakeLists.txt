@@ -643,9 +643,15 @@ if(EXISTS "${WZ4_IMGUI_DIR}/imgui.cpp" AND EXISTS "${WZ4_GLFW_DIR}/CMakeLists.tx
       "${CMAKE_CURRENT_SOURCE_DIR}/editor/docedit.cpp"
       "${CMAKE_CURRENT_SOURCE_DIR}/editor/params.cpp"
       "${CMAKE_CURRENT_SOURCE_DIR}/editor/preview.cpp"
+      "${CMAKE_CURRENT_SOURCE_DIR}/editor/meshview.cpp"
+      "${CMAKE_CURRENT_SOURCE_DIR}/editor/gl_wz4.cpp"
       "${CMAKE_CURRENT_SOURCE_DIR}/editor/undo.cpp"
     )
-    target_link_libraries(wz4ed PRIVATE wz4t wz4tex imgui)
+    # wz4geo, not wz4tex: it links wz4tex publicly, and the editor needs the mesh
+    # library from stage 6.4 on. The GL 3.3 entry points the viewer uses come from
+    # the loader already inside `imgui` — see editor/gl_wz4.hpp for why that is
+    # the whole story rather than a new dependency.
+    target_link_libraries(wz4ed PRIVATE wz4t wz4geo imgui)
     target_compile_options(wz4ed PRIVATE
       "SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/tests/gui_poison.h"
     )
@@ -664,9 +670,43 @@ if(EXISTS "${WZ4_IMGUI_DIR}/imgui.cpp" AND EXISTS "${WZ4_GLFW_DIR}/CMakeLists.tx
         "-DDOC=${CMAKE_CURRENT_SOURCE_DIR}/tests/tex/ops_gen.wz4t"
         "-DMETA=${WZ4_META_DIR}"
         "-DSELECT=bricks"
+        "-DEXPECT=bitmap"
         "-DOUT=${CMAKE_BINARY_DIR}/editor-shot/shell.png"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/editor_shot.cmake")
       set_tests_properties(wz4ed_shell PROPERTIES DEPENDS opsmeta_gate)
+
+      # Stage 6.4. Two cases rather than one, because they fail differently:
+      #
+      #   the shaded one proves the FBO, the shader, the camera and the routing —
+      #     a mesh operator must reach the 3D viewer and not the bitmap pane;
+      #   the wireframe one proves the two view toggles actually RENDER. A
+      #     screenshot of a checked checkbox is not evidence that the checkbox
+      #     does anything, which is why -wire and -bbox exist at all.
+      #
+      # Both assert the viewer's own report, so an empty pane cannot pass: the
+      # regex requires a non-zero vertex AND triangle count.
+      add_test(NAME wz4ed_mesh COMMAND "${CMAKE_COMMAND}"
+        "-DWZ4ED=$<TARGET_FILE:wz4ed>"
+        "-DDOC=${CMAKE_CURRENT_SOURCE_DIR}/tests/geo/ops_gen.wz4t"
+        "-DMETA=${WZ4_META_DIR}"
+        "-DSELECT=g_sphere"
+        "-DEXPECT=mesh"
+        "-DOUT=${CMAKE_BINARY_DIR}/editor-shot/mesh.png"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/editor_shot.cmake")
+      set_tests_properties(wz4ed_mesh PROPERTIES
+        DEPENDS opsmeta_gate RUN_SERIAL TRUE)
+
+      add_test(NAME wz4ed_mesh_wire COMMAND "${CMAKE_COMMAND}"
+        "-DWZ4ED=$<TARGET_FILE:wz4ed>"
+        "-DDOC=${CMAKE_CURRENT_SOURCE_DIR}/tests/geo/ops_topo.wz4t"
+        "-DMETA=${WZ4_META_DIR}"
+        "-DSELECT=p_subdivide"
+        "-DEXPECT=mesh"
+        "-DARGS=-wire;-bbox"
+        "-DOUT=${CMAKE_BINARY_DIR}/editor-shot/mesh-wire.png"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/editor_shot.cmake")
+      set_tests_properties(wz4ed_mesh_wire PROPERTIES
+        DEPENDS opsmeta_gate RUN_SERIAL TRUE)
 
       # One window at a time: GLFW and the platform frameworks are not built for
       # several of these racing each other, and a flaky GUI test is worse than

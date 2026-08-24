@@ -17,7 +17,8 @@
 # cannot open a display. Configure with -DWZ4_GUI_TESTS=OFF there.
 #
 #   cmake -DWZ4ED=<exe> -DDOC=<file.wz4t> -DMETA=<dir> -DOUT=<file.png>
-#         [-DSELECT=<storename>] -P editor_shot.cmake
+#         [-DSELECT=<storename>] [-DEXPECT=mesh|bitmap] [-DARGS=<extra;switches>]
+#         -P editor_shot.cmake
 
 foreach(_var WZ4ED DOC OUT)
   if(NOT DEFINED ${_var})
@@ -35,6 +36,11 @@ if(DEFINED SELECT AND NOT SELECT STREQUAL "")
 endif()
 if(DEFINED META AND NOT META STREQUAL "")
   list(APPEND _args -meta "${META}")
+endif()
+# Extra switches, so a case can turn on a view mode a non-interactive run cannot
+# reach through a menu — -wire and -bbox exist for exactly that.
+if(DEFINED ARGS AND NOT ARGS STREQUAL "")
+  list(APPEND _args ${ARGS})
 endif()
 list(APPEND _args -shot "${OUT}")
 
@@ -66,13 +72,31 @@ if("${_out}${_err}" MATCHES "FATAL ERROR")
   message(FATAL_ERROR "wz4ed printed a fatal error while exiting cleanly")
 endif()
 
-# The preview must have evaluated the selected operator and uploaded a texture.
+# The preview must have evaluated the selected operator and uploaded something.
 # Without this the screenshot could show an empty pane and still pass every other
 # check here — which is the whole reason the editor prints the line.
+#
+# EXPECT says which pane, because the Preview slot routes on the selected
+# operator's output type (stage 6.4): a mesh gets the 3D viewer and everything
+# else the bitmap preview. Asserting "either one reported something" would pass
+# if the routing sent a mesh to the bitmap pane, which is the mistake most worth
+# catching here.
 if(DEFINED SELECT AND NOT SELECT STREQUAL "")
-  if(NOT "${_out}" MATCHES "preview: [0-9]+ x [0-9]+ uploaded")
+  if(NOT DEFINED EXPECT OR EXPECT STREQUAL "bitmap")
+    set(_want "preview: [0-9]+ x [0-9]+ uploaded")
+    set(_what "the bitmap preview did not upload a texture")
+  elseif(EXPECT STREQUAL "mesh")
+    # Vertices AND triangles, both non-zero: an empty mesh reports
+    # "meshview: empty", which must not satisfy this.
+    set(_want "meshview: [1-9][0-9]* vertices, [1-9][0-9]* triangles uploaded")
+    set(_what "the 3D viewer did not upload a mesh")
+  else()
+    message(FATAL_ERROR "editor_shot.cmake: -DEXPECT= must be mesh or bitmap")
+  endif()
+
+  if(NOT "${_out}" MATCHES "${_want}")
     message(FATAL_ERROR
-      "the preview did not upload a texture for <${SELECT}>.\n"
+      "${_what} for <${SELECT}>.\n"
       "wz4ed reports what it showed; see the output above.")
   endif()
 endif()

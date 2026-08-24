@@ -9,7 +9,7 @@ rediscovered the hard way.
 editor**: it opens a document, shows the stacking canvas, offers all 34 texture
 operators, inserts/deletes/moves/resizes them under the original's collision
 rules, edits every parameter from a panel generated entirely from metadata,
-previews the result live, and undoes all of it. `ctest` is **147 tests** on
+previews the result live, and undoes all of it. `ctest` is **149 tests** on
 arm64; the 90 texture goldens remain bit-identical between the NEON and SSE2
 builds.
 
@@ -256,7 +256,50 @@ in `sAllocMem_` — A47's lifetime hazard from the other end. And `sPrint` of th
 accumulated 48-line block came out **truncated mid-word**, which would have
 pasted an incomplete lock. Printing incrementally has neither problem.
 
-Next: **6.4** — the 3D preview.
+**Stage 6.4 is done: the editor has a 3D mesh preview.** 149/149 ctest.
+
+`editor/meshview.cpp` is a GL 3.3 viewer — VAO/VBO from a `Wz4Mesh`, Lambert
+shading, orbit camera, wireframe, grid, bounding box — rendering into its own
+framebuffer which ImGui then displays. A viewer, not an engine: no materials, no
+textures, no animation.
+
+The Preview pane now **routes on the selected operator's output type**, which is
+what the original editor's per-type `gui = base2d` / `base3d` setting encodes. A
+mesh gets the 3D viewer, everything else keeps the bitmap preview. That was
+written down as 6.5's work, but it is two lines and 6.4 cannot be demonstrated
+without it.
+
+**Nothing new was needed for the palette or the panel.** All 44 insertable mesh
+operators appear grouped in the palette and `Sphere`'s parameters draw in the
+inspector, with no new UI code — the metadata-driven panel from phase 5 doing
+exactly what it was built for.
+
+**How the viewer reaches OpenGL, and where the plan was wrong.** ImGui vendors a
+GL loader whose implementation is behind `IMGL3W_IMPL` while its declarations are
+not, so including it without that define binds to the copy already inside
+`libimgui.a` — no new dependency. But the plan claimed it "gives every GL 3.x
+entry point", and it does not: it is **generated**, stripped to what ImGui itself
+references. Shaders, VAOs and buffers are there; the whole framebuffer family,
+`glUniform3fv` and `glDepthFunc` are not. `editor/gl_wz4.cpp` supplements with
+thirteen pointers through `glfwGetProcAddress`. Editing the vendored header was
+rejected: it is generated, so an edit becomes a fork the next bump reverts.
+
+**Two silent bugs, both worth recording.** A hand-fused view-projection matrix had
+three sign errors, negating the `w` row — every vertex clipped, the pane **black
+with no error anywhere**, and a correct-looking upload report. Rewritten as
+separate view and projection matrices multiplied explicitly. And releasing the
+object returned by `CalcOp` broke the *next* frame (`meshview: empty`): the
+document's cache and that pointer are not independent references, and
+`wPreview::Upload` does not release either.
+
+**The gate is two cases**, because a screenshot of a checked checkbox is not
+evidence the checkbox does anything. `editor_shot.cmake` gained
+`EXPECT=mesh|bitmap` so the routing itself is asserted — verified negatively by
+pointing the mesh expectation at a `GenBitmap` operator — and `-wire`/`-bbox`
+switches let a non-interactive run exercise the view modes.
+
+Next: **6.5** — the phase gate: build a mesh graph, edit parameters, watch it
+update, export to OBJ.
 
 **`wz4ed` is the editor.** It has a window, a menu bar, a metadata-driven
 inspector, and the stacking canvas: blocks coloured by output type, selection,
@@ -391,7 +434,7 @@ about the build.
 | 3 — Text graph format + CLI | **Done**, phase gate passed |
 | 4 — Texture library + tests | **Done**, phase gate passed. All 34 operators run |
 | 5 — Texture GUI | **Done**, phase gate passed. `wz4ed` edits textures |
-| 6 — Geometry | **6.1–6.3, 6.7 done** — 45 of 47 register, all 45 cased and locked, OBJ in and out |
+| 6 — Geometry | **6.1–6.4, 6.7 done** — 45 of 47 register, all cased and locked, OBJ both ways, 3D preview |
 | 7 — Animated geometry | Not started |
 
 ---
@@ -437,6 +480,8 @@ Clean build from scratch: **0 errors**. Warnings are expected and benign
 | **`wz4ed`** | **The editor** (phase 5). ImGui + GLFW + GL 3.3, vendored and pinned |
 | `imgui` | Vendored ImGui v1.92.9b, built without `altona_flags` — see below |
 | `wz4ed_shell` | Stages 5.1/5.6: the editor starts, draws, previews and screenshots (`ctest`) |
+| `wz4ed_mesh` | **Stage 6.4:** a mesh operator reaches the 3D viewer, which reports what it uploaded |
+| `wz4ed_mesh_wire` | And that the wireframe and bounding-box modes actually render, not just exist |
 | `canvas_rules` | Stage 5.2 gate: canvas edits obey `CheckMove`, and rewire the graph |
 | `connect_passes` | Stage 5.3 gate: the Hide, Sort and Bypass post-passes |
 | `connect_inputs` | And that `wz4gen list -inputs` agrees with the editor's inspector |
@@ -533,6 +578,8 @@ wz4port/
   editor/docedit.hpp/.cpp        insert and delete, with no UI attached
   editor/params.hpp/.cpp       stage 5.5 — the panel, generated from metadata
   editor/preview.hpp/.cpp      stage 5.6 — evaluate and show the bitmap
+  editor/meshview.hpp/.cpp     stage 6.4 — the GL 3.3 mesh viewer, into an FBO
+  editor/gl_wz4.hpp/.cpp       the 13 GL entry points ImGui's stripped loader lacks
   editor/undo.hpp/.cpp         stage 5.7 — page snapshots, no UI attached
   editor/imgui_wz4.hpp         include ImGui through this, never directly (A46)
   tests/editor_shot.cmake      run the editor, screenshot it, check the PNG

@@ -1494,6 +1494,66 @@ running every operator in the reference documents. Reaching for a principle when
 measurement is one command away is the same error as A39 and A45 wearing different
 clothes: preferring the available proxy to the actual thing.
 
+### A57 · A vendored loader is generated, and generated means stripped — standing
+
+*Phase 6.4.* The 3D preview needed GL 3.3 entry points the editor had never used.
+ImGui vendors a loader, `imgui_impl_opengl3_loader.h`, whose implementation is
+behind `#ifdef IMGL3W_IMPL` while its declarations are unconditional — so
+including it *without* that define binds to the copy already inside
+`libimgui.a`, already initialised by `ImGui_ImplOpenGL3_Init`. That part worked,
+and it is a genuinely good trick: no new dependency, no second loader, no
+per-platform `#if`.
+
+The plan then said it "gives every GL 3.x entry point". **It gives what ImGui
+references and nothing else.** It is produced by `gl3w_gen.py --ref
+imgui_impl_opengl3.cpp`, which the backend states plainly, and the split is
+exactly what that implies:
+
+| | |
+|---|---|
+| present | shaders, programs, uniforms, VAOs, buffers, `glDrawElements`, `glPolygonMode` |
+| absent | the whole framebuffer/renderbuffer family, `glUniform3fv`, `glDepthFunc`, `glDrawArrays`, and a dozen GL 1.1 enums |
+
+Supplementing it was right (thirteen `glfwGetProcAddress` pointers) and editing
+it was not: it is *generated*, so a local edit becomes a fork that the next
+dependency bump silently reverts. **The general rule: a vendored file that is
+generated is a build artefact, not source. Extend beside it, never inside it.**
+
+Also worth carrying: the failure mode was a wall of `use of undeclared
+identifier` spread over three rebuild cycles, because each fix revealed the next
+missing symbol. Grepping the header for the full list of what I needed *before*
+writing the code would have collapsed three cycles into one.
+
+### A58 · The dangerous graphics bug is the one with no error — standing
+
+*Phase 6.4.* Two bugs in the mesh viewer, and neither produced an error message,
+a failed check, or a GL error:
+
+- **A hand-fused view-projection matrix had three sign errors**, negating the `w`
+  row. Every vertex had `w < 0` and was clipped. The pane rendered **black**, and
+  everything else looked healthy: the upload report was correct, the toolbar was
+  correct, the framebuffer was complete. Rewritten as separate view and
+  projection matrices multiplied explicitly — longer, and the mistake is not
+  available in that form. *Do not hand-fuse matrices; the operation is free and
+  the debugging is not.*
+- **Releasing the object from `CalcOp` broke the next frame.** Frame 1 uploaded
+  23 vertices, frame 2 reported `meshview: empty`. The document's cache and that
+  pointer are not independent references. `wPreview::Upload` — the tested
+  precedent in the same editor — does not release, which is the kind of thing to
+  check *before* reasoning from first principles about who owns what.
+
+The shared lesson is about where to look, not about matrices or refcounts. In a
+render path, "nothing appeared" is the default symptom of almost every mistake,
+so the useful instrument is not the error output — there isn't any — but a report
+of what the code *believed* it did. `meshview:` prints its vertex and triangle
+counts on every upload, and that line is what distinguished "the mesh never
+arrived" from "the mesh arrived and the camera is wrong". Both bugs were found by
+reading it against the screenshot.
+
+Which is why the gate asserts that line and not the image, and why the wireframe
+case exists at all: a screenshot of a *checked checkbox* is not evidence that the
+checkbox does anything.
+
 ---
 
 ## Part 3 — where inference lost to measurement
@@ -1542,6 +1602,8 @@ adopted because of this list.
 | `Extrude` extrudes | Only faces already selected (A55) — and it built no sides on an OPEN mesh, because of the `/4` decode (A54) |
 | Fixing the `Extrude` decode changes 14 operators in `example.wz4` | It changes nothing: 2,192 lines of checksummed sweep report, byte-identical (A56) |
 | The `Extrude` side-face path has never executed | It executes and works; only the boundary-edge branch of the rim test never ran (A56) |
+| ImGui's vendored loader covers GL 3.3 | It covers what ImGui references. Framebuffers, `glUniform3fv` and `glDepthFunc` are absent (A57) |
+| A mesh's GL buffers are copies, so the source object can be released | Frame 2 came back empty — the document's cache is not an independent reference (A58) |
 
 ---
 

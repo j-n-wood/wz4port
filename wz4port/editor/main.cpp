@@ -21,6 +21,8 @@
 #include "wz4lib/basic_ops.hpp"
 #include "wz4frlib/wz3_bitmap_ops.hpp"
 #include "wz4frlib/wz3_bitmap_code.hpp"
+#include "wz4frlib/wz4_anim_ops.hpp"
+#include "wz4frlib/wz4_mesh_ops.hpp"
 #include "util/image.hpp"
 #include "base/system.hpp"
 
@@ -35,6 +37,8 @@
 #include "docedit.hpp"
 #include "params.hpp"
 #include "preview.hpp"
+#include "meshview.hpp"
+#include "gl_wz4.hpp"
 #include "undo.hpp"
 
 #include <GLFW/glfw3.h>
@@ -55,6 +59,10 @@ void RegisterWZ4Classes()
   {
     sREGOPS(basic,0);
     sREGOPS(wz3_bitmap,0);
+    // The mesh modules joined in stage 6.4. wz3_bitmap comes first because two
+    // mesh operators take a bitmap input.
+    sREGOPS(wz4_anim,0);
+    sREGOPS(wz4_mesh,0);
   }
 }
 
@@ -114,6 +122,7 @@ struct wEditor
   wCanvas Canvas;
   wPalette Palette;
   wPreview Preview;
+  wMeshView MeshView;
 
   // Bumped by every edit. The preview re-evaluates when it changes, which is
   // what keeps a parameter drag responsive without re-rendering the graph on
@@ -664,7 +673,20 @@ static void DrawFrame(GLFWwindow *window,sBool &quit)
   ImGui::SetNextWindowPos(ImVec2(palw,menuh+canvash));
   ImGui::SetNextWindowSize(ImVec2(canvasw,vp->Size.y-menuh-canvash));
   ImGui::Begin("Preview",0,paneflags);
-  Ed->Preview.Draw(Ed->Selected,Ed->Revision);
+  // Routed on the selected operator's OUTPUT TYPE, which is what the original
+  // editor's `gui = base2d` / `base3d` per-type setting encodes
+  // (01-existing-model.md §7). Two panes, one slot: a mesh operator gets the 3D
+  // viewer and everything else keeps the bitmap preview. The two Draw signatures
+  // are identical on purpose, which is what makes this a two-line decision.
+  {
+    wType *meshtype = Doc ? Doc->FindType(L"Wz4Mesh") : 0;
+    const sBool ismesh = Ed->Selected && Ed->Selected->Class
+      && meshtype && Ed->Selected->Class->OutputType==meshtype;
+    if(ismesh)
+      Ed->MeshView.DrawPane(Ed->Selected,Ed->Revision);
+    else
+      Ed->Preview.Draw(Ed->Selected,Ed->Revision);
+  }
   ImGui::End();
 
   ImGui::SetNextWindowPos(ImVec2(palw+canvasw,menuh));
@@ -950,6 +972,12 @@ void sMain()
   ImGui_ImplGlfw_InitForOpenGL(window,true);
   ImGui_ImplOpenGL3_Init("#version 330 core");
 
+  // After ImGui_ImplOpenGL3_Init, which is what initialises the vendored GL
+  // loader the mesh viewer borrows. This adds only the eleven framebuffer entry
+  // points that loader is stripped of — see editor/gl_wz4.hpp. A failure here is
+  // not fatal: the 3D preview goes away and the texture editor carries on.
+  wGlLoadExtras();
+
   // wz4lib comes up here, after the window: RegisterWZ4Classes runs from
   // wDocument's constructor and the editor wants its failures on screen.
   Doc = new wDocument;
@@ -966,6 +994,15 @@ void sMain()
   // cannot reach a menu.
   if(sGetShellSwitch(L"guides"))
     Ed->Canvas.ShowGuides = 1;
+
+  // Likewise the mesh viewer's toggles. These exist so the 6.4 gate can assert
+  // that wireframe and the bounding box actually RENDER, rather than that a
+  // checkbox exists — a control whose effect is never exercised is not tested by
+  // a screenshot of the control.
+  if(sGetShellSwitch(L"wire"))
+    Ed->MeshView.Wireframe = true;
+  if(sGetShellSwitch(L"bbox"))
+    Ed->MeshView.ShowBBox = true;
 
   sBool quit = 0;
   sBool failed = 0;
@@ -1000,9 +1037,17 @@ void sMain()
     if(frames>0 && drawn>=frames)
     {
       // What the preview ended up showing, so a non-interactive run can be
-      // checked rather than only looked at.
+      // checked rather than only looked at. Whichever pane was routed to — the
+      // status line has to describe the pane the user is actually looking at,
+      // or the screenshot runner asserts against the wrong one.
       sString<128> pv;
-      Ed->Preview.Describe(pv);
+      wType *meshtype = Doc ? Doc->FindType(L"Wz4Mesh") : 0;
+      const sBool ismesh = Ed->Selected && Ed->Selected->Class
+        && meshtype && Ed->Selected->Class->OutputType==meshtype;
+      if(ismesh)
+        Ed->MeshView.Describe(pv);
+      else
+        Ed->Preview.Describe(pv);
       sPrintF(L"wz4ed: %s\n",pv);
 
       // Before the swap, so what is read back is the frame just drawn.

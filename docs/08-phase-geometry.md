@@ -533,12 +533,112 @@ genuine changes rather than whitespace noise.
 
 ### 6.4 — 3D preview
 
-A small forward renderer in the editor: vertex/index buffers from `Wz4Mesh`, flat or simple
-Lambert shading, orbit/dolly/pan camera, wireframe toggle, grid, bounding box.
+A small forward renderer in the editor: vertex/index buffers from `Wz4Mesh`, simple Lambert
+shading, orbit/dolly camera, wireframe toggle, grid, bounding box.
 
 Explicitly **not** Altona's renderer and **not** Werkkzeug materials. A viewer, not an engine.
 
-**Gate:** meshes display, camera controls work, wireframe toggles.
+**This section was written before the code, from four measurements.**
+
+#### How the viewer reaches OpenGL — measured, and it costs nothing
+
+The editor is ImGui + GLFW + **GL 3.3 core** (`main.cpp:919`). Its existing GL use is `glReadPixels`
+and `glPixelStorei` for the screenshot — both GL 1.1, available without a loader. Shaders, VAOs and
+framebuffers are not.
+
+The answer is already in the tree. ImGui vendors its own minimal loader,
+`backends/imgui_impl_opengl3_loader.h`, whose *implementation* is behind `#ifdef IMGL3W_IMPL`
+(defined only in `imgui_impl_opengl3.cpp:185`) while its *declarations* — the `glXxx` macros and
+`extern union ImGL3WProcs imgl3wProcs` — are unconditional. Confirmed on the built library:
+
+```
+$ nm -g libimgui.a | grep imgl3wProcs
+0000000000021770 S _imgl3wProcs
+```
+
+So including that header **without** `IMGL3W_IMPL` gives every GL 3.x entry point, resolving against
+the one copy already compiled into `libimgui.a` and already initialised by
+`ImGui_ImplOpenGL3_Init`. No new dependency, no second loader, no `#ifdef` per platform, and the
+mechanism is upstream-tested on both.
+
+Rejected: `<OpenGL/gl3.h>` (works on macOS, leaves Linux needing a loader anyway) and a
+hand-written `glfwGetProcAddress` table (~45 pointers of untested boilerplate, on a project whose
+rule is verify-don't-assume).
+
+#### Three things the mesh data forces
+
+- **Quads must be triangulated for the index buffer.** `Wz4MeshFace` holds 3 or 4 corners and GL
+  core has no quad primitive, so a quad becomes two triangles at upload. This is a *view* concern
+  only — the mesh keeps its quads, unlike the `Triangulate` operator.
+- **Normals come from the vertex, not the face.** `Wz4MeshVertex::Normal` is already there and
+  every generator ends with `CalcNormalAndTangents()`, so Lambert shading needs no geometry pass.
+  6.3b's OBJ goldens exist partly to keep those normals honest.
+- **Render to a framebuffer, then `ImGui::Image` it.** Drawing directly into the ImGui pass would
+  mean saving and restoring ImGui's GL state around it; an FBO isolates the two completely and
+  resizes with the pane. The texture is bottom-up, so the image UVs are flipped —
+  `uv0 = (0,1)`, `uv1 = (1,0)`.
+
+#### The gate has to assert the mesh reached the GPU
+
+`editor_shot.cmake` already establishes the pattern, and the reason is stated in it: the preview
+prints `preview: N x M uploaded` precisely so the runner can assert it, because *"without this the
+screenshot could show an empty pane and still pass every other check here"*.
+
+The mesh view reports the same way — vertices and triangles uploaded — and the runner asserts it.
+A screenshot that is merely a plausible PNG is the proxy; the report line is the thing (A39).
+
+**Gate — met.** 149/149 ctest. `wz4ed_mesh` renders a `Sphere(6,4)` shaded on its grid and reports
+`meshview: 23 vertices, 36 triangles uploaded (12 quad(s) split)` — 12 pole triangles plus 12 quads
+doubled, exactly the count 6.3a derives for that sphere. `wz4ed_mesh_wire` renders a subdivided cube
+in wireframe with its bounding box.
+
+#### The loader premise was half wrong, and the correction was cheap
+
+The plan asserted the vendored loader "gives every GL 3.x entry point". It does not: it is
+**generated**, stripped to the symbols ImGui itself references, and the backend says so in a comment
+about regenerating it. Measured, the split is clean and mostly favourable:
+
+| | |
+|---|---|
+| **present** | shaders, programs, uniforms, VAOs, buffers, `glDrawElements`, `glDrawArrays`, `glPolygonMode` — everything ImGui draws with |
+| **absent** | the whole framebuffer/renderbuffer family, `glUniform3fv`, `glDepthFunc`, and a dozen GL 1.1 enums ImGui never names |
+
+So `editor/gl_wz4.cpp` **supplements** rather than replaces: thirteen pointers through
+`glfwGetProcAddress`, the same mechanism the loader uses. Editing the vendored header was rejected —
+it is generated, so an edit becomes a fork the next ImGui bump silently reverts.
+
+#### Two bugs worth recording, both silent
+
+**A hand-fused view-projection matrix had three sign errors.** The `w` row came out negated, so
+every vertex had `w < 0`, was clipped, and the pane rendered **black with no error anywhere** — no
+GL error, no failed check, a correct-looking upload report. Rewritten as separate view and
+projection matrices multiplied explicitly: longer, and the mistake is not available in it.
+
+**Releasing the object from `CalcOp` broke the *next* frame.** The first version released it after
+upload, reasoning that the GL buffers hold copies. Frame 2 then evaluated to `meshview: empty`,
+because the document's cache and that pointer are not independent references. `wPreview::Upload`
+does not release either — it is the tested precedent in this editor. Whether `Execute` hands out a
+reference the caller should own is a real open question (`wDocument::CalcOp`'s own weak-op loop
+*does* release its results), but it belongs with the caching model, not with a viewer.
+
+#### What the gate asserts, and why it is two cases
+
+`editor_shot.cmake` gained `EXPECT=mesh|bitmap`, because the Preview slot now **routes on the
+selected operator's output type** and "either pane reported something" would pass if a mesh were
+sent to the bitmap pane — the mistake most worth catching. Verified negatively: pointing the mesh
+expectation at a `GenBitmap` operator fails.
+
+The second case exists because a screenshot of a *checked checkbox* is not evidence that the
+checkbox does anything. `-wire` and `-bbox` switches let a non-interactive run turn the modes on, so
+the toggles are exercised rather than merely present.
+
+#### Scope note
+
+Routing by result type was written down as 6.5's work. It is two lines and 6.4 cannot be
+demonstrated without it, so it landed here; 6.5 is correspondingly narrower — the full round trip of
+building a mesh graph and editing parameters. The palette already lists all 44 insertable mesh
+operators, grouped, and the inspector already draws `Sphere`'s parameters, both with no new UI code:
+that is the metadata-driven panel from phase 5 doing its job.
 
 ### 6.5 — Editor integration
 
