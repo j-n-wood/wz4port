@@ -1065,7 +1065,7 @@ static void ReportMesh(Wz4Mesh *mesh,const sChar *out)
 /***   sweep — evaluate every store in a document, check every mesh       ***/
 /****************************************************************************/
 
-// Stage 6.3, Suite B. The hand-written cases in tests/mesh_ops.cpp ask each
+// Stage 6.3, Suite B. The hand-written cases in tests/mesh_cases.cpp ask each
 // operator the easy question; this asks the questions the original authors
 // asked. example.wz4 alone drives 39 of the 45 registered mesh operators with
 // parameter values nobody on this port chose, which is the closest thing to a

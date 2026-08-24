@@ -3041,6 +3041,14 @@ void Wz4Mesh::Extrude(sInt steps,sF32 amount,sInt flags,const sVector31 &center,
           sInt max = Faces[fi].Count;
           for(sInt k=0;k<max;k++)
           {
+            // wz4port TODO(6.7): this must be >>2, not /4. Adjacent[] holds
+            // face*4+vertexIndex and a BOUNDARY half-edge is stored as -1
+            // (ConnectFaces, :1290); -1/4 is 0, so a boundary edge here reads as
+            // "face 0 is my neighbour" and island growth spuriously absorbs it.
+            // The shift is arithmetic and gives -1, which is what the rest of
+            // this file uses. The same defect appears again in the boundary-edge
+            // collection below, where it costs the side faces.
+            // See docs/08-phase-geometry.md 6.7 and architecture.md A54.
             sInt m = adj[fi].Adjacent[k]/4;
             if(m>=0 && Faces[m].Select>=0.5f)     // and put them into island to be checked themself
             {
@@ -3119,6 +3127,16 @@ void Wz4Mesh::Extrude(sInt steps,sF32 amount,sInt flags,const sVector31 &center,
       f = &Faces[fi];
       for(sInt j=0;j<f->Count;j++)
       {
+        // wz4port TODO(6.7): must be >>2. This is the one that costs the side
+        // faces: a boundary half-edge is -1, -1/4 is 0, so `n==-1` is never true,
+        // no rim edge is ever collected, isl->NumEdges stays 0, and the whole
+        // side-face path below never runs. An extrude that cannot build sides is
+        // not a design choice — see docs/08-phase-geometry.md 6.7.
+        //
+        // Expect more than a two-character fix: nothing in this tree has ever
+        // executed the code from the edge-loop sort below onwards, and patch 10
+        // already found two defects in parts of this file that had never even
+        // been compiled.
         sInt n = adj[fi].Adjacent[j]/4;
         if(n==-1 || faceIsland[n] != isli)
         {

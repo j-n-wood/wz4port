@@ -1313,10 +1313,16 @@ set_tests_properties(mesh_render_cli PROPERTIES
 
 # Where VALUES are asserted, as opposed to the sweep below, which can only
 # assert invariants because a demo graph's correct output is unknown. Every
-# expectation in tests/mesh_ops.cpp carries the derivation that produced it, and
-# the derivation prints on failure.
+# expectation in tests/mesh_cases.cpp carries the derivation that produced it,
+# and the derivation prints on failure.
+#
+# mesh_cases.cpp, not the obvious mesh_ops.cpp: .gitignore excludes `*_ops.cpp`
+# because that is what wz4ops generates, so `mesh_ops.cpp` was silently dropped
+# by `git add -A` while the build kept working off the untracked file. Second
+# time — `edit_ops.cpp` went the same way in phase 5 (architecture.md A48). The
+# TARGET is still mesh_ops, because only the filename matches the pattern.
 
-add_executable(mesh_ops "${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_ops.cpp")
+add_executable(mesh_ops "${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_cases.cpp")
 target_link_libraries(mesh_ops PRIVATE wz4t wz4geochk)
 target_compile_options(mesh_ops PRIVATE
   "SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/tests/gui_poison.h"

@@ -1157,6 +1157,25 @@ Two habits from it:
 Same shape as A39 and A45 once more: the local build is a *proxy* for the
 committed build, and this is the case where the proxy and the thing disagree.
 
+**It happened again in 6.3a**, to `tests/mesh_ops.cpp` — the natural name for a
+per-operator suite, and it matches `*_ops.cpp` exactly as `edit_ops.cpp` did.
+Caught the same way: the file was absent from `git status --short` after
+`git add -A` while 141 tests passed off the untracked copy. Now
+`tests/mesh_cases.cpp`.
+
+Twice is a pattern, and the habit above was not enough on its own — noticing an
+*absence* in a 16-line status listing is not a reliable check. What actually
+catches it is asking the question the other way round:
+
+```sh
+git status --porcelain --ignored=matching <dir> | grep '^!!'
+```
+
+Anything listed there that is not generated output is a file the commit will not
+carry. Worth running before staging any stage that adds source files, because the
+two names that have tripped it — `edit_ops.cpp`, `mesh_ops.cpp` — are both the
+*obvious* name for what they contain, so a third is likely.
+
 ### A49 · Prefer a snapshot to an inverse — standing
 
 *Phase 5.7.* `07-phase-texture-gui.md` specified command-pattern undo: an inverse
@@ -1359,11 +1378,9 @@ Third instance of the Altona shell-parameter API biting: `sGetShellInt` versus
 the positional index. The API is easy to call in a way that compiles, runs, and
 means nothing.
 
-### A54 · "Fix the upstream bug" and "be faithful to the tool" are decided by one question — standing
+### A54 · Fidelity to the original tool is a tie-breaker, not a goal — standing, **amended**
 
-*Phase 6.3.* Two genuine upstream faults surfaced in one afternoon, and they got
-opposite treatment. The rule that separates them is the only one that survives
-scrutiny: **can a working document depend on the current behaviour?**
+*Phase 6.3.* Two genuine upstream faults surfaced in one afternoon:
 
 - **`Extrude` decodes the adjacency table with `/4`** where the rest of
   `wz4_mesh.cpp` uses `>>2` (`:3033`, `:3111`). A boundary half-edge is stored as
@@ -1371,22 +1388,38 @@ scrutiny: **can a working document depend on the current behaviour?**
   and every rim edge is misread as adjoining face 0. Consequence: extruding a
   selected open quad builds **no side faces at all** — the cap just translates by
   `Amount` along its normal.
-  **Not fixed.** Integer division has truncated toward zero on every compiler
-  this code has seen, so this is what Werkkzeug4 did in 2014, and `example.wz4`'s
-  14 `Extrude` operators were authored against exactly it. "Fixing" it would make
-  this port disagree with the tool the demos were built with, which is the
-  opposite of the goal.
 - **`BakeAnim` dereferences a null `Skeleton`** (`:1754`) and segfaults on any
-  generated mesh. **Fixed** (patch 13). Nothing can be authored against a crash,
-  so no document's appearance can change and there is no fidelity to weigh.
+  generated mesh.
 
-Generalising: a deterministic wrong *answer* is part of the tool's behaviour and
-belongs in the test as an assertion plus an explanation. A *crash* is not
-behaviour. The tempting middle position — "fix it, it's obviously wrong" — would
-have silently changed 14 operators in the reference corpus.
+**As first written, this entry concluded that only the second should be fixed**,
+on the grounds that `Extrude` produces deterministic output which `example.wz4`'s
+14 `Extrude` operators were authored against, so changing it would make the port
+disagree with the tool the demos were built with.
 
-The same reasoning settled phase 4's alpha question, where four operators zeroing
-alpha turned out to be intended design rather than breakage (A40).
+**That was wrong, and it is the mistake worth keeping the entry for.** The
+distinction it draws is real — a deterministic wrong *answer* is part of a tool's
+observable behaviour, a *crash* is not — but it answers the wrong question.
+"Would this change what the 2014 binary produced" is a **tie-breaker for
+ambiguity**, not a veto. An extrude that cannot build sides is not a design
+anyone chose; it is a two-character decode error in a code path that has never
+executed. Inheriting it because the demos inherited it mistakes the reference
+corpus for the specification.
+
+The corrected rule, in order:
+
+1. **Is the behaviour something a user would recognise as intended?** Phase 4's
+   alpha handling was (A40) — four operators zeroing alpha turned out to be
+   "alpha is attached late, on purpose". `Extrude`'s missing sides are not.
+2. **If not, fix it**, and state what changes. Here: 14 operators in
+   `example.wz4` produce different geometry. Accepted; scheduled as stage 6.7.
+3. **Fidelity decides only what is left** — where the tree is ambiguous and there
+   is no way to tell a choice from an accident.
+
+Two practical notes that survive unchanged. A crash can be fixed without weighing
+anything, because nothing can be authored against it. And a fix to a path that
+has never executed is not a two-character job: patch 10 found two defects in
+`wz4_mesh.cpp` code that had never been *compiled*, and the extrude side-face path
+has never been *run*.
 
 ### A55 · An operator's first real input is where its bugs are — standing
 

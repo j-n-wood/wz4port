@@ -122,7 +122,7 @@ Suite A   45 of 45 registered mesh operator(s) exercised
 Suite B   1,386 mesh operators across 5 documents, 0 violations
 ```
 
-**Two suites, doing different jobs.** Suite A (`tests/mesh_ops.cpp`) is 46
+**Two suites, doing different jobs.** Suite A (`tests/mesh_cases.cpp`) is 46
 hand-written cases whose expectations are *derived* and carry the derivation in
 the table; the derivation prints on failure, so "want 52, got 48" is actionable.
 Suite B (`wz4gen sweep`) evaluates every mesh operator in the five bundled
@@ -147,8 +147,8 @@ finds semantics (A55).
   generator produces. Fixed (patch 13).
 - **`Extrude` builds no side faces.** It decodes the adjacency table with `/4`
   where the rest of the file uses `>>2`, and a boundary half-edge is stored as
-  -1, so `-1/4 == 0` makes every rim edge look like it adjoins face 0.
-  **Deliberately not fixed** — see below.
+  -1, so `-1/4 == 0` makes every rim edge look like it adjoins face 0. **To fix
+  in stage 6.7** — see below.
 - **`TransformEx`'s `Flags` default to uv0 → uv0**, so left alone it moves texture
   coordinates, returns a mesh identical to its input, and reports success. Same
   shape as `Perlin`'s `FadeOff` default in 4.3.
@@ -157,12 +157,26 @@ finds semantics (A55).
   four-component parameter — because every earlier case gave one value or all of
   them. Fixed, with a regression case added to the phase-3 round-trip suite.
 
-**The two upstream faults got opposite treatment, and A54 records the rule:** can
-a working document depend on the current behaviour? `Extrude` produces
-deterministic output that `example.wz4`'s 14 `Extrude` operators were authored
-against, and integer division has truncated toward zero on every compiler this
-code has seen — so "fixing" it would make this port disagree with the tool the
-demos were built with. A segfault is not behaviour anyone can author against.
+**On the two upstream faults, I got the call wrong and it is recorded as such.**
+I deferred the `Extrude` fix on fidelity grounds — `example.wz4`'s 14 `Extrude`
+operators were authored against the broken behaviour, so fixing it makes this port
+disagree with the tool the demos were built with. The user overruled that, and
+correctly: matching a 2014 binary is a **tie-breaker for genuine ambiguity, not a
+goal that outranks an operator doing its job**. An extrude that cannot build sides
+is a two-character decode error in a path that has never executed, not a design
+anyone chose. `architecture.md` A54 is amended to say so, and the fix is stage
+**6.7**.
+
+What survives from that reasoning: a *crash* can be fixed without weighing
+anything, because nothing can be authored against it — which is why `BakeAnim`
+went in immediately and `Extrude` gets a scheduled stage with a stated
+compatibility cost.
+
+**6.7 is scheduled before 6.3b, deliberately.** Otherwise `p_extrude`'s golden
+gets locked to the broken output and has to be re-locked straight away. The
+`p_extrude` case currently asserts the *broken* answer of 1 quad as a
+**change-detector**: when the fix lands it fails, which is the signal to replace
+it with the derivation (1 cap + 4 sides = 5 quads at `Steps = 1`, 9 at 2).
 
 **One design assumption did not survive contact:** closedness has to pair
 half-edges by **position**, not by vertex index. A `Wz4Mesh` splits a position
@@ -170,8 +184,8 @@ wherever normals or UVs differ, so index-pairing called `Cube(2,3,4)` open with
 exactly 72 unpaired half-edges — exactly the sum of its six grid patches'
 perimeters. That arithmetic is what identified the cause.
 
-Next: **6.3b** — review the OBJ output and lock checksums. Then 6.4, the 3D
-preview.
+Next: **6.7** — make `Extrude` build side faces, before 6.3b locks anything. Then
+6.3b (review the OBJ output, lock checksums), then 6.4, the 3D preview.
 
 **`wz4ed` is the editor.** It has a window, a menu bar, a metadata-driven
 inspector, and the stacking canvas: blocks coloured by output type, selection,
@@ -455,7 +469,8 @@ wz4port/
   tests/mesh_obj.cpp           stage 6.2 gate: OBJ round-trip, LoadOBJ as the oracle
   tests/geo/gen.wz4t           stage 6.2: Cube, Cube->Transform, Sphere
   geo/mesh_check.hpp/.cpp      ours: the mesh invariant battery + closedness
-  tests/mesh_ops.cpp           stage 6.3a Suite A: 46 derived cases, with derivations
+  tests/mesh_cases.cpp         stage 6.3a Suite A: 46 derived cases, with derivations
+                               (not mesh_ops.cpp — .gitignore eats *_ops.cpp, A48)
   tests/geo/ops_gen.wz4t         the 9 generators
   tests/geo/ops_transform.wz4t   the 14 transforms
   tests/geo/ops_topo.wz4t        the 15 topology operators, plus Add

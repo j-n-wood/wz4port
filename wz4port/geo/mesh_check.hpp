@@ -6,7 +6,7 @@
 //
 // Stage 6.3. One implementation, used by two suites that do different jobs:
 //
-//   Suite A  tests/mesh_ops.cpp — one hand-written case per operator, with
+//   Suite A  tests/mesh_cases.cpp — one hand-written case per operator, with
 //            numbers chosen so the answer is derivable by hand
 //   Suite B  `wz4gen sweep` over the five bundled documents — 39 of the 45
 //            operators, with parameter values chosen by the original authors

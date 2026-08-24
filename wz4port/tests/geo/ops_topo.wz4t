@@ -64,15 +64,20 @@ stack at 8,0 {
 // single quad are all misread as adjoining face 0. Everywhere else in the file
 // the same field is decoded with `>>2`, which does give -1.
 //
-// NOT FIXED, deliberately. Integer division has truncated toward zero on every
-// compiler this code has ever seen, so this is what Werkkzeug4 itself did in
-// 2014 — example.wz4's 14 Extrude operators were authored against exactly this
-// behaviour. Changing it would make this port diverge from the tool the demos
-// were built with, which is the opposite of the goal. Recorded in
-// architecture.md instead; the case below asserts what actually happens.
+// TODO(6.7): FIX THIS, and replace the expectation below with the real one.
+//
+// This case asserts the BROKEN answer — 1 quad — and only until stage 6.7 lands
+// the `>>2` fix. It is deliberately a change-detector: the moment the fix goes in
+// this case fails, which is the signal to swap in the derivation. One step over a
+// four-edge rim must give 1 cap + 4 sides = 5 quads, and Steps = 2 must give 9.
+//
+// It was first deferred on fidelity grounds — example.wz4's 14 Extrude operators
+// were authored against this behaviour. That reasoning was wrong: matching a 2014
+// binary is a tie-breaker for genuine ambiguity, not a reason to keep an operator
+// that cannot do its job. See docs/08-phase-geometry.md §6.7 and A54.
 //
 // What DOES work is the cap: the island moves by Amount along its own normal,
-// which for a flat grid is y. That is derivable and is what the case checks.
+// which for a flat grid is y. That part is derivable and stays true either way.
 stack at 12,0 {
   op Wz4Mesh.Grid { name = p_in_extrude  Tesselate = 1,1  Sides = "-"  Size = 1 }
   // Select's Flags is one word with five controls, and the reader matches values

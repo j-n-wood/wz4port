@@ -44,23 +44,31 @@ this operator an input it had not been hand-fed in an editor.
 
 Baking no animation is exactly a no-op, so returning is both safe and correct.
 
-## Why this one is fixed, when the Extrude defect in the same stage is not
+## Also in this file: two comment-only TODO markers
 
-Stage 6.3 found two upstream faults and treated them differently. The distinction
-is worth stating, because "fix upstream bugs" and "stay faithful to the original
-tool" pull against each other and the rule that separates them is simple:
+`Wz4Mesh::Extrude`'s two `Adjacent[...]/4` decodes carry `TODO(6.7)` comments
+pointing at the fix and at `docs/08-phase-geometry.md` §6.7. No code changes —
+they exist so the defect is findable from the code rather than only from the
+docs, and they are listed here to keep the `altona_wz4/` isolation invariant
+honest.
 
-**Can a working document depend on the current behaviour?**
+## Why this one was fixed immediately, and the Extrude defect is stage 6.7
 
-- **The Extrude adjacency defect** (`/4` where the file elsewhere uses `>>2`, so a
-  boundary half-edge stored as -1 decodes to face 0 — `wz4_mesh.cpp:3033`,
-  `:3111`) produces *output*. Wrong-looking output, but deterministic, identical
-  on every compiler since integer division has always truncated toward zero, and
-  `example.wz4`'s 14 `Extrude` operators were authored against it. Changing it
-  would make this port disagree with the tool the demos were built with.
-  **Left alone**, asserted as-is, and recorded.
-- **This one** produces a *crash*. Nothing can be authored against a segfault, so
-  no document's appearance can change. There is no fidelity argument to weigh.
+Stage 6.3 found two upstream faults. Both are being fixed; only this one could be
+fixed **without weighing anything**, which is the difference worth recording.
+
+A crash cannot be authored against, so guarding it changes no document's
+appearance and there is nothing to trade off. The Extrude defect produces
+deterministic *output*, and `example.wz4`'s 14 `Extrude` operators were authored
+against it — so fixing it does change what those documents render, which is a
+decision rather than a repair. It is stage 6.7, taken deliberately.
+
+My first version of this patch concluded the Extrude defect should be left alone
+permanently, on the grounds that matching the 2014 tool was the goal. That was
+wrong and is corrected in `architecture.md` A54: fidelity to the original binary
+is a tie-breaker for genuine ambiguity, not a veto over an operator that cannot
+do its job. An extrude with no side faces is a decode error in a code path that
+has never executed, not a design anyone chose.
 
 ## Invariant
 
