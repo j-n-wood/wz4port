@@ -640,14 +640,62 @@ building a mesh graph and editing parameters. The palette already lists all 44 i
 operators, grouped, and the inspector already draws `Sphere`'s parameters, both with no new UI code:
 that is the metadata-driven panel from phase 5 doing its job.
 
-### 6.5 — Editor integration
+### 6.5 — Editor integration — **done**
 
-Mesh operators appear in the palette and panel automatically — that is what metadata-driven UI
-buys us; the work here is preview routing by result type (`base2d` vs `base3d`, per
-`01-existing-model.md` §7) rather than new UI.
+The plan's prediction held: **mesh operators appeared in the palette and the panel with no new UI
+code at all.** All 44 insertable ones are listed and grouped, and the inspector draws every
+operator's parameters — `Extrude`'s ten words including its `Faces: group` choice — because the
+panel is generated from metadata. That was the bet phase 5 made, and this is it paying out.
 
-**Gate — phase gate.** Open a document, build a mesh graph, edit parameters, see the mesh
-update in 3D. Export to OBJ.
+Preview routing by result type landed in 6.4, since the 3D viewer could not be demonstrated without
+it. So this stage is the **phase gate** itself, and it is split by what can be asserted where.
+
+#### The headless half — `mesh_edit`, and it is the exact half
+
+Built through the editor's **own** functions — `wInsertOp`, the metadata offsets, `Doc->Change`,
+`Doc->CalcOp` — not through a `.wz4t`. That is the difference from `mesh_ops`: there the graph is
+authored and the question is whether each operator computes the right answer; here the graph is
+*built*, and the question is whether the editing path works.
+
+Four things, in the order a user hits them:
+
+| | |
+|---|---|
+| **1** | inserting two operators one below the other **connects** them, from the geometry alone |
+| **2** | editing `Transform.Scale` to (2,3,4) through its metadata offset gives bounds −1..1, −1.5..1.5, −2..2 *and* a different checksum |
+| **3** | editing the **Cube** upstream makes the **Transform** below it report 52 quads — `Doc->Change` invalidates downstream, which is what makes the editor feel connected rather than per-operator |
+| **4** | `Export` writes an OBJ that `LoadOBJ` accepts, 52 faces, no invariant violations |
+
+Non-uniform scales throughout, for the reason the whole suite uses them: a scale applied to all
+three axes from x's value would pass a uniform test.
+
+(3) is the one worth having. If `Change` only dirtied the edited operator, the `Transform` would
+keep serving a cached 6-face mesh and the editor would appear to do nothing — a failure that looks
+like a UI bug and is not.
+
+#### The GUI half, and what is honestly not automated
+
+`wz4ed_mesh` and `wz4ed_mesh_wire` prove a mesh reaches the screen, shaded and in wireframe, and
+that the routing sends it to the right pane. **What is not automated is an interactive sequence** —
+clicking a palette entry, dragging a block, typing in a field — because driving ImGui from outside
+needs a scripted input harness this project does not have.
+
+That gap is covered by construction rather than by a test: the editor and `mesh_edit` call the same
+`wInsertOp` and address parameters through the same metadata offsets, which is exactly why insert
+and delete were factored into `editor/docedit.cpp` in stage 5.4. What is left untested is the
+mapping from a click to those calls, and that is a much smaller thing than the round trip.
+
+#### `palette_insert` grew for free
+
+Extending it to the mesh library was **registration plus one assertion**, because it walks the live
+registry rather than a list: **112 offerable classes now, all 112 insert and connect**, up from 67.
+The counts are asserted per output type — 34 `GenBitmap`, 45 `Wz4Mesh` — rather than as one total,
+which would still pass if one module lost operators while another gained them.
+
+45 registered, 44 offered: `Multiply` carries `flags = hide` upstream, being the superseded
+"Multiply (old)".
+
+**Gate — met.** 150/150 ctest.
 
 ### 6.6 — Text3D and Path3D
 

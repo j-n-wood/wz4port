@@ -1205,7 +1205,7 @@ add_executable(palette_insert
   "${CMAKE_CURRENT_SOURCE_DIR}/tests/palette_insert.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/editor/docedit.cpp"
 )
-target_link_libraries(palette_insert PRIVATE wz4tex)
+target_link_libraries(palette_insert PRIVATE wz4geo)
 target_include_directories(palette_insert PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}/editor")
 target_compile_options(palette_insert PRIVATE
@@ -1370,6 +1370,33 @@ target_compile_options(mesh_ops PRIVATE
 add_test(NAME mesh_ops COMMAND mesh_ops
   "${CMAKE_CURRENT_SOURCE_DIR}/tests/geo" "${WZ4_META_DIR}")
 set_tests_properties(mesh_ops PROPERTIES DEPENDS opsmeta_gate)
+
+#############################################################################
+##  mesh_edit — stage 6.5, the phase gate's headless half                   ##
+#############################################################################
+
+# The 3D half of the phase gate is wz4ed_mesh, which needs a window. This is the
+# rest, and the rest is where the assertions can be exact: build the graph
+# through the editor's OWN functions, edit through the metadata offsets, and check
+# that the change reaches the generator and that Export writes a readable OBJ.
+#
+# Different question from mesh_ops: there the graph is authored in a .wz4t and
+# the question is whether each operator computes the right answer. Here the graph
+# is BUILT, and the question is whether the editing path works.
+
+add_executable(mesh_edit
+  "${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_edit.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/editor/docedit.cpp"
+)
+target_link_libraries(mesh_edit PRIVATE wz4t wz4geochk)
+target_include_directories(mesh_edit PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}/editor")
+target_compile_options(mesh_edit PRIVATE
+  "SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/tests/gui_poison.h"
+)
+add_test(NAME mesh_edit COMMAND mesh_edit
+  "${WZ4_META_DIR}" "${CMAKE_BINARY_DIR}/obj")
+set_tests_properties(mesh_edit PROPERTIES DEPENDS opsmeta_gate)
 
 #############################################################################
 ##  mesh_golden_* — stage 6.3b: OBJ goldens, for what a checksum cannot see #

@@ -26,19 +26,28 @@
 #include "wz4lib/doc_core.hpp"
 #include "wz4lib/basic_ops.hpp"
 #include "wz4frlib/wz3_bitmap_ops.hpp"
+#include "wz4frlib/wz4_anim_ops.hpp"
+#include "wz4frlib/wz4_mesh_ops.hpp"
 #include "base/system.hpp"
 #include "docedit.hpp"
 
 /****************************************************************************/
 
-// Both modules, in the order wz4gen uses: GenBitmap derives from BitmapBase, so
-// basic must register its types first.
+// All four modules, in the order wz4gen uses: GenBitmap derives from BitmapBase
+// and Wz4Mesh from MeshBase, so basic must register its types first.
+// The same four modules the editor registers, so "every offerable class inserts"
+// means every class the palette actually offers. The mesh modules joined in stage
+// 6.5: this test is class-driven, so extending it to 45 more operators was
+// registration and one assertion, which is the point of having written it that
+// way.
 void RegisterWZ4Classes()
 {
   for(sInt i=0;i<2;i++)
   {
     sREGOPS(basic,0);
     sREGOPS(wz3_bitmap,0);
+    sREGOPS(wz4_anim,0);
+    sREGOPS(wz4_mesh,0);
   }
 }
 
@@ -134,17 +143,25 @@ void sMain()
   Check(offered>0,L"the palette offers something at all");
   Check(inserted==offered,L"every offered class inserted and connected");
 
-  // The two modules registered here are `basic` and `wz3_bitmap`. 34 GenBitmap
-  // operators is the number phase 4 established and the palette shows.
-  sInt genbitmap = 0;
+  // 34 GenBitmap operators is the number phase 4 established, and 45 Wz4Mesh the
+  // number 6.1 did. Counted per output type rather than in total, because a
+  // single total would still pass if one module lost operators while another
+  // gained them.
+  sInt genbitmap = 0,wz4mesh = 0;
   for(sInt i=0;i<Doc->Classes.GetCount();i++)
   {
     wClass *cl = Doc->Classes[i];
-    if(cl->OutputType && sCmpString(cl->OutputType->Symbol,L"GenBitmap")==0)
+    if(!cl->OutputType)
+      continue;
+    if(sCmpString(cl->OutputType->Symbol,L"GenBitmap")==0)
       genbitmap++;
+    if(sCmpString(cl->OutputType->Symbol,L"Wz4Mesh")==0)
+      wz4mesh++;
   }
-  sPrintF(L"  %d classes output GenBitmap\n",genbitmap);
+  sPrintF(L"  %d classes output GenBitmap, %d output Wz4Mesh\n",
+    genbitmap,wz4mesh);
   Check(genbitmap==34,L"all 34 GenBitmap operators are registered");
+  Check(wz4mesh==45,L"all 45 Wz4Mesh operators are registered");
 
   // --- repeated insertion builds a connected stack -------------------------
 

@@ -9,7 +9,7 @@ rediscovered the hard way.
 editor**: it opens a document, shows the stacking canvas, offers all 34 texture
 operators, inserts/deletes/moves/resizes them under the original's collision
 rules, edits every parameter from a panel generated entirely from metadata,
-previews the result live, and undoes all of it. `ctest` is **149 tests** on
+previews the result live, and undoes all of it. `ctest` is **150 tests** on
 arm64; the 90 texture goldens remain bit-identical between the NEON and SSE2
 builds.
 
@@ -298,8 +298,46 @@ evidence the checkbox does anything. `editor_shot.cmake` gained
 pointing the mesh expectation at a `GenBitmap` operator — and `-wire`/`-bbox`
 switches let a non-interactive run exercise the view modes.
 
-Next: **6.5** — the phase gate: build a mesh graph, edit parameters, watch it
-update, export to OBJ.
+**Stage 6.5 is done — the phase gate is met.** 150/150 ctest. Only 6.6
+(`Text3D`/`Path3D` on FreeType) remains in phase 6.
+
+**The phase-5 bet paid out: mesh operators appeared in the palette and the
+inspector with no new UI code at all.** All 44 insertable ones, grouped, and the
+panel draws every operator's parameters — `Extrude`'s ten words including its
+`Faces: group` choice — because it is generated from metadata.
+
+`tests/mesh_edit.cpp` is the headless half of the gate, and it builds the graph
+through the editor's **own** functions rather than a `.wz4t` — `wInsertOp`, the
+metadata offsets, `Doc->Change`, `Doc->CalcOp`. Different question from
+`mesh_ops`: there the graph is authored and the question is whether each operator
+computes the right answer; here the graph is *built*, and the question is whether
+the editing path works.
+
+- inserting two operators one below the other **connects** them, from geometry
+- editing `Transform.Scale` to (2,3,4) through its metadata offset gives bounds
+  −1..1, −1.5..1.5, −2..2 and a different checksum
+- editing the **Cube** upstream makes the **Transform** below it report 52 quads
+- `Export` writes an OBJ that `LoadOBJ` accepts — 52 faces, no violations
+
+The third is the one worth having: if `Change` only dirtied the edited operator,
+the Transform would keep serving a cached 6-face mesh and the editor would appear
+to do nothing — a failure that looks like a UI bug and is not.
+
+**What is honestly not automated:** an interactive sequence — clicking a palette
+entry, dragging a block, typing in a field — because driving ImGui from outside
+needs an input harness this project does not have. That gap is closed by
+construction rather than by a test: the editor and `mesh_edit` call the same
+`wInsertOp` and use the same metadata offsets, which is exactly why insert and
+delete were factored into `editor/docedit.cpp` back in 5.4. What remains untested
+is the mapping from a click to those calls.
+
+**`palette_insert` grew for free** — registration plus one assertion, because it
+walks the live registry rather than a list. **112 offerable classes, all 112
+insert and connect**, up from 67. Counted per output type (34 `GenBitmap`, 45
+`Wz4Mesh`) rather than as one total, which would still pass if one module lost
+operators while another gained them.
+
+Next: **6.6** — `Text3D` and `Path3D` on FreeType outlines plus a tessellator.
 
 **`wz4ed` is the editor.** It has a window, a menu bar, a metadata-driven
 inspector, and the stacking canvas: blocks coloured by output type, selection,
@@ -434,7 +472,7 @@ about the build.
 | 3 — Text graph format + CLI | **Done**, phase gate passed |
 | 4 — Texture library + tests | **Done**, phase gate passed. All 34 operators run |
 | 5 — Texture GUI | **Done**, phase gate passed. `wz4ed` edits textures |
-| 6 — Geometry | **6.1–6.4, 6.7 done** — 45 of 47 register, all cased and locked, OBJ both ways, 3D preview |
+| 6 — Geometry | **Phase gate passed.** 6.1–6.5 and 6.7 done; only 6.6 (Text3D/Path3D) remains |
 | 7 — Animated geometry | Not started |
 
 ---
@@ -485,7 +523,8 @@ Clean build from scratch: **0 errors**. Warnings are expected and benign
 | `canvas_rules` | Stage 5.2 gate: canvas edits obey `CheckMove`, and rewire the graph |
 | `connect_passes` | Stage 5.3 gate: the Hide, Sort and Bypass post-passes |
 | `connect_inputs` | And that `wz4gen list -inputs` agrees with the editor's inspector |
-| `palette_insert` | Stage 5.4 gate: all 67 offerable classes insert, connect and delete |
+| `palette_insert` | Stage 5.4 gate: all **112** offerable classes insert, connect and delete |
+| `mesh_edit` | **Stage 6.5 phase gate:** build a graph, edit through metadata, export a readable OBJ |
 | `params_edit` | Stage 5.5 gate: 140 parameters addressable, and edits reach the generator |
 | `undo_page` | **Phase 5 gate:** every edit kind undoes and redoes, array rows included |
 | **`wz4geo`** | **The mesh engine** (phase 6): wz4_mesh + obj/lwo + anim + bspline + generated ops |
@@ -590,6 +629,7 @@ wz4port/
   tests/mesh_obj.cpp           stage 6.2 gate: OBJ round-trip, LoadOBJ as the oracle
   tests/geo/gen.wz4t           stage 6.2: Cube, Cube->Transform, Sphere
   geo/mesh_check.hpp/.cpp      ours: the mesh invariant battery + closedness
+  tests/mesh_edit.cpp          stage 6.5 phase gate: build, edit, export, headless
   tests/mesh_cases.cpp         stage 6.3a Suite A: 48 derived cases, with derivations
                                (not mesh_ops.cpp — .gitignore eats *_ops.cpp, A48)
   tests/geo/ops_gen.wz4t         the 9 generators
