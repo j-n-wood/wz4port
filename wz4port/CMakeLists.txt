@@ -542,6 +542,17 @@ target_compile_options(wz4geo PRIVATE
   "SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/tests/gui_poison.h"
 )
 
+# Ours, not upstream, so it is a separate target for the same reason wz4t is:
+# wz4geo is upstream sources compiled in place, and mixing our code into it would
+# blur the isolation seam. Used by `wz4gen sweep` and by the per-operator cases,
+# which is why it is a library rather than a file in either.
+add_library(wz4geochk STATIC "${CMAKE_CURRENT_SOURCE_DIR}/geo/mesh_check.cpp")
+target_include_directories(wz4geochk PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/geo")
+target_link_libraries(wz4geochk PUBLIC wz4geo)
+target_compile_options(wz4geochk PRIVATE
+  "SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/tests/gui_poison.h"
+)
+
 #############################################################################
 ##  wz4gen — headless CLI (phase 3)                                        ##
 #############################################################################
@@ -565,7 +576,7 @@ target_compile_options(wz4t PRIVATE
 )
 
 add_executable(wz4gen "${CMAKE_CURRENT_SOURCE_DIR}/tools/wz4gen/main.cpp")
-target_link_libraries(wz4gen PRIVATE wz4t wz4geo)
+target_link_libraries(wz4gen PRIVATE wz4t wz4geochk)
 target_compile_options(wz4gen PRIVATE
   "SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/tests/gui_poison.h"
 )
@@ -1295,6 +1306,62 @@ set_tests_properties(mesh_render_cli PROPERTIES
   DEPENDS opsmeta_gate
   PASS_REGULAR_EXPRESSION
     "6 faces \\(0 tri, 6 quad\\), 1 clusters.*min -2 -0\\.5 -0\\.5.*max 2 0\\.5 0\\.5")
+
+#############################################################################
+##  mesh_ops — stage 6.3 Suite A: one case per mesh operator               ##
+#############################################################################
+
+# Where VALUES are asserted, as opposed to the sweep below, which can only
+# assert invariants because a demo graph's correct output is unknown. Every
+# expectation in tests/mesh_ops.cpp carries the derivation that produced it, and
+# the derivation prints on failure.
+
+add_executable(mesh_ops "${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_ops.cpp")
+target_link_libraries(mesh_ops PRIVATE wz4t wz4geochk)
+target_compile_options(mesh_ops PRIVATE
+  "SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/tests/gui_poison.h"
+)
+add_test(NAME mesh_ops COMMAND mesh_ops
+  "${CMAKE_CURRENT_SOURCE_DIR}/tests/geo" "${WZ4_META_DIR}")
+set_tests_properties(mesh_ops PROPERTIES DEPENDS opsmeta_gate)
+
+#############################################################################
+##  mesh_sweep — stage 6.3 Suite B: the bundled documents as a corpus      ##
+#############################################################################
+
+# The per-operator cases ask each operator the easy question. This asks the
+# questions the original authors asked, over 1,386 mesh operators with parameter
+# values nobody on this port chose — the closest thing to a reference build that
+# exists here, and something phase 4 had no equivalent of.
+#
+# It sweeps every mesh OPERATOR, not every store. Measured: example.wz4 has 54
+# stores of which 15 yield a mesh, but 1,180 mesh operators. Sweeping stores
+# would have covered a third of what is there while reporting a respectable
+# number — the interesting operators are mid-graph.
+#
+# fr-062_texts_kb.wz4 is absent from this list on purpose: it contains zero mesh
+# operators, and `sweep` fails a document that yields none rather than passing
+# silently. It is still covered by load_/identity_ above.
+
+set(WZ4_MESH_SWEEP_DOCS
+  "demos/example/example.wz4"
+  "demos/the_cube/fr-062_party.wz4"
+  "demos/easterparty/teaser1.wz4"
+  "demos/easterparty/teaser2.wz4"
+  "wz4/screens4/test.wz4"
+)
+
+foreach(_doc ${WZ4_MESH_SWEEP_DOCS})
+  get_filename_component(_name "${_doc}" NAME_WE)
+  add_test(NAME mesh_sweep_${_name}
+    COMMAND wz4gen sweep "${FR_ROOT}/altona_wz4/${_doc}")
+  # "0 violation(s)" is asserted as well as the exit code. `sweep` sets the error
+  # code on a violation, but the exit code alone would also pass if the sweep
+  # silently checked nothing, and the line below cannot be printed without a
+  # count having been taken. Same reasoning as A39.
+  set_tests_properties(mesh_sweep_${_name} PROPERTIES
+    PASS_REGULAR_EXPRESSION "class\\(es\\) exercised, 0 violation\\(s\\)")
+endforeach()
 
 #############################################################################
 ##  SIMD parity test                                                       ##

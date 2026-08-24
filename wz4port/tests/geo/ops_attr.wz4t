@@ -1,0 +1,142 @@
+wz4t 1
+
+// Stage 6.3 Suite A — the attribute operators, plus Heal and Export.
+//
+// These are the awkward seven, and each is awkward in its own way:
+//
+//   Select, SelectGrow   change no geometry at all, only a per-vertex or
+//                        per-face float. So they are asserted THROUGH
+//                        DeleteFace: if the selection was not set, nothing is
+//                        deleted, and the face count says so.
+//   Displace             needs a bitmap input, so it needs two columns
+//   ExtrudeNormal        the one case whose displacement is exactly derivable
+//   BakeAnim             needs a skeleton it cannot have here
+//   Heal                 two mesh inputs
+//   Export               writes a file and passes the mesh through
+//
+// Written with explicit positions wherever an operator has two inputs, because a
+// stack is one column and connections come from geometry.
+
+page "attr"
+
+// Select proved through its effect: everything selected, then everything with a
+// selection deleted, must leave nothing. If Select had set no flags the cube
+// would come through intact, so 0 faces is the assertion and 24 is the failure.
+stack at 0,0 {
+  op Wz4Mesh.Cube { name = a_in_select  Tesselate = 2,2,2  Scale = 1,1,1 }
+  op Wz4Mesh.Select { name = a_select  Flags = all, "-", set, "touched face" }
+  op Wz4Mesh.DeleteFace {
+    name = a_select_deleted
+    Selection = selected
+    DeleteUnusedVertices = 1
+  }
+}
+
+// SelectGrow over an already-total selection must keep it total — growing a full
+// set cannot shrink it. This does not prove growth; it proves the operator does
+// not destroy what it was given, which is the part that would break silently.
+// A comparative case, where a partial selection grows by a measurable amount,
+// belongs with the golden pass in 6.3b.
+stack at 4,0 {
+  op Wz4Mesh.Cube { name = a_in_grow  Tesselate = 2,2,2  Scale = 1,1,1 }
+  op Wz4Mesh.Select { name = a_grow_sel  Flags = all, "-", set, "touched face" }
+  op Wz4Mesh.SelectGrow {
+    name = a_selectgrow
+    Amount = 1
+    Range = 0.25
+    Power = 1
+    Bias = 0
+  }
+  op Wz4Mesh.DeleteFace {
+    name = a_selectgrow_deleted
+    Selection = selected
+    DeleteUnusedVertices = 1
+  }
+}
+
+// Every vertex moves along its own normal by Amount. On a cube the averaged
+// corner normal is (+-1,+-1,+-1)/sqrt(3), so each axis gains Amount/sqrt(3)
+// = 0.1/1.7320508 = 0.0577350 and the extent becomes +-0.5577350. The one
+// operator in this file whose displacement is exactly derivable.
+stack at 8,0 {
+  op Wz4Mesh.Cube { name = a_in_extnormal  Tesselate = 1,1,1  Scale = 1,1,1 }
+  op Wz4Mesh.ExtrudeNormal {
+    name = a_extrudenormal
+    Amount = 0.1
+    Selection = all
+  }
+}
+
+// BakeAnim freezes a skeletal pose into the vertices. There is no skeleton on
+// this input, so the assertion is that it is a clean no-op rather than a crash
+// or an empty mesh — which is what a graph containing one would need.
+stack at 12,0 {
+  op Wz4Mesh.Cube { name = a_in_bakeanim  Tesselate = 1,1,1  Scale = 1,1,1 }
+  op Wz4Mesh.BakeAnim {
+    name = a_bakeanim
+    Time = 0
+  }
+}
+
+// Export passes its input through as well as writing it, so the mesh must come
+// out unchanged. The file itself is not asserted here — mesh_obj already proves
+// the writer, with the reader as its oracle.
+stack at 16,0 {
+  op Wz4Mesh.Cube { name = a_in_export  Tesselate = 1,1,1  Scale = 1,1,1 }
+  op Wz4Mesh.Export {
+    name = a_export
+    Filename = "obj/attr_export.obj"
+    FormatType = obj
+  }
+}
+
+// Displace: a mesh and a bitmap, so two columns. Amount 0.2 bounds how far a
+// vertex can move, so the bounds must stay within that of the cube's own.
+op Wz4Mesh.Cube at 20,0 size 3x2 {
+  name = a_disp_mesh
+  Tesselate = 4,4,4
+  Scale = 1,1,1
+}
+op GenBitmap.Perlin at 24,0 size 3x2 {
+  name = a_disp_bitmap
+  Size = 64, 64
+  Frequency = 2
+  Octaves = 2
+  // 0.5, not the default 1 — at 1 Perlin is white noise, which stage 4.3 found
+  // the hard way and 06-phase-texture.md records.
+  FadeOff = 0.5
+  Seed = 1
+}
+op Wz4Mesh.Displace at 20,2 size 7x1 {
+  name = a_displace
+  Scale = 1, 1, 1
+  Rot = 0, 0, 0
+  Trans = 0, 0, 0
+  Amount = 0.2
+  Bias = 0
+  Selection = all
+}
+
+// Heal welds one mesh onto another's positions. Two cubes, the second offset by
+// a tiny amount well inside PosThreshold, so there is something to weld.
+op Wz4Mesh.Cube at 30,0 size 3x2 {
+  name = a_heal_a
+  Tesselate = 1,1,1
+  Scale = 1,1,1
+}
+op Wz4Mesh.Cube at 34,0 size 3x1 {
+  name = a_heal_b_cube
+  Tesselate = 1,1,1
+  Scale = 1,1,1
+}
+op Wz4Mesh.Transform at 34,1 size 3x1 {
+  name = a_heal_b
+  Scale = 1,1,1
+  Rot = 0,0,0
+  Trans = 0.001, 0, 0
+}
+op Wz4Mesh.Heal at 30,2 size 7x1 {
+  name = a_heal
+  PosThreshold = 0.01
+  NormThreshold = 0.01
+}

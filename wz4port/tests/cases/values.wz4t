@@ -50,3 +50,13 @@ op AnyType.Comment at 6,8 size 4x1 {
 op Texture2D.Export at 0,10 size 3x1 {
   Filename = "out/some path/tex.wz4tex"
 }
+
+// A PARTIAL value list: Pos has three components and two are stated, so the
+// third must keep its default. Added in stage 6.3, which is when this was first
+// written anywhere — every earlier case gave either one value or all of them, so
+// the reader's bounds test being one line later than its subscript could not be
+// reached. It asserted inside sStaticArray rather than reporting a parse error,
+// which made it look like an upstream fault. See wz4t_read.cpp:531.
+op GenBitmap.Light at 0,12 size 3x1 {
+  Pos = 0.25, 0.5
+}

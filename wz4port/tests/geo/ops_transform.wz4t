@@ -1,0 +1,204 @@
+wz4t 1
+
+// Stage 6.3 Suite A — the 14 transform operators.
+//
+// Every one of these preserves topology, so the shared assertion is that the
+// face count and arity come through unchanged. What distinguishes them is what
+// happens to the BOUNDS, and that is where each case earns its place: a
+// transform that silently did nothing would pass a face-count check and fail a
+// bounds check.
+//
+// Each stack starts with its own Cube(1,1,1) — 6 quads spanning -0.5..0.5 —
+// because a stack is a vertical chain and an operator reads whatever sits
+// directly above it.
+//
+// Non-uniform values throughout, for the same reason the generators use distinct
+// tesselation per axis: a transform that applied x's scale to all three axes
+// would be invisible under a uniform scale.
+
+page "transform"
+
+// Scale (2,3,4) about the origin: -0.5..0.5 becomes -1..1, -1.5..1.5, -2..2.
+// Then Trans (1,2,3). Asserting the composed result also pins the ORDER.
+stack at 0,0 {
+  op Wz4Mesh.Cube { name = t_in_transform  Tesselate = 1,1,1  Scale = 1,1,1 }
+  op Wz4Mesh.Transform {
+    name = t_transform
+    Scale = 2, 3, 4
+    Rot = 0, 0, 0
+    Trans = 1, 2, 3
+    Selection = all
+  }
+}
+
+// The same numbers through the operator that can transform any vertex channel.
+//
+// TransformEx's Flags DEFAULT TO 0x33 — input uv0, output uv0 — so left alone it
+// moves texture coordinates and the positions do not budge. Measured: the
+// default case comes out at -0.5..0.5, byte-identical to its input. Stating
+// pos->pos is what makes it agree with Transform, and that agreement is the
+// assertion. Same shape of trap as Perlin's FadeOff default in stage 4.3.
+stack at 4,0 {
+  op Wz4Mesh.Cube { name = t_in_ex  Tesselate = 1,1,1  Scale = 1,1,1 }
+  op Wz4Mesh.TransformEx {
+    name = t_transformex
+    Scale = 2, 3, 4
+    Rot = 0, 0, 0
+    Trans = 1, 2, 3
+    Flags = pos, pos
+  }
+}
+
+// Rows of an explicit matrix. x scales by 2, y by 3, z by 4 — the same result as
+// t_transform without the translation, which is what makes it checkable.
+stack at 8,0 {
+  op Wz4Mesh.Cube { name = t_in_matrix  Tesselate = 1,1,1  Scale = 1,1,1 }
+  op Wz4Mesh.TransformMatrix {
+    name = t_transformmatrix
+    x = 2, 0, 0, 0
+    y = 0, 3, 0, 0
+    z = 0, 0, 4, 0
+  }
+}
+
+stack at 12,0 {
+  op Wz4Mesh.Cube { name = t_in_nonlinear  Tesselate = 4,4,4  Scale = 1,1,1 }
+  op Wz4Mesh.TransformNonLinear {
+    name = t_transformnonlinear
+    x1 = 1, 0, 0
+    y1 = 0, 1, 0
+    z1 = 0, 0, 1
+    x2 = 0.5, 0, 0
+    y2 = 0, 0, 0
+    z2 = 0, 0, 0
+  }
+}
+
+// Center takes a mesh that has been pushed off the origin and puts it back, so
+// the case is a translation followed by its undoing. This is the only operator
+// in the group whose correct output is EXACTLY the input to the step before it.
+stack at 16,0 {
+  op Wz4Mesh.Cube { name = t_in_center  Tesselate = 1,1,1  Scale = 1,1,1 }
+  op Wz4Mesh.Transform { name = t_center_moved  Scale = 1,1,1  Rot = 0,0,0  Trans = 5, -7, 11 }
+  op Wz4Mesh.Center { name = t_center }
+}
+
+stack at 20,0 {
+  op Wz4Mesh.Cube { name = t_in_mirror  Tesselate = 1,1,1  Scale = 1,1,1 }
+  op Wz4Mesh.Transform { name = t_mirror_moved  Scale = 1,1,1  Rot = 0,0,0  Trans = 2, 0, 0 }
+  op Wz4Mesh.Mirror {
+    name = t_mirror
+    MirrorX = on
+    MirrorY = off
+    MirrorZ = off
+    Selection = all
+  }
+}
+
+// Count 3, translating one unit in x each time: three cubes spanning -0.5..2.5.
+stack at 24,0 {
+  op Wz4Mesh.Cube { name = t_in_multiply  Tesselate = 1,1,1  Scale = 1,1,1 }
+  op Wz4Mesh.Multiply {
+    name = t_multiply
+    Scale = 1, 1, 1
+    Rot = 0, 0, 0
+    Trans = 1, 0, 0
+    Count = 3
+    Flags = "-"
+  }
+}
+
+stack at 28,0 {
+  op Wz4Mesh.Cube { name = t_in_multiplynew  Tesselate = 1,1,1  Scale = 1,1,1 }
+  op Wz4Mesh.MultiplyNew {
+    name = t_multiplynew
+    Renderpass = 0
+    Flags = "-"
+    PreScale = 1, 1, 1
+    PreRot = 0, 0, 0
+    PreTrans = 0, 0, 0
+    Count = 3
+    Scale = 1, 1, 1
+    Rot = 0, 0, 0
+    Trans = 1, 0, 0
+  }
+}
+
+// A tesselated bar, because bending a single quad per face has nothing to bend.
+stack at 32,0 {
+  op Wz4Mesh.Cube { name = t_in_bend  Tesselate = 1,8,1  Scale = 1,1,1 }
+  op Wz4Mesh.Bend {
+    name = t_bend
+    Start = 0, -0.5, 0
+    Up = 0, 1, 0
+    Axis = 1, 0, 0
+    Angle = 0.25
+    Radius = 1
+  }
+}
+
+// Deform is spline-driven: without array rows it is an identity, which would
+// make the case unable to fail. Two keys, the second pushed 1 unit along x, so
+// the top of the bar leans and the x extent grows past 0.5.
+stack at 36,0 {
+  op Wz4Mesh.Cube { name = t_in_deform  Tesselate = 1,8,1  Scale = 1,1,1 }
+  op Wz4Mesh.Deform {
+    name = t_deform
+    Count = 2
+    Start = 0, -0.5, 0
+    End = 0, 0.5, 0
+    UpVector = 0, 0, 1
+    element { Pos = 0, 0, 0     Twist = 0  Scale = 1 }
+    element { Pos = 1, 0, 0     Twist = 0  Scale = 1 }
+  }
+}
+
+stack at 40,0 {
+  op Wz4Mesh.Cube { name = t_in_normalize  Tesselate = 2,2,2  Scale = 1,1,1 }
+  op Wz4Mesh.Normalize { name = t_normalize }
+}
+
+// Seed and amount fixed, so the result is deterministic and the bounds can be
+// bracketed: no vertex can move further than Amount from where it started.
+stack at 44,0 {
+  op Wz4Mesh.Cube { name = t_in_randomize  Tesselate = 2,2,2  Scale = 1,1,1 }
+  op Wz4Mesh.Randomize {
+    name = t_randomize
+    Seed = 1
+    Amount = 0.1
+    Selection = all
+  }
+}
+
+stack at 48,0 {
+  op Wz4Mesh.Cube { name = t_in_noise  Tesselate = 4,4,4  Scale = 1,1,1 }
+  op Wz4Mesh.Noise {
+    name = t_noise
+    Seed = 1
+    Freq = 2, 2, 2
+    Amplify = 0.1, 0.1, 0.1
+    Selection = all
+    Octaves = 1
+    Falloff = 0.5
+  }
+}
+
+stack at 52,0 {
+  op Wz4Mesh.Cube { name = t_in_range  Tesselate = 1,8,1  Scale = 1,1,1 }
+  op Wz4Mesh.TransformRange {
+    name = t_transformrange
+    Selection = all
+    Mode = linear
+    // float2, and it is a ROTATION, not a vector: the handles code reads it as
+    // sVector30(-Direction.x, 0, -Direction.y). 0,0 leaves the default axis.
+    Direction = 0, 0
+    AxialRange = -0.5, 0.5
+    RangeMode = manual
+    ScaleStart = 1, 1, 1
+    RotateStart = 0, 0, 0
+    TranslateStart = 0, 0, 0
+    ScaleEnd = 2, 1, 2
+    RotateEnd = 0, 0, 0
+    TranslateEnd = 0, 0, 0
+  }
+}

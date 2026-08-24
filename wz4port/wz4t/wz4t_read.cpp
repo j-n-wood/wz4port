@@ -526,13 +526,21 @@ sBool wWz4tReader::Apply(wStackOp *op,const wMetaClass *mc,const wMetaParam *p,
   }
 
   // Plain numbers. A single value fills every slot, which is how the DSL's own
-  // defaults behave (`float31 Scale = 1` means 1,1,1).
+  // defaults behave (`float31 Scale = 1` means 1,1,1); a shorter list fills what
+  // it covers and leaves the rest at the default.
+  //
+  // The bounds test HAS TO come before the subscript, and did not until stage
+  // 6.3 wrote the first case with a partial list — three values for a
+  // four-component parameter. Until then every case in the tree supplied either
+  // one value or exactly `slots` of them, so `values[i]` was always in range and
+  // the misordering could not be reached. It asserted inside sStaticArray rather
+  // than reporting a parse error, which is why it looked like an upstream fault.
   sBool isfloat = (p->Kind==L"float");
   for(sInt i=0;i<slots;i++)
   {
-    const wValue &v = values[values.GetCount()==1 ? 0 : i];
     if(i>=values.GetCount() && values.GetCount()!=1)
       break;
+    const wValue &v = values[values.GetCount()==1 ? 0 : i];
 
     if(isfloat)
       ((sF32 *)words)[p->Offset+i] = v.F;

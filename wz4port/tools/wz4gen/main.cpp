@@ -12,6 +12,7 @@
 //   identity <doc>     load/save/reload with every class intact
 //   render <doc> ...   evaluate one store; -out .png for a bitmap (4.2),
 //                      .obj for a mesh (6.2)
+//   sweep <doc>        evaluate EVERY store and check every mesh (6.3)
 //   diff <a> <b>       why two renders differ, in numbers and as an image
 //
 // Everything here runs on wz4core/wz4tex/wz4geo, which have no GUI, no graphics
@@ -24,6 +25,7 @@
 #include "wz4frlib/wz4_anim_ops.hpp"
 #include "wz4frlib/wz4_mesh_ops.hpp"
 #include "wz4frlib/wz4_mesh.hpp"           // Wz4Mesh, for render
+#include "mesh_check.hpp"                  // the 6.3 invariant battery
 #include "util/image.hpp"                  // sImage::SavePNG
 #include "base/system.hpp"
 #include "meta.hpp"
@@ -937,6 +939,7 @@ static void Usage()
   sPrint(L"  checkmeta     read all the metadata and check it hangs together\n");
   sPrint(L"  convert       .wz4 <-> .wz4t, direction from the extensions\n");
   sPrint(L"  render        evaluate one operator; -out .png for a bitmap, .obj for a mesh\n");
+  sPrint(L"  sweep         evaluate every store and check every mesh it finds\n");
   sPrint(L"  diff          compare two PNGs: how much, where, and a diff image\n");
   sPrint(L"\n");
   sPrint(L"Switches go after the filename: Altona's shell parser treats the\n");
@@ -1056,6 +1059,136 @@ static void ReportMesh(Wz4Mesh *mesh,const sChar *out)
   delete[] bytes;
 
   sPrintF(L"  wrote %s (%d bytes)\n",out,sInt(size));
+}
+
+/****************************************************************************/
+/***   sweep — evaluate every store in a document, check every mesh       ***/
+/****************************************************************************/
+
+// Stage 6.3, Suite B. The hand-written cases in tests/mesh_ops.cpp ask each
+// operator the easy question; this asks the questions the original authors
+// asked. example.wz4 alone drives 39 of the 45 registered mesh operators with
+// parameter values nobody on this port chose, which is the closest thing to a
+// reference build available here.
+//
+// It can only check INVARIANTS, never values — a demo graph's correct output is
+// unknown. What it is for is the failure mode the per-operator cases are worst
+// at: an assertion or a corruption deep inside an upstream algorithm, reached by
+// a parameter combination we would not have thought to write.
+//
+// It sweeps every mesh OPERATOR, not every store. Measured: example.wz4 has 54
+// stores of which only 15 yield a mesh, while the document contains 39 distinct
+// mesh operator CLASSES. Sweeping stores would have covered a third of what is
+// there and reported a number that looked respectable — the interesting
+// operators are mid-graph, not at the end of it.
+//
+// Operators that do not evaluate are counted, not failed: these documents are
+// full of scenes, materials and sequencer nodes from modules this build does not
+// have, and a mesh operator downstream of one of those cannot run either.
+
+static void SweepDocument(const sChar *file,sBool verbose)
+{
+  wType *meshtype = Doc->FindType(L"Wz4Mesh");
+  if(!meshtype)
+  {
+    sPrint(L"wz4gen: no Wz4Mesh type registered\n");
+    sSetErrorCode();
+    return;
+  }
+
+  Doc->Connect();
+
+  sInt meshes = 0,failed = 0,violations = 0,empty = 0,badops = 0;
+
+  // Which classes actually got exercised. Coverage is the point of this sweep,
+  // so it has to be reported rather than assumed from the class histogram —
+  // an operator present in the document but always downstream of an
+  // unregistered module is present and never run.
+  sArray<wClass *> covered;
+
+  wPage *page;
+  sFORALL(Doc->Pages,page)
+  {
+    wOp *op;
+    sFORALL(page->Ops,op)
+    {
+      if(!op->Class || op->Class->OutputType!=meshtype)
+        continue;
+
+      badops++;
+      wObject *obj = Doc->CalcOp(op);
+      if(!obj)
+      {
+        failed++;
+        continue;
+      }
+
+      if(!obj->IsType(meshtype))
+      {
+        // A Wz4Mesh-typed operator that produced something else would be a
+        // genuine defect, not an expected skip.
+        sPrintF(L"    VIOLATION  %s.%s produced a %s\n",
+          op->Class->OutputType->Symbol,op->Class->Name,
+          obj->Type ? obj->Type->Symbol : L"?");
+        violations++;
+        obj->Release();
+        continue;
+      }
+
+      meshes++;
+      if(!sFindPtr(covered,op->Class))
+        covered.AddTail(op->Class);
+
+      const wMeshFacts f = wMeshMeasure((Wz4Mesh *)obj);
+
+      // An empty mesh is legal — Text3D and Path3D produce one by design in
+      // this build (patch 12) — but it is worth separating from a real one,
+      // because "everything passed" over a document of empty meshes would say
+      // nothing at all.
+      if(f.Faces==0 && f.Verts==0)
+      {
+        empty++;
+        if(verbose)
+          sPrintF(L"  %-24s empty     (%s)\n",op->Name,op->Class->Name);
+      }
+      else
+      {
+        // Violations always print; the facts only with -v. A sweep over
+        // hundreds of operators is unreadable otherwise, and what a CI run
+        // needs is the exceptions.
+        if(verbose)
+          violations += wMeshReport(op->Class->Name,f);
+        else if(f.Violations())
+          violations += wMeshReport(op->Class->Name,f);
+      }
+
+      obj->Release();
+    }
+  }
+
+  sPrintF(L"\n%d mesh operator(s): %d evaluated (%d empty), %d could not run\n",
+    badops,meshes,empty,failed);
+  sPrintF(L"%d distinct operator class(es) exercised, %d violation(s)\n",
+    covered.GetCount(),violations);
+
+  if(sGetShellSwitch(L"classes"))
+  {
+    wClass *cl;
+    sFORALL(covered,cl)
+      sPrintF(L"    %s\n",cl->Name);
+  }
+
+  if(violations)
+    sSetErrorCode();
+
+  // A sweep that found no meshes has not proved anything, and would pass
+  // silently for the rest of time if a registration were lost. Same lesson as
+  // the zero-operator load check in phase 3.
+  if(meshes==0)
+  {
+    sPrintF(L"wz4gen: <%s> yielded no meshes — nothing was actually checked\n",file);
+    sSetErrorCode();
+  }
 }
 
 /****************************************************************************/
@@ -1423,6 +1556,38 @@ void sMain()
           obj->Release();
         }
       }
+    }
+  }
+  else if(sCmpString(command,L"sweep")==0)
+  {
+    const sChar *file = sGetShellParameter(0,1);
+    const sChar *dir = sGetShellParameter(L"meta",0);
+    if(!dir)
+      dir = WZ4GEN_META_DIR;
+
+    if(!file)
+    {
+      sPrint(L"usage: wz4gen sweep <document>\n");
+      sSetErrorCode();
+      delete Doc;
+      return;
+    }
+
+    wMetaLibrary meta;
+    sBool ok = (sFindString(file,L".wz4t")>=0)
+      ? (meta.LoadDirectory(dir) && wReadWz4t(file,meta,wWZ4T_ALLOWUNKNOWN))
+      : Doc->Load(file);
+
+    if(!ok)
+    {
+      sPrintF(L"wz4gen: could not load <%s>\n",file);
+      sSetErrorCode();
+    }
+    else
+    {
+      sPrintF(L"%s: %d page(s), %d store(s)\n\n",
+        file,Doc->Pages.GetCount(),Doc->Stores.GetCount());
+      SweepDocument(file,sGetShellSwitch(L"v"));
     }
   }
   else if(sCmpString(command,L"diff")==0)

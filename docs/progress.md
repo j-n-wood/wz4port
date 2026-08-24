@@ -113,8 +113,65 @@ every file went to the build root — and **every assertion still passed**, beca
 they all used the same wrong path. Caught by looking at where the files actually
 were. Same family as the `sGetShellInt` mistake in 5.6.
 
-Next: **6.3** — a case per mesh operator, with structural assertions and golden
-OBJs.
+**Stage 6.3a is done: every mesh operator has a case, and the corpus sweeps
+clean.** 141/141 ctest.
+
+```
+Suite A   45 of 45 registered mesh operator(s) exercised
+          46 case(s), 461 check(s), 0 failure(s)
+Suite B   1,386 mesh operators across 5 documents, 0 violations
+```
+
+**Two suites, doing different jobs.** Suite A (`tests/mesh_ops.cpp`) is 46
+hand-written cases whose expectations are *derived* and carry the derivation in
+the table; the derivation prints on failure, so "want 52, got 48" is actionable.
+Suite B (`wz4gen sweep`) evaluates every mesh operator in the five bundled
+documents against the shared invariant battery in `geo/mesh_check.cpp` —
+**`example.wz4` alone drives 1,180 of them with the original authors' parameter
+values**, which is the closest thing this port has to a reference build and
+something phase 4 had no equivalent of.
+
+Suite B sweeps **operators, not stores**: `example.wz4` has 54 stores yielding 15
+meshes but 1,180 mesh operators. Sweeping stores would have covered a third of
+what is there and reported a respectable number.
+
+Coverage is asserted **against the live registry** — `mesh_ops` names any
+registered class that no case exercises — rather than counted from the table.
+
+**Four findings, and the instructive part is which suite found them.** Suite B has
+thirty times the coverage and found none: a sweep can only check invariants over
+inputs it did not choose. Breadth finds crashes in code paths; a chosen input
+finds semantics (A55).
+
+- **`BakeAnim` segfaulted** on any mesh without a skeleton — that is every mesh a
+  generator produces. Fixed (patch 13).
+- **`Extrude` builds no side faces.** It decodes the adjacency table with `/4`
+  where the rest of the file uses `>>2`, and a boundary half-edge is stored as
+  -1, so `-1/4 == 0` makes every rim edge look like it adjoins face 0.
+  **Deliberately not fixed** — see below.
+- **`TransformEx`'s `Flags` default to uv0 → uv0**, so left alone it moves texture
+  coordinates, returns a mesh identical to its input, and reports success. Same
+  shape as `Perlin`'s `FadeOff` default in 4.3.
+- **Our own `.wz4t` reader** subscripted a value list one line before its bounds
+  test. Unreachable until a case wrote a *partial* list — three values for a
+  four-component parameter — because every earlier case gave one value or all of
+  them. Fixed, with a regression case added to the phase-3 round-trip suite.
+
+**The two upstream faults got opposite treatment, and A54 records the rule:** can
+a working document depend on the current behaviour? `Extrude` produces
+deterministic output that `example.wz4`'s 14 `Extrude` operators were authored
+against, and integer division has truncated toward zero on every compiler this
+code has seen — so "fixing" it would make this port disagree with the tool the
+demos were built with. A segfault is not behaviour anyone can author against.
+
+**One design assumption did not survive contact:** closedness has to pair
+half-edges by **position**, not by vertex index. A `Wz4Mesh` splits a position
+wherever normals or UVs differ, so index-pairing called `Cube(2,3,4)` open with
+exactly 72 unpaired half-edges — exactly the sum of its six grid patches'
+perimeters. That arithmetic is what identified the cause.
+
+Next: **6.3b** — review the OBJ output and lock checksums. Then 6.4, the 3D
+preview.
 
 **`wz4ed` is the editor.** It has a window, a menu bar, a metadata-driven
 inspector, and the stacking canvas: blocks coloured by output type, selection,
@@ -249,7 +306,7 @@ about the build.
 | 3 — Text graph format + CLI | **Done**, phase gate passed |
 | 4 — Texture library + tests | **Done**, phase gate passed. All 34 operators run |
 | 5 — Texture GUI | **Done**, phase gate passed. `wz4ed` edits textures |
-| 6 — Geometry | **6.1–6.2 done** — `wz4geo` links, 45 of 47 operators register, `wz4gen render` writes OBJ |
+| 6 — Geometry | **6.1–6.3a done** — 45 of 47 operators register, all 45 have a case, OBJ in and out |
 | 7 — Animated geometry | Not started |
 
 ---
@@ -305,6 +362,9 @@ Clean build from scratch: **0 errors**. Warnings are expected and benign
 | `mesh_register` | Stage 6.1 gate: 45 of 47 operators register, and a `Cube` evaluates and measures |
 | `mesh_obj` | **Stage 6.2 gate:** OBJ write→read round-trips a Cube and a Sphere, plus a reject case |
 | `mesh_render_cli` | And that `wz4gen render` reaches the writer — matched on bounds, not just counts |
+| `wz4geochk` | **Ours.** The mesh invariant battery, shared by `wz4gen sweep` and the cases |
+| `mesh_ops` | **Stage 6.3a Suite A:** 46 derived cases, 45 of 45 operators, coverage asserted |
+| `mesh_sweep_*` (5) | **Stage 6.3a Suite B:** 1,386 mesh operators in the bundled documents |
 
 `simd_parity`: **70,184 checks, 0 failures** on arm64 via sse2neon.
 
@@ -340,6 +400,8 @@ wz4port/
     09-guicolor-header.md      phase 4 stage 4.5 — reach the 2D layer headlessly
     10-mesh-headless.md        phase 6 stage 6.1 — the mesh library
     11-mesh-ops-headless.md    phase 6 stage 6.1 — the mesh ops module + wz4ops
+    12-mesh-text-nonfatal.md   phase 6 stage 6.3 — Text3D/Path3D warn, not abort
+    13-mesh-bakeanim-null.md   phase 6 stage 6.3 — a segfault on unskinned input
   compat/altona_missing.cpp    sCheckBreakKey — an upstream POSIX gap
   compat/include/wz4_mtrl_headless.hpp  phase 6 — the materials stand-in
   compat/mesh_xsi_stub.cpp     phase 6 — LoadXSI refuses; the one importer that cannot port
@@ -392,6 +454,13 @@ wz4port/
   tests/mesh_register.cpp      stage 6.1 gate: the registry, then a Cube measured
   tests/mesh_obj.cpp           stage 6.2 gate: OBJ round-trip, LoadOBJ as the oracle
   tests/geo/gen.wz4t           stage 6.2: Cube, Cube->Transform, Sphere
+  geo/mesh_check.hpp/.cpp      ours: the mesh invariant battery + closedness
+  tests/mesh_ops.cpp           stage 6.3a Suite A: 46 derived cases, with derivations
+  tests/geo/ops_gen.wz4t         the 9 generators
+  tests/geo/ops_transform.wz4t   the 14 transforms
+  tests/geo/ops_topo.wz4t        the 15 topology operators, plus Add
+  tests/geo/ops_attr.wz4t        Select, SelectGrow, Displace, ExtrudeNormal,
+                                 BakeAnim, Heal, Export
   third_party/sse2neon.h       pinned v1.9.1, MIT, 11,222 lines
   third_party/imgui/           pinned v1.92.9b, MIT — core + glfw/gl3 backends
   third_party/glfw/            pinned 3.5.1, zlib — src/include/CMake only
@@ -497,6 +566,12 @@ target (`architecture.md` A52).
  M wz4frlib/wz4_mesh.cpp   guard the renderer (864 lines) and the ChaosMesh
                            import; correct MakePath's stale stub signature
 ```
+
+**Mesh text and animation — the same `wz4_mesh.cpp` again.** `patches/12` makes
+`MakeText`/`MakePath` warn instead of calling `sFatal`, which was aborting whole
+documents over one operator; `patches/13` guards `BakeAnim`'s null `Skeleton`
+dereference, a segfault on any generated mesh. Both are in the file counted
+above.
 
 **Mesh operator module — 7 files, 3 of them already counted above** (patch 11
 edits `tools/wz4ops/doc.hpp`, `doc.cpp` and `output.cpp` again, and adds

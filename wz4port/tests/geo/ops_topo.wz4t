@@ -1,0 +1,230 @@
+wz4t 1
+
+// Stage 6.3 Suite A — the 15 topology operators, plus Add.
+//
+// Unlike the transforms, these CHANGE the face count, and that is what makes
+// them checkable: a subdivision that produced the input's count did nothing, and
+// a triangulation that produced quads did not run. Where the rule is stated in
+// the operator (Subdivide quadruples, Triangulate splits a quad into two) the
+// count is derived; where it is not, the case asserts the invariants and the
+// direction of change and leaves 6.3b to lock the number after review.
+//
+// Cube(1,1,1) is the input almost everywhere: 6 quads, 24 vertices, closed,
+// spanning -0.5..0.5. Anything that changes those is the operator's doing.
+
+page "topo"
+
+// One level over 6 quads: each quad becomes 4, so 24.
+stack at 0,0 {
+  op Wz4Mesh.Cube { name = p_in_subdiv  Tesselate = 1,1,1  Scale = 1,1,1 }
+  op Wz4Mesh.Subdivide {
+    name = p_subdivide
+    Selection = all
+    Levels = 1
+    Smooth = 0
+  }
+}
+
+// Every quad becomes two triangles: 6 quads -> 12 tris, 0 quads.
+stack at 4,0 {
+  op Wz4Mesh.Cube { name = p_in_tri  Tesselate = 1,1,1  Scale = 1,1,1 }
+  op Wz4Mesh.Triangulate {
+    name = p_triangulate
+    Selection = all
+  }
+}
+
+// Reverses winding. The counts must be untouched, and it must STILL be a closed
+// surface — an inversion that broke pairing would be a real defect.
+stack at 8,0 {
+  op Wz4Mesh.Cube { name = p_in_invert  Tesselate = 1,1,1  Scale = 1,1,1 }
+  op Wz4Mesh.Invert {
+    name = p_invert
+    Selection = all
+  }
+}
+
+// Extrude only touches faces whose Select is >= 0.5 (wz4_mesh.cpp:3011), and a
+// freshly generated mesh has Select 0 everywhere — so WITHOUT a Select upstream
+// this operator is a no-op. Measured that way first: 6 quads in, 6 quads out,
+// bounds unchanged. Same shape of trap as TransformEx's uv0 default.
+//
+// A GRID, not a cube, and that is the second thing this case had to learn.
+// Extruding all six faces of a CLOSED cube gives an island with no boundary at
+// all, so there is nothing to build sides on.
+//
+// AN OPEN QUAD DOES NOT BUILD SIDES EITHER, and the reason is an upstream defect
+// this case pinned down. Extrude decodes the adjacency table with
+//
+//     sInt n = adj[fi].Adjacent[j]/4;      // wz4_mesh.cpp:3033 and :3111
+//     if(n==-1 || ...)
+//
+// but a boundary half-edge is stored as -1 (ConnectFaces, wz4_mesh.cpp:1290) and
+// -1/4 is 0, not -1. So `n==-1` can never be true, and the four rim edges of a
+// single quad are all misread as adjoining face 0. Everywhere else in the file
+// the same field is decoded with `>>2`, which does give -1.
+//
+// NOT FIXED, deliberately. Integer division has truncated toward zero on every
+// compiler this code has ever seen, so this is what Werkkzeug4 itself did in
+// 2014 — example.wz4's 14 Extrude operators were authored against exactly this
+// behaviour. Changing it would make this port diverge from the tool the demos
+// were built with, which is the opposite of the goal. Recorded in
+// architecture.md instead; the case below asserts what actually happens.
+//
+// What DOES work is the cap: the island moves by Amount along its own normal,
+// which for a flat grid is y. That is derivable and is what the case checks.
+stack at 12,0 {
+  op Wz4Mesh.Grid { name = p_in_extrude  Tesselate = 1,1  Sides = "-"  Size = 1 }
+  // Select's Flags is one word with five controls, and the reader matches values
+  // to controls POSITIONALLY: mode, invert, clear/set/assign, output. Writing
+  // `all, set` puts "set" against the invert control and is rejected — which is
+  // the reader doing its job, and worth stating because the error names the
+  // wrong-looking control. Default is 8: mode "cube", logic "assign".
+  op Wz4Mesh.Select {
+    name = p_extrude_sel
+    Flags = all, "-", set, "touched face"
+  }
+  op Wz4Mesh.Extrude {
+    name = p_extrude
+    Steps = 1
+    Amount = 0.25
+    Center = 0, 0, 0
+    LocalScale = 1
+    UVOffset = 0, 0        // float2 — the parameter after it is only 2 words on
+  }
+}
+
+stack at 16,0 {
+  op Wz4Mesh.Cube { name = p_in_bevel  Tesselate = 1,1,1  Scale = 1,1,1 }
+  op Wz4Mesh.Bevel {
+    name = p_bevel
+    Amount = 0.1
+  }
+}
+
+// Smoothness 0 splits every vertex so each face gets its own — the operator that
+// makes a mesh look faceted. Counts unchanged; what changes is the vertex count.
+stack at 20,0 {
+  op Wz4Mesh.Cube { name = p_in_facette  Tesselate = 2,2,2  Scale = 1,1,1 }
+  op Wz4Mesh.Facette {
+    name = p_facette
+    Smoothness = 0
+  }
+}
+
+stack at 24,0 {
+  op Wz4Mesh.Cube { name = p_in_crease  Tesselate = 1,1,1  Scale = 1,1,1 }
+  op Wz4Mesh.Crease { name = p_crease }
+}
+
+stack at 28,0 {
+  op Wz4Mesh.Cube { name = p_in_uncrease  Tesselate = 1,1,1  Scale = 1,1,1 }
+  op Wz4Mesh.UnCrease {
+    name = p_uncrease
+    Selection = all
+  }
+}
+
+// Dual: faces become vertices and vertices become faces. A cube has 6 faces and
+// 8 geometric corners, so its dual is the octahedron — 8 faces.
+stack at 32,0 {
+  op Wz4Mesh.Cube { name = p_in_dual  Tesselate = 1,1,1  Scale = 1,1,1 }
+  op Wz4Mesh.Dual {
+    name = p_dual
+    Random = 0
+  }
+}
+
+stack at 36,0 {
+  op Wz4Mesh.Cube { name = p_in_splitter  Tesselate = 1,1,1  Scale = 1,1,1 }
+  op Wz4Mesh.Splitter {
+    name = p_splitter
+    Depth = 0.1
+    Scale = 0.5
+  }
+}
+
+// A plane through the middle on x, so the cut is guaranteed to happen: a
+// splitting operator given a plane that misses the mesh would pass a
+// "count changed" test by not changing it.
+stack at 40,0 {
+  op Wz4Mesh.Cube { name = p_in_split  Tesselate = 1,1,1  Scale = 1,1,1 }
+  op Wz4Mesh.SplitAlongPlane {
+    name = p_splitalongplane
+    Plane = 1, 0, 0, 0
+    Count = 1
+    Distance = 0
+  }
+}
+
+stack at 44,0 {
+  op Wz4Mesh.Cube { name = p_in_chunks  Tesselate = 2,2,2  Scale = 1,1,1 }
+  op Wz4Mesh.Chunks {
+    name = p_chunks
+    Normal = 0, 1, 0
+    Rotation = 0, 0, 0
+  }
+}
+
+stack at 48,0 {
+  op Wz4Mesh.Cube { name = p_in_rndchunks  Tesselate = 2,2,2  Scale = 1,1,1 }
+  op Wz4Mesh.Chunks { name = p_rndchunks_in  Normal = 0,1,0  Rotation = 0,0,0 }
+  op Wz4Mesh.RandomizeChunks {
+    name = p_randomizechunks
+    Random = 0.1, 0.1, 0.1
+    Seed = 1
+  }
+}
+
+// Selection `all` would delete everything, which is a legal but uninformative
+// result. `none` keeps everything, which asserts the operator is a no-op when
+// told to select nothing — the case that would catch an inverted flag.
+stack at 52,0 {
+  op Wz4Mesh.Cube { name = p_in_delface  Tesselate = 1,1,1  Scale = 1,1,1 }
+  op Wz4Mesh.DeleteFace {
+    name = p_deleteface_none
+    Selection = none
+    DeleteUnusedVertices = 0
+  }
+}
+
+// And the other direction: everything selected must leave nothing.
+stack at 56,0 {
+  op Wz4Mesh.Cube { name = p_in_delface2  Tesselate = 1,1,1  Scale = 1,1,1 }
+  op Wz4Mesh.DeleteFace {
+    name = p_deleteface_all
+    Selection = all
+    DeleteUnusedVertices = 1
+  }
+}
+
+// Add is the only variadic operator, and this is the one case in the suite whose
+// LAYOUT is the test: connections come from geometry, so Add reads both producers
+// only if its own span covers both of theirs and both end on the row it starts.
+//
+// Written with explicit positions rather than stacks, because a stack is a single
+// column and the whole point here is two columns feeding one operator. Cube A is
+// two rows tall so that it ends on row 2 alongside the Transform.
+//
+// Two cubes 2 units apart: 12 quads spanning -0.5..2.5, and DISJOINT, so unlike
+// t_multiply's abutting copies this still tests as a closed surface. A count of 6
+// would mean the second input was never read.
+op Wz4Mesh.Cube at 60,0 size 3x2 {
+  name = p_add_a
+  Tesselate = 1,1,1
+  Scale = 1,1,1
+}
+op Wz4Mesh.Cube at 64,0 size 3x1 {
+  name = p_add_b_cube
+  Tesselate = 1,1,1
+  Scale = 1,1,1
+}
+op Wz4Mesh.Transform at 64,1 size 3x1 {
+  name = p_add_b
+  Scale = 1,1,1
+  Rot = 0,0,0
+  Trans = 2,0,0
+}
+op Wz4Mesh.Add at 60,2 size 7x1 {
+  name = p_add
+}

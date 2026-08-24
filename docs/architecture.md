@@ -1359,6 +1359,62 @@ Third instance of the Altona shell-parameter API biting: `sGetShellInt` versus
 the positional index. The API is easy to call in a way that compiles, runs, and
 means nothing.
 
+### A54 · "Fix the upstream bug" and "be faithful to the tool" are decided by one question — standing
+
+*Phase 6.3.* Two genuine upstream faults surfaced in one afternoon, and they got
+opposite treatment. The rule that separates them is the only one that survives
+scrutiny: **can a working document depend on the current behaviour?**
+
+- **`Extrude` decodes the adjacency table with `/4`** where the rest of
+  `wz4_mesh.cpp` uses `>>2` (`:3033`, `:3111`). A boundary half-edge is stored as
+  `-1` (`ConnectFaces`, `:1290`), and `-1/4` is `0`, so `n==-1` can never be true
+  and every rim edge is misread as adjoining face 0. Consequence: extruding a
+  selected open quad builds **no side faces at all** — the cap just translates by
+  `Amount` along its normal.
+  **Not fixed.** Integer division has truncated toward zero on every compiler
+  this code has seen, so this is what Werkkzeug4 did in 2014, and `example.wz4`'s
+  14 `Extrude` operators were authored against exactly it. "Fixing" it would make
+  this port disagree with the tool the demos were built with, which is the
+  opposite of the goal.
+- **`BakeAnim` dereferences a null `Skeleton`** (`:1754`) and segfaults on any
+  generated mesh. **Fixed** (patch 13). Nothing can be authored against a crash,
+  so no document's appearance can change and there is no fidelity to weigh.
+
+Generalising: a deterministic wrong *answer* is part of the tool's behaviour and
+belongs in the test as an assertion plus an explanation. A *crash* is not
+behaviour. The tempting middle position — "fix it, it's obviously wrong" — would
+have silently changed 14 operators in the reference corpus.
+
+The same reasoning settled phase 4's alpha question, where four operators zeroing
+alpha turned out to be intended design rather than breakage (A40).
+
+### A55 · An operator's first real input is where its bugs are — standing
+
+*Phase 6.3.* `BakeAnim` had been "working" for the whole port: it registered, it
+linked, it appeared in the palette, and the corpus sweep over five documents
+reported it among the operators that *could not run* — because its inputs came
+from unregistered modules, so the crash was never reached. It took a
+hand-written case handing it a plain `Cube` to find that it segfaults on every
+mesh a generator produces.
+
+Three findings in this stage came the same way, and none was reachable by
+inspection:
+
+| Operator | What only an input revealed |
+|---|---|
+| `BakeAnim` | segfault on a null skeleton |
+| `TransformEx` | `Flags` default to `0x33` — uv0 to uv0 — so it moves **texture coordinates** and leaves positions untouched |
+| `Extrude` | silently requires `Select` upstream (`f->Select>=0.5f`, `:3011`), and then builds no sides anyway |
+
+`TransformEx` is the one to remember, because nothing about it looks wrong: the
+operator runs, reports success, and returns a mesh identical to its input. The
+same shape as `Perlin`'s `FadeOff` default in 4.3.
+
+The lesson is about test *design*, not diligence: the corpus sweep (Suite B) has
+far more coverage — 1,386 operators against 46 — and found none of these, because
+a sweep can only check invariants over inputs it did not choose. Breadth finds
+crashes in code paths; a chosen input finds *semantics*. Both suites, always.
+
 ---
 
 ## Part 3 — where inference lost to measurement
@@ -1400,6 +1456,11 @@ adopted because of this list.
 | One `#define` in the generated `.cpp` is enough | The `.hpp` is read by every consumer of the module, not just its own `.cpp` (A51) |
 | `wz4_mesh.cpp`'s non-Windows path is untried but sound | Two things in it have never compiled: an incomplete-type dereference and a stub whose signature drifted (A52) |
 | The 47 mesh operators are the exposure to measure | 45 are clean; the survey's own count of *includes* (five foreign) overstated it by an order of magnitude (6.1) |
+| The phase plan's operator inventory is the list to work from | Three of the 47 it names — `CalcNormals`, `CalcTangents`, `Weld` — are `Wz4Mesh` *methods*, not operators. Corrected from the live registry (6.3) |
+| A closed primitive's half-edges pair by vertex index | They do not: a `Wz4Mesh` splits a position wherever normals differ, so `Cube(2,3,4)` leaves exactly 72 unpaired — the six patch perimeters (6.3) |
+| Sweeping every store covers a document's operators | `example.wz4` has 54 stores yielding 15 meshes, and 1,180 mesh operators. The interesting ones are mid-graph (6.2) |
+| `TransformEx` with default flags transforms positions | It transforms **uv0**; `Flags` default to `0x33`. The mesh comes out identical and the operator reports success (A55) |
+| `Extrude` extrudes | Only faces already selected, and then it builds no sides, because of the `/4` decode (A54) |
 
 ---
 

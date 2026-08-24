@@ -1748,6 +1748,17 @@ void Wz4Mesh::TransformUV(const sMatrix34 &mat)
 
 void Wz4Mesh::BakeAnim(sF32 time)
 {
+  // wz4port: Skeleton is null on any mesh that has never been skinned — every
+  // mesh a generator produces — and this function dereferenced it immediately,
+  // so the BakeAnim operator segfaulted on unskinned input. Found by giving it a
+  // plain Cube (stage 6.3); see wz4port/patches/13-mesh-bakeanim-null.md.
+  //
+  // Baking no animation is exactly a no-op, so returning is both safe and the
+  // right answer. Unlike the Extrude adjacency defect this cannot change any
+  // working document, because there is no working document that reaches it.
+  if(!Skeleton)
+    return;
+
   sMatrix34 *bonemat,*basemat;
   Wz4MeshVertex *v;
 
@@ -6675,17 +6686,31 @@ void Wz4Mesh::MakePath(const sChar *path,sF32 extrude,sF32 maxErr,sF32 weldThres
 
 #else
 
+// wz4port: both stubs called sFatal, which ABORTS. In a library function on an
+// unimplemented platform path that is the wrong severity: one Text3D operator
+// takes down a whole document, so no other operator in it can be evaluated or
+// tested either. example.wz4 has six.
+//
+// They now warn and leave the mesh empty, which is exactly what GenBitmap::Text
+// does for the same reason (wz3_bitmap_code.cpp:2517, patch 08): a graph
+// containing one still evaluates, and everything downstream of it can be seen.
+// The operator is still unavailable, and says so, once per call.
+//
+// A real implementation on FreeType plus a tessellator is stage 6.6.
+// See wz4port/patches/12-mesh-text-nonfatal.md.
+
 void Wz4Mesh::MakeText(const sChar *text,const sChar *font,sF32 height,sF32 extrude,sF32 maxErr,sInt flags)
 {
-  sFatal(L"Wz4Mesh::MakeText() only for windows...");
+  sPrintF(L"Wz4Mesh::MakeText: not implemented on this platform, mesh left empty (%s)\n",
+    text ? text : L"");
 }
 
-// wz4port: weldThreshold was added to the declaration and to the Windows
-// definition above, but not to this stub, so the non-Windows branch of this file
-// has never compiled. Signature corrected to match wz4_mesh.hpp:290.
+// weldThreshold was added to the declaration and to the Windows definition above,
+// but not to this stub, so the non-Windows branch of this file had never
+// compiled. Signature corrected to match wz4_mesh.hpp:290.
 void Wz4Mesh::MakePath(const sChar *path,sF32 extrude,sF32 maxErr,sF32 weldThreshold,sInt flags)
 {
-  sFatal(L"Wz4Mesh::MakePath() only for windows...");
+  sPrint(L"Wz4Mesh::MakePath: not implemented on this platform, mesh left empty\n");
 }
 
 #endif

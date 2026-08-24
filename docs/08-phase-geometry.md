@@ -35,21 +35,36 @@ A polygon soup with half-edge adjacency computed on demand. Triangles and quads.
 
 ### The 47 operators
 
-**Generators:** `Cube`, `Grid`, `Sphere`, `Cylinder`, `Torus`, `Disc`, `Text3D`, `Path3D`,
+**Corrected after 6.1, from the live registry** (`wz4gen list`) rather than from the survey's
+reading of the `.ops` file. The survey listed three operators that **do not exist** — `CalcNormals`,
+`CalcTangents` and `Weld`. All three are `Wz4Mesh` *methods*, called from inside other operators'
+bodies; none is exposed as an operator. That is why the survey's own count came to 47 by a
+different route than the file does.
+
+The real inventory is 47 declared, of which 45 register headlessly:
+
+**Generators (9):** `Cube`, `Grid`, `Sphere`, `Cylinder`, `Torus`, `Disc`, `Text3D`, `Path3D`,
 `Import`.
 
-**Transform:** `Transform`, `TransformRange`, `TransformEx`, `TransformMatrix`,
+**Transform (14):** `Transform`, `TransformRange`, `TransformEx`, `TransformMatrix`,
 `TransformNonLinear`, `Mirror`, `Center`, `Multiply`, `MultiplyNew`, `Bend`, `Deform`,
 `Normalize`, `Randomize`, `Noise`.
 
-**Topology:** `Subdivide`, `Extrude`, `Bevel`, `Facette`, `Crease`, `UnCrease`, `Dual`,
-`Splitter`, `Triangulate`, `Invert`, `Heal`, `Weld`, `SplitAlongPlane`, `Chunks`,
-`RandomizeChunks`, `Add`, `DeleteFace`.
+**Topology (15):** `Subdivide`, `Extrude`, `Bevel`, `Facette`, `Crease`, `UnCrease`, `Dual`,
+`Splitter`, `Triangulate`, `Invert`, `Heal`, `SplitAlongPlane`, `Chunks`, `RandomizeChunks`,
+`DeleteFace`.
 
-**Attributes:** `CalcNormals`, `CalcTangents`, `Displace`, `ExtrudeNormal`, `Select`,
-`SelectGrow`, `SetMaterial`, `BakeAnim`.
+**Attributes (5):** `Displace`, `ExtrudeNormal`, `Select`, `SelectGrow`, `BakeAnim`.
 
-**CSG** (in `wz4_bsp`): `Polyhedron`, `FromMesh`, `SliceAndDice`, `BSPToMesh`.
+**Combining (1):** `Add` — the only variadic operator, `(*?Wz4Mesh)`.
+
+**Export (1):** `Export`.
+
+9 + 14 + 15 + 5 + 1 + 1 = **45 registered**, plus the 2 dropped headlessly
+(`ConvertFromChaosMesh`, `SetMaterial` — patch 11) = 47 declared.
+
+**CSG** (in `wz4_bsp`, a separate module and not yet built): `Polyhedron`, `FromMesh`,
+`SliceAndDice`, `BSPToMesh`.
 
 ---
 
@@ -283,19 +298,166 @@ on the wrong component.
 
 ### 6.3 — Per-operator test cases
 
-Same discipline as phase 4, with an important addition: meshes admit **structural assertions**
-that images do not. Each case checks:
+**This section was written in detail before the code, after measuring what the tree offers.**
+The largest stage in the phase, and the one whose design decides whether the phase is worth
+anything.
 
-- Vertex and face counts.
-- Bounding box.
-- Topology invariants — closed-manifold where expected, Euler characteristic, no degenerate
-  faces, consistent winding.
-- Then a golden OBJ, byte-compared.
+#### What changes versus phase 4
 
-This is a materially stronger correctness signal than the texture suite gets, and it partly
-compensates for the absence of a reference build.
+Two things, and they pull in opposite directions.
 
-**Gate:** every mesh operator has a case; structural assertions pass; goldens reviewed.
+**In our favour: meshes admit structural assertions that images do not.** Phase 4's problem was
+that a texture operator's output is only checkable by eye, so 4.3 had to review 90 images and 4.4
+froze whatever they showed. A mesh has properties that are *derivable* — face counts, arity,
+bounds, Euler characteristic, manifoldness, winding consistency. Those can be asserted before
+anyone looks at anything, and they fail loudly when an algorithm is wrong rather than merely
+different.
+
+**Against us: there is a real reference corpus, and ignoring it would be a mistake.** Measured
+after 6.2, with the mesh module registered:
+
+| Document | Mesh operators |
+|---|---:|
+| `demos/example/example.wz4` | **39** |
+| `wz4/screens4/test.wz4` | 15 |
+| `demos/the_cube/fr-062_party.wz4` | 12 |
+| `demos/easterparty/teaser1.wz4` | 12 |
+| `demos/easterparty/teaser2.wz4` | 12 |
+
+`example.wz4` alone uses **39 of the 45** registered operators, with parameter values chosen by
+the original authors rather than by us. That is the closest thing this port has ever had to a
+reference build, and phase 4 had no equivalent. The six it does not use are `Center`, `Heal`,
+`Mirror`, `Path3D`, `SelectGrow` and `TransformRange`.
+
+#### The design: two suites, doing different jobs
+
+Neither alone is sufficient, and the reason is worth stating because it decides the whole stage.
+
+**Suite A — hand-written cases, `tests/geo/ops_*.wz4t`.** One case per operator, minimal, with
+numbers chosen so the answer is *derivable by hand*. A `Cube` at tesselation 1 has 6 faces and
+spans -0.5..0.5, and nothing about that is a matter of opinion. This is where correctness is
+asserted.
+
+**Suite B — the bundled corpus, swept.** Evaluate every mesh store in the five documents above
+and require each to produce a mesh that passes the same invariant battery. This costs almost
+nothing to author and covers parameter combinations we would never think to write. It is where
+*crashes* and *assertion failures inside upstream algorithms* will be found — the failure mode
+Suite A is worst at, because Suite A only ever asks each operator the easy question.
+
+Suite B cannot replace Suite A: a demo graph's output is unknown, so the sweep can only check
+invariants, never values. Suite A cannot replace Suite B: 45 minimal cases exercise 45 code paths
+out of hundreds.
+
+#### The invariant battery
+
+Applied by both suites, in `wz4port/tests/mesh_check.cpp` so there is one implementation:
+
+| Check | Why it earns its place |
+|---|---|
+| No degenerate faces | Upstream has the predicate (`IsDegenerateFace`); it is the classic symptom of a tesselation off-by-one |
+| Every face index in range | A face referencing vertex N of an N-vertex mesh is the single most common mesh bug, and it corrupts silently |
+| Every face arity 3 or 4 | `Wz4MeshFace::Vertex[4]` is fixed; anything else means memory was written past it |
+| Finite positions | One NaN from a division propagates through every later operator and shows as nothing at all |
+| Cluster indices in range | `Face::Cluster` indexes `Clusters`; out of range is a crash waiting for the renderer |
+| Bounds not absurd | A generator that emits garbage usually emits *huge* garbage |
+
+**Euler characteristic and manifoldness are deliberately NOT in the battery.** They are in the
+plan's original wording and they are the wrong tool here: most of these operators legitimately
+produce non-manifold or open meshes (`DeleteFace`, `SplitAlongPlane`, `Splitter`, `Chunks`,
+`Extrude` on an open mesh), so a global invariant would fire constantly on correct output. They
+belong as *per-case* assertions in Suite A, on the specific cases where closedness is actually
+promised — `Cube`, `Sphere`, `Torus`, `Cylinder` — and that is where they go.
+
+#### Goldens
+
+Locked the same way phase 4's were, and for the same reason: a checksum over vertex positions and
+face indices, written alongside the OBJ, so a change that is invisible in a viewer still fails.
+`wz4gen render` already reports the position checksum (6.2).
+
+**The order matters and phase 4 established it the hard way.** Cases first, *reviewed*, then
+locked. Locking earlier freezes whatever the code does today, which is exactly the failure
+`06-phase-texture.md` warns about. So 6.3 splits:
+
+- **6.3a** — the battery, Suite B (the corpus sweep), and Suite A's cases with structural
+  assertions only. No goldens.
+- **6.3b** — review the OBJ output, then lock checksums.
+
+6.3a is where bugs will surface. 6.3b is bookkeeping, and doing it second is what makes it
+meaningful.
+
+#### Known obstacles, measured
+
+- **`Text3D` and `Path3D` produce empty meshes** and warn (patch 12). They were `sFatal` — which
+  aborts, and would have killed any sweep over `example.wz4` and its six `Text3D` operators. Fixed
+  before this stage rather than worked around in it.
+- **`Import` needs files** that are not in the tree. Its cases can only assert that a missing file
+  is refused cleanly; a real import case needs an OBJ we write ourselves, which 6.2 now makes
+  possible.
+- **`BakeAnim` needs a skeleton**, which needs `wz4_anim`'s `BoneChain`. Registered since 6.1, so
+  this is authorable, but it is the one case whose input is another module.
+- **`wz4_bsp.cpp` is not built**, so the four CSG operators are out of scope for this stage. If a
+  Suite A case for `SplitAlongPlane` or `Chunks` turns out to need it, that is a finding, not a
+  plan change.
+
+**Gate for 6.3a — met.**
+
+```
+Suite A   45 of 45 registered mesh operator(s) exercised
+          46 case(s), 461 check(s), 0 failure(s)
+Suite B   1,386 mesh operators across 5 documents, 0 violations
+          36 distinct operator classes, with the authors' own parameter values
+```
+
+Coverage is asserted against the **live registry**, not counted from the table:
+`mesh_ops` collects every mesh operator appearing in a case file and names any registered class
+that appears in none. Counting rows by hand is the proxy this project keeps getting caught by
+(A39, A53).
+
+#### What 6.3a found
+
+Four things, and the interesting part is *which suite found them*. Suite B has thirty times the
+coverage and found none of them — a sweep can only check invariants over inputs it did not choose.
+Breadth finds crashes in code paths; a chosen input finds semantics (A55).
+
+| Finding | |
+|---|---|
+| **`BakeAnim` segfaults** on any mesh with no skeleton — every generated mesh | fixed, patch 13 |
+| **`Extrude` builds no side faces**: `/4` where the file elsewhere uses `>>2`, so a boundary half-edge stored as -1 decodes to face 0 | **not** fixed — see below |
+| **`TransformEx` defaults to uv0 → uv0**, so it moves texture coordinates and returns a mesh identical to its input, reporting success | case states `pos, pos` |
+| **Our own `.wz4t` reader** subscripted a value list before its bounds test — unreachable until a case wrote a partial list | fixed, plus a regression case |
+
+The two upstream faults got **opposite treatment**, and the rule that separates them is the only
+one that survives scrutiny: *can a working document depend on the current behaviour?* `Extrude`
+produces deterministic output that `example.wz4`'s 14 `Extrude` operators were authored against,
+so changing it would make this port disagree with the tool the demos were built with. A segfault
+is not behaviour anyone can author against. Recorded as A54.
+
+#### Two design points that did not survive contact
+
+- **Closedness pairs half-edges by POSITION, not by vertex index.** A `Wz4Mesh` splits a position
+  wherever the normal or UVs differ, so every closed primitive in the library has unwelded seams.
+  Index-pairing called `Cube(2,3,4)` open with exactly 72 unpaired half-edges — which is exactly
+  the sum of its six grid patches' perimeters, `2*(2+3) + 2*(2+4) + 2*(3+4)`. That arithmetic is
+  what identified the cause.
+- **The plan's operator inventory was wrong.** `CalcNormals`, `CalcTangents` and `Weld` are
+  `Wz4Mesh` *methods* called from inside other operators, not operators. The list above is now
+  taken from `wz4gen list`.
+
+#### Derivations that came out exactly right
+
+Worth recording, because they are what makes the suite worth more than a golden:
+
+- `Bevel` on a cube: **6** shrunk faces + **12** edge quads + **8** corner triangles = 26 faces,
+  18 quads, 8 tris. All three numbers from the cube's own counts.
+- `Dual` of a cube is the **octahedron**: 8 corners become 8 triangles, 6 faces become 6 vertices.
+- `ExtrudeNormal` by 0.1: a cube's averaged corner normal is `(±1,±1,±1)/√3`, so each axis gains
+  `0.1/1.7320508` and the extent becomes ±0.5577350 — measured to the last digit.
+- `SplitAlongPlane` at `x=0`: misses the two faces perpendicular to x, halves the other four,
+  6 + 4 = 10.
+- `Sphere(6,4)`: 24 faces, `2*6` pole triangles, `6*(4-2)` quads; y spans the full diameter while
+  x and z reach only `0.5*cos(30°)` because no vertex lands on the axis.
+
+**6.3b remains:** review the OBJ output and lock checksums.
 
 ### 6.4 — 3D preview
 
