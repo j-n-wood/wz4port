@@ -467,7 +467,69 @@ Worth recording, because they are what makes the suite worth more than a golden:
 - `Sphere(6,4)`: 24 faces, `2*6` pole triangles, `6*(4-2)` quads; y spans the full diameter while
   x and z reach only `0.5*cos(30°)` because no vertex lands on the axis.
 
-**6.3b remains:** review the OBJ output and lock checksums.
+#### 6.3b — reviewed, then locked — **done**
+
+**What a golden is for here is not what it was for in phase 4**, and getting that straight decided
+the design. In phase 4 the golden *was* the correctness statement: a texture operator's output can
+only be judged by eye, so 4.3 reviewed 90 images and 4.4 froze what they showed. Here correctness
+is already carried by 483 derived assertions, so the locks have a narrower job — detecting
+**unintended change in what the assertions cannot reach**: exact interior vertex positions, vertex
+*order*, winding, and drift below the 1e-4 bounds tolerance.
+
+**Two locks, because neither artefact covers the pipeline alone.**
+
+*A checksum per case*, in `mesh_cases.cpp` — FNV-1a over every vertex position **and** every face
+index. Positions alone would not do: `Invert`, `Triangulate` and `Dual` all rewire topology without
+moving a vertex. Bit-exact, where an OBJ at five decimals is not.
+
+*Six OBJ goldens*, because the checksum is blind to **normals and UVs** — and that gap is real, not
+theoretical:
+
+> `t_normalize`'s checksum is **identical to its input's**. `Normalize` only rewrites normals, so a
+> position-and-index checksum is structurally incapable of detecting any change in it. Verified
+> with `wz4gen sweep ops_transform.wz4t -v`: `0001f83112ec02dd` for the `Cube` input and for the
+> `Normalize` output alike.
+
+That is A43 inverted. There a PNG golden was blind to the low 8 bits and needed a checksum beside
+it; here the checksum is blind to the attributes and needs a file beside it.
+
+#### The review, and what it found
+
+The checksum block **cross-checks itself in three places**, and all three hold *bit-exactly* —
+a stronger statement than any tolerance-based assertion above can make:
+
+- **`0x9968b939a75dd34d` appears seven times**, and it is a plain `Cube(1,1,1)` — confirmed
+  independently, since `wz4gen sweep ops_topo.wz4t -v` reports it for all 14 `Cube` operators in
+  the file. The seven are `t_center`, `p_crease`, `p_uncrease`, `p_deleteface_none`, `a_bakeanim`,
+  `a_export` and `a_heal`: every case asserted to leave a unit cube alone, arriving there down
+  seven unrelated code paths. `t_center` is the notable one — translate by (5,−7,11) and centre
+  again is *exact*, not merely within tolerance.
+- **`t_transform` == `t_transformex`.** The whole point of stating `pos, pos` was that TransformEx
+  should then agree with Transform. It agrees to the bit.
+- **`t_multiply` == `t_multiplynew`.** The old and new operators agree exactly.
+
+Six zeros, all cases whose correct result is nothing. A zero checksum carries no information but
+costs none either — emptiness is already pinned by `Faces == 0`.
+
+The OBJ files were read, not just generated. `p_dual`'s six vertex normals are exactly the six axis
+directions, which is right: every octahedron vertex sits on an axis and its averaged normal points
+straight out along it. `t_normalize` yields exactly six distinct unit normals, the cube's face
+directions.
+
+#### Both locks demonstrably fail
+
+A lock that cannot fail is decoration. Checked by perturbing one golden by `0.00001` in a single
+normal — `mesh_golden_p_dual` failed, and passed again on restore. The checksum lock was verified
+the same way by the compile error that briefly emptied it: 48 `has no locked checksum` failures,
+because an **unlocked case is a failure, not a skip** — otherwise a case added later silently has
+no baseline while the suite reports full coverage.
+
+Re-locking is a separate, deliberate target (`ninja lock_obj_goldens`, and `mesh_ops … -lock` for
+the checksums), never run by ctest, exactly as `lock_goldens.cmake` is for the texture suite. The
+`-lock` output round-trips **byte-identically** with what is committed, so a re-lock diff shows only
+genuine changes rather than whitespace noise.
+
+**Gate — met.** 147/147 ctest.
 
 ### 6.4 — 3D preview
 

@@ -9,7 +9,7 @@ rediscovered the hard way.
 editor**: it opens a document, shows the stacking canvas, offers all 34 texture
 operators, inserts/deletes/moves/resizes them under the original's collision
 rules, edits every parameter from a panel generated entirely from metadata,
-previews the result live, and undoes all of it. `ctest` is **133 tests** on
+previews the result live, and undoes all of it. `ctest` is **147 tests** on
 arm64; the 90 texture goldens remain bit-identical between the NEON and SSE2
 builds.
 
@@ -209,8 +209,54 @@ wherever normals or UVs differ, so index-pairing called `Cube(2,3,4)` open with
 exactly 72 unpaired half-edges — exactly the sum of its six grid patches'
 perimeters. That arithmetic is what identified the cause.
 
-Next: **6.3b** — review the OBJ output and lock checksums. Then 6.4, the 3D
-preview.
+**Stage 6.3b is done: reviewed, then locked.** 147/147 ctest, 531 checks.
+
+**A golden's job here is not what it was in phase 4**, and that decided the
+design. In phase 4 the golden *was* the correctness statement — an image can only
+be judged by eye. Here correctness is already carried by 483 derived assertions,
+so the locks detect **unintended change in what the assertions cannot reach**:
+interior vertex positions, vertex *order*, winding, and drift below the 1e-4
+bounds tolerance.
+
+**Two locks, because neither artefact covers the pipeline alone.** A checksum per
+case (FNV-1a over positions **and** face indices — positions alone would miss
+`Invert`, `Triangulate` and `Dual`, which rewire topology without moving a
+vertex), plus **six OBJ goldens**, because the checksum is blind to normals and
+UVs. That gap is real: **`t_normalize`'s checksum is identical to its input's**,
+since `Normalize` only rewrites normals — so a position-and-index checksum
+structurally cannot detect any change in it. A43 inverted: there a PNG golden was
+blind to the low 8 bits and needed a checksum beside it.
+
+**The review found the checksum block cross-checks itself, bit-exactly:**
+
+- `0x9968b939a75dd34d` appears **seven times**, and it is a plain `Cube(1,1,1)`
+  (confirmed independently — the sweep reports it for all 14 `Cube` operators in
+  the file). The seven are every case asserted to leave a unit cube alone,
+  arriving there down seven unrelated code paths. `t_center` is the notable one:
+  translate by (5,−7,11) and centre again is *exact*.
+- `t_transform` == `t_transformex` — the point of stating `pos, pos` was that the
+  two should agree, and they agree to the bit.
+- `t_multiply` == `t_multiplynew`.
+
+The OBJ files were read, not just generated: `p_dual`'s six normals are exactly
+the axis directions (right — every octahedron vertex sits on an axis), and
+`t_normalize` yields exactly six distinct unit normals.
+
+**Both locks demonstrably fail.** Perturbing one golden normal by 0.00001 failed
+`mesh_golden_p_dual`, which passed again on restore. An **unlocked case is a
+failure, not a skip** — otherwise a case added later silently has no baseline
+while the suite reports full coverage. Re-locking is a deliberate target
+(`ninja lock_obj_goldens`, `mesh_ops … -lock`), never run by ctest, and the
+`-lock` output round-trips **byte-identically** with what is committed so a
+re-lock diff shows only real changes.
+
+Two self-inflicted bugs worth noting: a file-scope `sTextBuffer` allocates in its
+*constructor*, before Altona registers its memory handlers, so `sVERIFY(h)` fires
+in `sAllocMem_` — A47's lifetime hazard from the other end. And `sPrint` of the
+accumulated 48-line block came out **truncated mid-word**, which would have
+pasted an incomplete lock. Printing incrementally has neither problem.
+
+Next: **6.4** — the 3D preview.
 
 **`wz4ed` is the editor.** It has a window, a menu bar, a metadata-driven
 inspector, and the stacking canvas: blocks coloured by output type, selection,
@@ -345,7 +391,7 @@ about the build.
 | 3 — Text graph format + CLI | **Done**, phase gate passed |
 | 4 — Texture library + tests | **Done**, phase gate passed. All 34 operators run |
 | 5 — Texture GUI | **Done**, phase gate passed. `wz4ed` edits textures |
-| 6 — Geometry | **6.1–6.3a, 6.7 done** — 45 of 47 register, all 45 have a case, OBJ in and out |
+| 6 — Geometry | **6.1–6.3, 6.7 done** — 45 of 47 register, all 45 cased and locked, OBJ in and out |
 | 7 — Animated geometry | Not started |
 
 ---
@@ -404,6 +450,8 @@ Clean build from scratch: **0 errors**. Warnings are expected and benign
 | `wz4geochk` | **Ours.** The mesh invariant battery, shared by `wz4gen sweep` and the cases |
 | `mesh_ops` | **Stage 6.3a Suite A:** 48 derived cases, 45 of 45 operators, coverage asserted |
 | `mesh_sweep_*` (5) | **Stage 6.3a Suite B:** 1,386 mesh operators in the bundled documents |
+| `mesh_golden_*` (6) | **Stage 6.3b:** OBJ goldens, for the normals and UVs a checksum cannot see |
+| `lock_obj_goldens` | The deliberate re-lock target. Never run by ctest |
 
 `simd_parity`: **70,184 checks, 0 failures** on arm64 via sse2neon.
 
@@ -502,6 +550,9 @@ wz4port/
   tests/geo/ops_topo.wz4t        the 15 topology operators, plus Add
   tests/geo/ops_attr.wz4t        Select, SelectGrow, Displace, ExtrudeNormal,
                                  BakeAnim, Heal, Export
+  tests/geo/golden_obj.cmake   stage 6.3b: OBJ golden runner — normals and UVs
+  tests/geo/lock_obj_goldens.cmake  the deliberate re-lock, never run by ctest
+  tests/geo/golden/            6 locked .obj files, reviewed by reading them
   third_party/sse2neon.h       pinned v1.9.1, MIT, 11,222 lines
   third_party/imgui/           pinned v1.92.9b, MIT — core + glfw/gl3 backends
   third_party/glfw/            pinned 3.5.1, zlib — src/include/CMake only

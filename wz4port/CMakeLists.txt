@@ -1332,6 +1332,77 @@ add_test(NAME mesh_ops COMMAND mesh_ops
 set_tests_properties(mesh_ops PROPERTIES DEPENDS opsmeta_gate)
 
 #############################################################################
+##  mesh_golden_* — stage 6.3b: OBJ goldens, for what a checksum cannot see #
+#############################################################################
+
+# mesh_ops locks a checksum over positions and face indices, which is bit-exact
+# and covers most of what an operator can get wrong. It does NOT cover normals or
+# UVs — and that gap is real rather than theoretical: t_normalize's checksum is
+# IDENTICAL to its input's, because Normalize only rewrites normals. Verified
+# with `wz4gen sweep ops_transform.wz4t -v`, not assumed.
+#
+# So a small, chosen set of OBJ goldens sits beside it. An OBJ carries `vn` and
+# `vt`, and it is text, so a failure is diffable rather than merely detected. Not
+# one per case: these are the operators whose whole job is in the attributes, plus
+# a few small enough to read in full.
+#
+# Same lesson as A43 inverted. There a PNG golden was blind to the low 8 bits and
+# needed a checksum beside it; here the checksum is blind to the attributes and
+# needs a file beside it.
+
+set(WZ4_OBJ_DIR "${CMAKE_BINARY_DIR}/obj")
+file(MAKE_DIRECTORY "${WZ4_OBJ_DIR}")
+
+# doc|store — the store name doubles as the golden's filename.
+set(WZ4_OBJ_GOLDENS
+  "ops_transform.wz4t|t_normalize"    # the case a checksum CANNOT cover at all
+  "ops_topo.wz4t|p_facette"           # splits every vertex, so per-face normals
+  "ops_topo.wz4t|p_dual"              # 6 verts, 8 tris — reviewable in full
+  "ops_topo.wz4t|p_extrude"           # the side-face path added in 6.7
+  "ops_gen.wz4t|g_cube"               # the baseline every other case builds on
+  "ops_gen.wz4t|g_sphere"             # pole triangles, and non-trivial normals
+)
+
+set(WZ4_OBJ_LOCK_CMDS "")
+
+foreach(_entry ${WZ4_OBJ_GOLDENS})
+  string(REPLACE "|" ";" _parts "${_entry}")
+  list(GET _parts 0 _doc)
+  list(GET _parts 1 _store)
+
+  add_test(NAME mesh_golden_${_store}
+    COMMAND "${CMAKE_COMMAND}"
+      -DWZ4GEN=$<TARGET_FILE:wz4gen>
+      -DDOC=${CMAKE_CURRENT_SOURCE_DIR}/tests/geo/${_doc}
+      -DOP=${_store}
+      -DMETA=${WZ4_META_DIR}
+      -DOUT=${WZ4_OBJ_DIR}/${_store}.obj
+      -DGOLDEN=${CMAKE_CURRENT_SOURCE_DIR}/tests/geo/golden/${_store}.obj
+      -DWORKDIR=${WZ4_OBJ_DIR}
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/geo/golden_obj.cmake")
+  set_tests_properties(mesh_golden_${_store} PROPERTIES DEPENDS opsmeta_gate)
+
+  list(APPEND WZ4_OBJ_LOCK_CMDS
+    COMMAND "${CMAKE_COMMAND}"
+      -DWZ4GEN=$<TARGET_FILE:wz4gen>
+      -DDOC=${CMAKE_CURRENT_SOURCE_DIR}/tests/geo/${_doc}
+      -DOP=${_store}
+      -DMETA=${WZ4_META_DIR}
+      -DGOLDEN=${CMAKE_CURRENT_SOURCE_DIR}/tests/geo/golden/${_store}.obj
+      -DWORKDIR=${WZ4_OBJ_DIR}
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/geo/lock_obj_goldens.cmake")
+endforeach()
+
+list(LENGTH WZ4_OBJ_GOLDENS _objcount)
+message(STATUS "mesh OBJ goldens: ${_objcount}")
+
+# Never part of ALL, and never run by ctest. Re-locking has to be asked for.
+add_custom_target(lock_obj_goldens ${WZ4_OBJ_LOCK_CMDS}
+  DEPENDS wz4gen opsmeta_gate
+  COMMENT "re-locking the mesh OBJ goldens — READ git diff tests/geo/golden/"
+  VERBATIM)
+
+#############################################################################
 ##  mesh_sweep — stage 6.3 Suite B: the bundled documents as a corpus      ##
 #############################################################################
 

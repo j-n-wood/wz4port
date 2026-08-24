@@ -411,6 +411,124 @@ static const wCaseFile CaseFiles[] =
 };
 
 /****************************************************************************/
+/***   the locked checksums — stage 6.3b                                  ***/
+/****************************************************************************/
+//
+// WHAT THESE ARE FOR, AND WHAT THEY ARE NOT
+//
+// In phase 4 the golden WAS the correctness statement: a texture operator's
+// output can only be judged by eye, so 4.3 reviewed 90 images and 4.4 froze what
+// they showed. Nothing else could check them.
+//
+// Here correctness is already carried by the derivations above — 483 checks whose
+// expected values were computed by hand from each operator's own rule. So these
+// checksums have a narrower and more honest job: they detect UNINTENDED CHANGE in
+// everything the assertions do not reach.
+//
+// That residue is substantial, which is why they are worth having:
+//
+//   exact vertex positions       the assertions check bounds, not interiors
+//   vertex ORDER                 a reordering leaves every count and bound intact
+//   face winding and indices     ditto, as long as the mesh stays closed
+//   sub-tolerance drift          bounds are compared at 1e-4; this is bit-exact
+//
+// The last one is A43 restated: a golden must cover the pipeline's precision, not
+// the artefact's. It is also why the OBJ files in golden/ are not the only golden
+// — Altona writes `%f` at five decimals, so an OBJ is blind to anything below
+// 1e-5, exactly as phase 4's PNGs were blind to the low 8 bits of a 16-bit
+// pipeline.
+//
+// The checksum is FNV-1a over every vertex position AND every face index
+// (geo/mesh_check.cpp). Positions alone would not do: Invert, Triangulate and
+// Dual all rewire topology without moving a vertex.
+//
+// TO RE-LOCK, DELIBERATELY:  mesh_ops <casedir> <metadir> -lock
+// It prints this block, ready to paste. Read the diff before pasting it — a
+// checksum that changed for a reason you cannot state is a regression, not a new
+// baseline.
+
+struct wLock
+{
+  const sChar *Store;
+  sU64 Checksum;
+};
+
+// WHAT THE REVIEW FOUND, which is why these are worth reading rather than just
+// diffing. The block cross-checks itself in three places, and all three hold
+// BIT-EXACTLY — a stronger statement than any of the tolerance-based assertions
+// above could make:
+//
+//   0x9968b939a75dd34d appears SEVEN times, and it is a plain Cube(1,1,1)
+//   (confirmed independently: `wz4gen sweep ops_topo.wz4t -v` reports it for all
+//   14 Cube operators in the file). The seven are t_center, p_crease, p_uncrease,
+//   p_deleteface_none, a_bakeanim, a_export and a_heal — every case asserted to
+//   leave a unit cube alone, arriving there through seven unrelated code paths.
+//   t_center is the notable one: translate by (5,-7,11) and centre again is exact,
+//   not merely within tolerance.
+//
+//   t_transform == t_transformex. The whole point of stating pos->pos on
+//   TransformEx was that it should then agree with Transform; it agrees to the bit.
+//
+//   t_multiply == t_multiplynew. The old and new operators agree exactly.
+//
+// Six zeros, all cases whose correct result is nothing: the two empty text
+// generators, the failed import, and three delete-everything cases. A zero
+// checksum carries no information, but it costs none either — emptiness is
+// already pinned by Faces == 0.
+
+static const wLock Locks[] =
+{
+  { L"g_cube",                0xef0ec24496d56bd5ULL },
+  { L"g_grid",                0x4b687ed35d503be9ULL },
+  { L"g_sphere",              0x2055f242a31bb6ffULL },
+  { L"g_torus",               0x7763506e1284c36eULL },
+  { L"g_cylinder",            0x347fa988ddd9c861ULL },
+  { L"g_disc",                0xab89217d712098a6ULL },
+  { L"g_text3d",              0x0000000000000000ULL },
+  { L"g_path3d",              0x0000000000000000ULL },
+  { L"g_import_missing",      0x0000000000000000ULL },
+  { L"t_transform",           0x64bc39338e5dd34dULL },
+  { L"t_transformex",         0x64bc39338e5dd34dULL },
+  { L"t_transformmatrix",     0x12c6b3b1895dd34dULL },
+  { L"t_transformnonlinear",  0x2beedd2e683fa40dULL },
+  { L"t_center",              0x9968b939a75dd34dULL },
+  { L"t_mirror",              0x28cdee0c7c088d5dULL },
+  { L"t_multiply",            0x936aefeaf816c34dULL },
+  { L"t_multiplynew",         0x936aefeaf816c34dULL },
+  { L"t_bend",                0xc7e4b153ad8a0139ULL },
+  { L"t_deform",              0x71f2ce517a5cde7dULL },
+  { L"t_normalize",           0x0001f83112ec02ddULL },
+  { L"t_randomize",           0x7d16a451dffb043eULL },
+  { L"t_noise",               0x68027f9c04eb7629ULL },
+  { L"t_transformrange",      0x24a9d1a29b7cde7dULL },
+  { L"p_subdivide",           0x5a87a543678362c2ULL },
+  { L"p_triangulate",         0xfd351fd500edaca9ULL },
+  { L"p_invert",              0x140598152a488d5dULL },
+  { L"p_extrude",             0xaabfec4d46d8dadfULL },
+  { L"p_extrude_steps",       0x3fee3f1f325ef90fULL },
+  { L"p_extrude_closed",      0x5951193e4cfbdca7ULL },
+  { L"p_bevel",               0xe6a6acb4924b4549ULL },
+  { L"p_facette",             0x482dfc4acb3663e5ULL },
+  { L"p_crease",              0x9968b939a75dd34dULL },
+  { L"p_uncrease",            0x9968b939a75dd34dULL },
+  { L"p_dual",                0x3d8d2c6953d3d071ULL },
+  { L"p_splitter",            0x66b48ab6303fb985ULL },
+  { L"p_splitalongplane",     0x7c3d82ebda9df83dULL },
+  { L"p_chunks",              0x20328cf350f5b7f5ULL },
+  { L"p_randomizechunks",     0xd0b21af7b7ba1a87ULL },
+  { L"p_deleteface_none",     0x9968b939a75dd34dULL },
+  { L"p_deleteface_all",      0x0000000000000000ULL },
+  { L"p_add",                 0xd21b349de5966085ULL },
+  { L"a_select_deleted",      0x0000000000000000ULL },
+  { L"a_selectgrow_deleted",  0x0000000000000000ULL },
+  { L"a_extrudenormal",       0x717ce8f07a503145ULL },
+  { L"a_bakeanim",            0x9968b939a75dd34dULL },
+  { L"a_export",              0x9968b939a75dd34dULL },
+  { L"a_displace",            0x020b2c4e121a02f8ULL },
+  { L"a_heal",                0x9968b939a75dd34dULL },
+};
+
+/****************************************************************************/
 
 static void CheckBound(sF32 want,sF32 got,const sChar *which,sF32 eps)
 {
@@ -442,6 +560,27 @@ static void CheckMoved(sF32 from,sF32 got,const sChar *which)
   }
 }
 
+// Lock lines are printed as they are produced rather than accumulated. Two
+// reasons, both found the hard way:
+//
+//   - a file-scope sTextBuffer allocates in its CONSTRUCTOR, which runs before
+//     Altona registers its memory handlers, and sVERIFY(h) in sAllocMem_ fires
+//     immediately (base/types.cpp:4672) — the A47 lifetime hazard from the other
+//     end;
+//   - sPrint of the accumulated 48-line buffer came out TRUNCATED mid-word, so
+//     the block would have been pasted incomplete.
+//
+// Printing incrementally has neither problem and needs no buffer at all.
+static sBool LockMode = 0;
+
+static const wLock *FindLock(const sChar *store)
+{
+  for(sInt i=0;i<sCOUNTOF(Locks);i++)
+    if(Locks[i].Store && sCmpString(Locks[i].Store,store)==0)
+      return &Locks[i];
+  return 0;
+}
+
 static void RunCase(const wExpect &e,wType *meshtype)
 {
   wOp *op = Doc->FindStore(e.Store);
@@ -459,6 +598,18 @@ static void RunCase(const wExpect &e,wType *meshtype)
     // The point of these cases is that the failure is REPORTED. An operator that
     // quietly returned an empty mesh would look identical downstream to one that
     // worked on an empty input, which is how a missing asset becomes invisible.
+    if(LockMode)
+    {
+      // A case that produces no mesh still gets an entry, so that "one lock per
+      // case" holds as an assertion rather than needing an exception list.
+      sString<64> name;
+      name.PrintF(L"L%q,",e.Store);
+      sPrintF(L"  { %-25s 0x0000000000000000ULL },\n",(const sChar *)name);
+      if(obj)
+        obj->Release();
+      return;
+    }
+
     Check(obj==0,L"evaluation fails, as this case requires");
     Check(op->CalcErrorString!=0,L"and says why");
     if(op->CalcErrorString)
@@ -558,6 +709,42 @@ static void RunCase(const wExpect &e,wType *meshtype)
     }
   }
 
+  // --- the locked checksum --------------------------------------------------
+
+  if(LockMode)
+  {
+    // The comma goes on the NAME, then the pair is padded as one unit — a
+    // `%-24q` alone silently emits a struct initialiser with no comma between
+    // its members, which is a compile error 48 lines later.
+    sString<64> name;
+    name.PrintF(L"L%q,",e.Store);
+    sPrintF(L"  { %-25s 0x%08x%08xULL },\n",(const sChar *)name,
+      sU32(f.Checksum>>32),sU32(f.Checksum));
+  }
+  else
+  {
+    const wLock *lock = FindLock(e.Store);
+
+    // An unlocked case is a FAILURE, not a skip. Otherwise a case added later
+    // silently has no baseline, and the suite reports full coverage while
+    // covering one case less than it says — the same shape as A53.
+    Checks++;
+    if(!lock)
+    {
+      sPrintF(L"    FAIL  %s has no locked checksum (run with -lock)\n",e.Store);
+      Failures++;
+    }
+    else if(lock->Checksum!=f.Checksum)
+    {
+      sPrintF(L"    FAIL  checksum: want %08x%08x, got %08x%08x\n",
+        sU32(lock->Checksum>>32),sU32(lock->Checksum),
+        sU32(f.Checksum>>32),sU32(f.Checksum));
+      sPrint(L"          positions, vertex order, winding or face indices changed "
+             L"without changing a count or a bound\n");
+      Failures++;
+    }
+  }
+
   obj->Release();
 }
 
@@ -586,6 +773,13 @@ void sMain()
     return;
   }
 
+  // Deliberate, and separate from the run — locking has to be something someone
+  // asked for. Phase 4 learned this as lock_goldens.cmake: a runner that
+  // re-locks on mismatch is not a test, it is a rubber stamp.
+  LockMode = sGetShellSwitch(L"lock");
+  if(LockMode)
+    sPrint(L"static const wLock Locks[] =\n{\n");
+
   sInt cases = 0;
 
   // "Every operator has a case" is the gate, and counting the rows of the table
@@ -605,7 +799,8 @@ void sMain()
 
     sString<1024> path;
     sSPrintF(path,L"%s/%s",casedir,cf.Path);
-    sPrintF(L"%s\n",cf.Path);
+    if(!LockMode)                 // lock output has to be paste-ready
+      sPrintF(L"%s\n",cf.Path);
 
     // A fresh document per file. wReadWz4t fills the global Doc, and reusing one
     // across files would leave the previous file's pages in place — which would
@@ -669,6 +864,12 @@ void sMain()
     Doc = 0;
   }
 
+  if(LockMode)
+  {
+    sPrint(L"};\n");
+    return;                   // nothing is asserted in lock mode
+  }
+
   // --- coverage, against the live registry ----------------------------------
 
   {
@@ -705,6 +906,21 @@ void sMain()
 
     delete Doc;
     Doc = 0;
+  }
+
+  // And the other direction: a lock with no case would mean the block drifted
+  // from the table. Counted rather than named, because the block is generated.
+  {
+    sInt live = 0;
+    for(sInt i=0;i<sCOUNTOF(Locks);i++)
+      if(Locks[i].Store)
+        live++;
+    Checks++;
+    if(live!=cases)
+    {
+      sPrintF(L"    FAIL  %d locked checksum(s) for %d case(s)\n",live,cases);
+      Failures++;
+    }
   }
 
   sPrintF(L"\n%d case(s), %d check(s), %d failure(s)\n",cases,Checks,Failures);
