@@ -381,8 +381,50 @@ while announcing a fatal error. Fixed at the root, then made un-missable: every
 test phase 6 added now carries `FAIL_REGULAR_EXPRESSION "FATAL ERROR"`.
 `editor_shot.cmake` already grepped for that string for exactly this reason.
 
-Next: **6.6b** — `Path3D` first, since it needs no font and so isolates the
-tessellator against a real operator, then `Text3D` on FreeType outlines.
+**Stage 6.6b is done: `Path3D` produces geometry.** 151/151 ctest.
+
+A triangular path extruded 0.1 gives a **triangular prism** — 2 triangular caps +
+3 quad walls = 5 faces, z spanning exactly the extrude depth, closed. A square
+with a square hole gives **20 faces**: tess2d's 8 ring triangles less 2 zero-area
+bridge slivers = 6 real per cap = 12, plus 4 outer and 4 inner wall quads. Every
+number derived.
+
+**The upstream patch is 101 insertions and 0 deletions** (patch 15). Not one
+existing line changed, so the 350 lines of parser, flattening, layout and
+extrusion are byte-identical — achieved by mapping the GLU *call names* onto the
+sink rather than rewriting twelve call sites. `gluTessNormal` and
+`gluTessCallback` become no-ops that **drop** their arguments, which is what lets
+the four callbacks stay undefined.
+
+**`Path3D`'s path syntax is SVG-like but not SVG**, and is now written down in the
+phase doc because it is nowhere else. `M`/`L`/`Q`/`C`/`z` as expected, lower case
+relative, y pointing down — plus `N`, which is not an SVG command. The trap: **`z`
+ends a contour, `N` ends the polygon**, so a hole is `outer z inner z` with no
+`N`. Also `M` and `L` are the same command; an `M` mid-path draws rather than
+lifting the pen.
+
+**Three things measurement corrected:**
+
+- Written with `N` between the contours, the hole came out **filled** — two
+  overlapping solid squares. **The closedness check did not catch it and could
+  not**: two closed shells pair their half-edges whatever they overlap. The face
+  count caught it. A structural invariant is not a substitute for knowing the
+  answer.
+- The bridge's two coincident edges confuse upstream's `Adjacency()`, so
+  `Finish2DExtrusionOp`'s degenerate-flipping step emitted triangles with a
+  repeated index — 4 zero-area faces out of 24. Cleaned with a guarded second
+  `RemoveDegenerateFaces()`, and recorded as the real cost of
+  ear-clipping-with-bridges versus a sweep-line tessellator.
+- Isolating the cap with `extrude = 0` put both caps at the same z, where `Weld`
+  merges them — producing degenerate faces that do not exist at any real extrude
+  value. Time went into chasing an artefact of the measurement rather than a bug.
+
+One flaky observation worth recording: `wz4ed_shell` failed once in a full run and
+passed on every re-run. Three GL windows opening in quick succession is the likely
+cause. Not diagnosed further, but noted rather than ignored.
+
+Next: **6.6c** — `Text3D`, the last piece: FreeType glyph outlines and layout on
+top of a tessellator now known to work.
 
 **`wz4ed` is the editor.** It has a window, a menu bar, a metadata-driven
 inspector, and the stacking canvas: blocks coloured by output type, selection,
@@ -517,7 +559,7 @@ about the build.
 | 3 — Text graph format + CLI | **Done**, phase gate passed |
 | 4 — Texture library + tests | **Done**, phase gate passed. All 34 operators run |
 | 5 — Texture GUI | **Done**, phase gate passed. `wz4ed` edits textures |
-| 6 — Geometry | **Phase gate passed.** 6.1–6.5, 6.6a and 6.7 done; 6.6b (Text3D/Path3D) remains |
+| 6 — Geometry | **Phase gate passed.** 6.1–6.5, 6.6a/b and 6.7 done; only 6.6c (Text3D) remains |
 | 7 — Animated geometry | Not started |
 
 ---
@@ -620,6 +662,7 @@ wz4port/
     12-mesh-text-nonfatal.md   phase 6 stage 6.3 — Text3D/Path3D warn, not abort
     13-mesh-bakeanim-null.md   phase 6 stage 6.3 — a segfault on unskinned input
     14-mesh-extrude-sides.md   phase 6 stage 6.7 — Extrude finds an open rim
+    15-mesh-text-portable.md   phase 6 stage 6.6b — the 2D extrusion path, minus glu32
   compat/altona_missing.cpp    sCheckBreakKey — an upstream POSIX gap
   compat/include/wz4_mtrl_headless.hpp  phase 6 — the materials stand-in
   compat/mesh_xsi_stub.cpp     phase 6 — LoadXSI refuses; the one importer that cannot port
@@ -677,6 +720,7 @@ wz4port/
   geo/mesh_check.hpp/.cpp      ours: the mesh invariant battery + closedness
   geo/tess2d.hpp/.cpp          stage 6.6a — ear clipping with hole bridging, no glu32
   tests/tess2d_shapes.cpp        and its standalone test: counts and areas
+  geo/mesh_tess.hpp/.cpp       stage 6.6b — the sink that replaces GLUtesselator
   tests/mesh_edit.cpp          stage 6.5 phase gate: build, edit, export, headless
   tests/mesh_cases.cpp         stage 6.3a Suite A: 48 derived cases, with derivations
                                (not mesh_ops.cpp — .gitignore eats *_ops.cpp, A48)

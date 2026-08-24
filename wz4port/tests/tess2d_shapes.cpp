@@ -280,6 +280,38 @@ void sMain()
       L"and the area is 36-16+4 = 24 — depth 2 is solid, not a second hole");
   }
 
+  // --- the exact shape Path3D feeds it, y negated ---------------------------
+
+  sPrint(L"\nthe same hole with SVG's downward y — Path3D's own coordinates\n");
+  {
+    Reset();
+    idx.Clear();
+    // Identical to the case above except y is negated, which is what the SVG
+    // convention does. Added because the operator produced a DEGENERATE triangle
+    // on this input while the positive-y case above was clean: negating y moves
+    // the rightmost hole vertex, and so the bridge, and so which ear comes out
+    // repeating a tag. A bug reachable from one orientation and not the other is
+    // exactly the kind a single-orientation test misses.
+    sInt o[4],h[4];
+    o[0] = AddPoint(0,0);  o[1] = AddPoint(4,0);  o[2] = AddPoint(4,-4); o[3] = AddPoint(0,-4);
+    h[0] = AddPoint(1,-1); h[1] = AddPoint(1,-3); h[2] = AddPoint(3,-3); h[3] = AddPoint(3,-1);
+
+    tess.Begin();
+    tess.BeginContour();
+    for(sInt i=0;i<4;i++) tess.AddVertex(VX[o[i]],VY[o[i]],o[i]);
+    tess.EndContour();
+    tess.BeginContour();
+    for(sInt i=0;i<4;i++) tess.AddVertex(VX[h[i]],VY[h[i]],h[i]);
+    tess.EndContour();
+    const sInt n = tess.End(idx);
+
+    sPrintF(L"        %d triangles\n",n);
+    Check(n>0,L"it tessellated");
+    CheckTriangles(idx,L"and NO triangle repeats a vertex");
+    Check(sFAbs(TriangleArea(idx)-12.0f)<1e-4f,
+      L"and the area is still 16-4 = 12");
+  }
+
   // --- degenerate input is dropped, not fatal -------------------------------
 
   sPrint(L"\ndegenerate contours are dropped rather than fatal\n");

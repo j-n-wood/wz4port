@@ -100,11 +100,37 @@ stack at 24,0 {
   }
 }
 
+// A triangular prism: 2 triangular caps + 3 quad walls = 5 faces, and the z
+// extent is the extrude depth exactly. The smallest closed thing Path3D can make,
+// which is what makes it the right first case for a new tessellator.
 stack at 28,0 {
   op Wz4Mesh.Path3D {
     name = g_path3d
     Path = "M 0 0 L 1 0 L 1 1 z"
     Extrude = 0.1
+  }
+}
+
+// The case the tessellator's hole bridging exists for, driven through the real
+// operator rather than a unit test: a 4x4 square with a 2x2 square hole.
+//
+// THE SYNTAX MATTERS AND IS NOT SVG. `z` closes a CONTOUR; `N` closes the
+// POLYGON. Contours of one polygon are combined by nesting, so a hole is
+// `outer z inner z` with NO `N` between them. Written with `N` first, and the
+// result was two independent solid squares with the hole filled in — which the
+// closedness assertion did not catch, because two overlapping closed shells
+// still pair their half-edges. The face count is what catches it.
+//
+// Caps: 8 triangles each by the arithmetic tess2d_shapes derives (4 outer +
+// 4 hole + 2 bridge vertices, minus 2), doubled by the extrusion = 16.
+// Walls: 4 quads outside + 4 in the hole = 8. So 24 faces.
+stack at 36,0 {
+  op Wz4Mesh.Path3D {
+    name = g_path3d_hole
+    Path = "M 0 0 L 4 0 L 4 4 L 0 4 z M 1 1 L 1 3 L 3 3 L 3 1 z"
+    Extrude = 0.5
+    MaxError = 0.005
+    WeldThreshold = 0.00001
   }
 }
 

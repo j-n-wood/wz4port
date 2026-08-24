@@ -526,6 +526,11 @@ add_library(wz4geo STATIC
   "${WZ4_DIR}/wz4frlib/wz4_anim.cpp"
   "${WZ4_DIR}/wz4frlib/bspline.cpp"
   "${COMPAT_DIR}/mesh_xsi_stub.cpp"
+  # Ours, and here rather than in wz4geochk because wz4_mesh.cpp itself needs
+  # them from stage 6.6b on: WZ4PORT_TESS2D opens the 2D extrusion path and the
+  # sink is what glu32 used to be. See patches/15.
+  "${CMAKE_CURRENT_SOURCE_DIR}/geo/tess2d.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/geo/mesh_tess.cpp"
   "${GENHL_ANIM}"
   "${GENHL_MESH}"
 )
@@ -535,8 +540,12 @@ add_library(wz4geo STATIC
 target_include_directories(wz4geo PUBLIC
   "${WZ4_GENHL_DIR}"
   "${WZ4_GENHL_DIR}/wz4frlib"
+  "${CMAKE_CURRENT_SOURCE_DIR}/geo"
 )
-target_compile_definitions(wz4geo PUBLIC WZ4PORT_HEADLESS_MTRL=1)
+# WZ4PORT_TESS2D opens wz4_mesh.cpp's 2D extrusion region — the Text3D/Path3D
+# path that was entirely behind sPLAT_WINDOWS because of glu32. PUBLIC because the
+# flag has to agree between the library and anything including wz4_mesh.hpp.
+target_compile_definitions(wz4geo PUBLIC WZ4PORT_HEADLESS_MTRL=1 WZ4PORT_TESS2D=1)
 target_link_libraries(wz4geo PUBLIC wz4tex)
 target_compile_options(wz4geo PRIVATE
   "SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/tests/gui_poison.h"
@@ -547,12 +556,12 @@ target_compile_options(wz4geo PRIVATE
 # blur the isolation seam. Used by `wz4gen sweep` and by the per-operator cases,
 # which is why it is a library rather than a file in either.
 #
-# tess2d joined in stage 6.6: the polygon tessellator Text3D and Path3D need,
-# replacing glu32. It has no mesh dependency at all — see tests/tess2d_shapes.cpp,
-# which is why it could be tested before anything used it.
+#
+# tess2d and mesh_tess are NOT here: wz4_mesh.cpp needs them, so they live in
+# wz4geo, which this links. Compiling tess2d.cpp into both would be a duplicate
+# symbol.
 add_library(wz4geochk STATIC
   "${CMAKE_CURRENT_SOURCE_DIR}/geo/mesh_check.cpp"
-  "${CMAKE_CURRENT_SOURCE_DIR}/geo/tess2d.cpp"
 )
 target_include_directories(wz4geochk PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/geo")
 target_link_libraries(wz4geochk PUBLIC wz4geo)

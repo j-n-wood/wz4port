@@ -164,8 +164,24 @@ static const wExpect GenCases[] =
   { L"g_text3d",  0,0,0, CL_ANY,     NOB,NOB,NOB,       NOB,NOB,NOB, 0,0,1,
     L"Text3D: EMPTY and warned, not fatal — patch 12. Stage 6.6 implements it" },
 
-  { L"g_path3d",  0,0,0, CL_ANY,     NOB,NOB,NOB,       NOB,NOB,NOB, 0,0,1,
-    L"Path3D: likewise empty" },
+  { L"g_path3d",  5,2,3, CL_CLOSED,  0.0f,-1.0f,0.0f,   1.0f,0.0f,0.1f, 0,0,1,
+    L"Path3D on \"M 0 0 L 1 0 L 1 1 z\" extruded 0.1: a triangular prism, so "
+    L"2 triangular caps + 3 quad walls = 5 faces, and the z extent IS the "
+    L"extrude depth. y comes out -1..0 rather than 0..1 because SVG's y axis "
+    L"points down. Empty before stage 6.6b replaced glu32 with geo/tess2d" },
+
+  { L"g_path3d_hole", 20,12,8, CL_CLOSED, 0.0f,-4.0f,0.0f, 4.0f,0.0f,0.5f, 0,0,1,
+    L"a 4x4 square with a 2x2 hole, extruded 0.5 — the case tess2d's hole "
+    L"bridging exists for, driven through the real operator. Every number is "
+    L"derived: tess2d gives 8 triangles for the ring (4 outer + 4 hole + 2 "
+    L"bridge vertices, minus 2), of which 2 are the bridge's zero-area slivers, "
+    L"so 6 real per cap and 12 for both; the walls are 4 quads outside plus 4 in "
+    L"the hole. 20 faces. "
+    L"THE FACE COUNT IS WHAT CATCHES A FILLED HOLE, not the closedness check: "
+    L"written first with `N` between the contours — which ends the POLYGON, not "
+    L"the contour — this came out as two overlapping solid squares, and it still "
+    L"tested CLOSED, because two closed shells pair their half-edges whatever "
+    L"they overlap" },
 
   { L"g_import_missing", NOC,NOC,NOC, CL_ANY, NOB,NOB,NOB, NOB,NOB,NOB, 0,0,0,
     L"Import of a file that does not exist must fail CLEANLY — a refusal, "
@@ -485,7 +501,8 @@ static const wLock Locks[] =
   { L"g_cylinder",            0x347fa988ddd9c861ULL },
   { L"g_disc",                0xab89217d712098a6ULL },
   { L"g_text3d",              0x0000000000000000ULL },
-  { L"g_path3d",              0x0000000000000000ULL },
+  { L"g_path3d",              0x3569ecf987077ffaULL },
+  { L"g_path3d_hole",         0x2eabf2134db07369ULL },
   { L"g_import_missing",      0x0000000000000000ULL },
   { L"t_transform",           0x64bc39338e5dd34dULL },
   { L"t_transformex",         0x64bc39338e5dd34dULL },

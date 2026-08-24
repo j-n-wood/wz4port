@@ -195,10 +195,23 @@ sInt wTess2D::ClipRing(sArray<sInt> &ring,sArray<sInt> &indices)
       if(contains)
         continue;
 
-      indices.AddTail(a.Tag);
-      indices.AddTail(b.Tag);
-      indices.AddTail(c.Tag);
-      tris++;
+      // Bridging a hole puts two ring entries on the SAME tag — that is what a
+      // bridge is, two coincident edges — so an ear can legitimately come out
+      // with a repeated tag and zero area. Clipping it still makes progress;
+      // emitting it does not, and it would hand the caller a degenerate
+      // triangle.
+      //
+      // Found by driving a square-with-a-hole through Path3D rather than by the
+      // unit test, which passed: the operator negates y, which moved the
+      // rightmost hole vertex and so the bridge, and only then did a degenerate
+      // ear appear. A bug reachable from one input orientation and not the other.
+      if(a.Tag!=b.Tag && b.Tag!=c.Tag && a.Tag!=c.Tag)
+      {
+        indices.AddTail(a.Tag);
+        indices.AddTail(b.Tag);
+        indices.AddTail(c.Tag);
+        tris++;
+      }
 
       ring.RemAtOrder(i);
       clipped = 1;

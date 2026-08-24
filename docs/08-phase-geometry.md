@@ -759,6 +759,33 @@ Two stages, and the order is the risk order.
 counts with the input's area preserved; `Path3D` produces a closed extruded prism from a triangular
 path; `Text3D` produces correct extruded geometry for a simple string.
 
+#### `Path3D`'s path syntax — SVG-like, not SVG
+
+Written down because it is nowhere else, and one difference is not guessable.
+
+| Command | Meaning |
+|---|---|
+| `M x y` | move / start a point |
+| `L x y` | line to |
+| `Q bx by cx cy` | quadratic Bézier |
+| `C bx by cx cy dx dy` | cubic Bézier |
+| `z` | end the current **contour** |
+| `N` | end the current **polygon** — not an SVG command at all |
+
+Lower case is relative, upper case absolute, as in SVG. Coordinates are separated
+by spaces or commas, and a command letter may be followed by several coordinate sets, which repeat
+it. The y axis points **down**, so `M 0 0 L 1 0 L 1 1 z` spans y −1..0.
+
+Three real differences from SVG:
+
+- **`M` and `L` are the same command.** The parser says so — *"we don't distinguish between the two,
+  since we only expect moveto at the start"* — so an `M` mid-path draws a line rather than lifting
+  the pen.
+- **`z` closes a contour; `N` closes the polygon.** Contours of one polygon are combined by nesting,
+  so a **hole** is `outer z inner z` with **no `N`**. This is the trap: written with `N` between
+  them, the two contours become independent solids and the hole is filled.
+- **No `H`, `V`, `S`, `T` or `A`** — no shorthand, no smooth curves, no arcs.
+
 #### 6.6a — `tess2d`, tested alone — **done**
 
 `wz4port/geo/tess2d.cpp`, with no mesh dependency at all, which is what let it be tested before
@@ -793,6 +820,40 @@ Fixed at the root (fixed arrays; nothing here needed a growable container), and 
 un-missable: every test phase 6 added now carries
 `FAIL_REGULAR_EXPRESSION "FATAL ERROR"`. `editor_shot.cmake` already grepped for that string for
 exactly this reason; ctest can assert it directly, so it should.
+
+#### 6.6b — `Path3D` — **done**
+
+`Path3D` produces geometry. Every number derived:
+
+| case | faces | |
+|---|---|---|
+| `M 0 0 L 1 0 L 1 1 z`, extrude 0.1 | **5** | a triangular prism: 2 triangular caps + 3 quad walls, z spanning exactly the extrude depth, closed |
+| square with a square hole, extrude 0.5 | **20** | tess2d gives 8 ring triangles (4 + 4 + 2 bridge, minus 2), of which 2 are zero-area slivers, so 6 real per cap = 12; plus 4 outer + 4 inner wall quads |
+
+**The upstream patch is 101 insertions and 0 deletions** (patch 15) — not one existing line changed,
+so the 350 lines of parser, flattening, layout and extrusion are byte-identical. That comes from
+mapping the GLU *call names* onto the sink instead of rewriting twelve call sites. `gluTessNormal`
+and `gluTessCallback` become no-ops that **drop** their arguments, which is what lets the four
+callbacks stay undefined.
+
+##### Three things measurement corrected
+
+- **The `N`/`z` trap, and what it exposed about the assertions.** Written first with `N` between the
+  contours, the hole came out **filled** — two overlapping solid squares. **The closedness check did
+  not catch it**, and could not: two closed shells pair their half-edges whatever they overlap. The
+  *face count* caught it. A structural invariant is not a substitute for knowing the answer.
+- **The bridge confuses upstream's adjacency.** `Finish2DExtrusionOp` opens by flipping degenerate
+  triangles using `Adjacency()`, and a bridge's two coincident edges make that edge look like it has
+  four incident faces — so the flip emitted triangles with a repeated index: 4 zero-area faces out of
+  24. Cleaned with a guarded second `RemoveDegenerateFaces()`. This is a real cost of
+  ear-clipping-with-bridges over a sweep-line tessellator, which creates vertices at intersections
+  and never leaves a coincident pair.
+- **An `extrude = 0` probe is not a smaller version of the problem.** Isolating the cap by setting
+  extrude to 0 put the front and back caps at the same z, where `Weld` merges them and produces
+  degenerate faces that do not exist at any real extrude value. Several minutes went into chasing
+  an artefact of the measurement.
+
+`MakeText` still warns and produces an empty mesh — it needs glyph outlines, which is 6.6c.
 
 ### 6.7 — `Extrude` builds side faces — **done**
 

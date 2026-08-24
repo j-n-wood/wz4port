@@ -5917,6 +5917,43 @@ void Wz4Mesh::MakeCylinder(sInt segments,sInt slices,sInt top,sInt flags)
 /***                                                                      ***/
 /****************************************************************************/
 
+// wz4port: this region was entirely behind sPLAT_WINDOWS, and measuring it showed
+// that only TWO of the six things in it are platform-specific — the glyph
+// outlines (GetGlyphOutlineW) and the tessellator (glu32). The Bezier
+// flattening, the 150-line SVG path parser, the text layout and all 160 lines of
+// Finish2DExtrusionOp are portable code that was merely guarded; checked, the
+// last of those has zero references to glu, HDC, HFONT, __stdcall or GLYPH.
+//
+// So WZ4PORT_TESS2D opens the region for a build that supplies its own
+// tessellator instead of copying 200 lines of it into wz4port. The GLUtesselator
+// handle becomes wMeshTess, the four GLU callbacks disappear (a sink that owns
+// the mesh writes complete faces), and the glyph walk keeps its own inner guard.
+//
+// See wz4port/patches/15-mesh-text-portable.md and docs/08-phase-geometry.md 6.6.
+#if sPLATFORM==sPLAT_WINDOWS || WZ4PORT_TESS2D
+
+#if WZ4PORT_TESS2D
+#include "mesh_tess.hpp"
+
+// The GLU call names are mapped onto the sink rather than the twelve call sites
+// being rewritten. That is a deliberate choice about diff size: the bodies of
+// MakeText and MakePath are 350 lines of portable logic, and every line of them
+// this patch does not touch is a line that cannot be broken by touching it.
+//
+// gluTessNormal and gluTessCallback become no-ops. Their arguments are DROPPED by
+// the macro, not evaluated, which is what lets tess3DBeginCB and friends stay
+// undefined in this build.
+#define GLUtesselator            wMeshTess
+#define gluNewTess()             (new wMeshTess)
+#define gluDeleteTess(t)         delete (t)
+#define gluTessNormal(t,x,y,z)   ((void)0)
+#define gluTessCallback(t,w,f)   ((void)0)
+#define gluTessBeginPolygon(t,d) (t)->BeginPolygon(d)
+#define gluTessBeginContour(t)   (t)->BeginContour()
+#define gluTessEndContour(t)     (t)->EndContour()
+#define gluTessEndPolygon(t)     (t)->EndPolygon()
+#endif
+
 #if sPLATFORM==sPLAT_WINDOWS
 
 #pragma comment(lib,"glu32.lib")
@@ -6024,8 +6061,17 @@ extern "C"
   #define GLU_TESS_TOLERANCE      100142
 }
 
+#endif  // sPLATFORM==sPLAT_WINDOWS — end of the glu32 and GDI declarations
+
+// wz4port: the sink creates the mesh vertex itself, so this is one call. The
+// Bezier helpers below are unchanged and still read Vertices.GetTail().Pos for
+// the segment start, which is why AddVertex has to append to the mesh here
+// rather than at tessellation time.
 static void tess3DAddPoint(GLUtesselator *tess,Wz4Mesh *mesh,const sVector31 &pt)
 {
+#if WZ4PORT_TESS2D
+  tess->AddVertex(pt);
+#else
   Wz4MeshVertex *vert = mesh->Vertices.AddMany(1);
   sClear(*vert);
   vert->Pos = pt;
@@ -6036,6 +6082,7 @@ static void tess3DAddPoint(GLUtesselator *tess,Wz4Mesh *mesh,const sVector31 &pt
   coords[1] = pt.y;
   coords[2] = pt.z;
   gluTessVertex(tess,coords,(void *) sDInt(mesh->Vertices.GetCount() - 1));
+#endif
 }
 
 static void tess3DAddQuadratic(GLUtesselator *tess,Wz4Mesh *mesh,const sVector31 &p1,const sVector31 &p2,sF32 toleranceSq,sInt depth=0)
@@ -6079,6 +6126,17 @@ static void tess3DAddCubic(GLUtesselator *tess,Wz4Mesh *mesh,const sVector31 &p1
   }
 }
 
+// wz4port: the four GLU callbacks exist only because glu32 STREAMS triangles out
+// through them. A sink that owns the mesh appends complete faces itself, so all
+// four go — including the trailing empty face they leave behind, which is why the
+// RemTail() calls in MakeText and MakePath are also guarded.
+//
+// COMBINE has no counterpart and needs none: glu32 called it to create a vertex
+// where the sweep found an intersection, and tess2d never creates vertices. That
+// is the same restriction stated in geo/tess2d.hpp — self-intersecting input is
+// out of scope, and it is why this is a note rather than a silent omission.
+#if !WZ4PORT_TESS2D
+
 static void __stdcall tess3DBeginCB(sInt type,Wz4Mesh *mesh)
 {
   if(mesh->Faces.IsEmpty() || mesh->Faces.GetTail().Count)
@@ -6109,6 +6167,8 @@ static void __stdcall tess3DCombineCB(sF64 coords[3],void *d[4],sF32 w[4],sInt *
 static void __stdcall tess3DEdgeFlagCB(sBool flag,Wz4Mesh *mesh)
 {
 }
+
+#endif  // !WZ4PORT_TESS2D — end of the glu32 callbacks
 
 void Wz4Mesh::Finish2DExtrusionOp(sF32 extrude,sInt flags)
 {
@@ -6272,6 +6332,14 @@ void Wz4Mesh::Finish2DExtrusionOp(sF32 extrude,sInt flags)
   CalcNormalAndTangents();
   MergeVertices();
 }
+
+// wz4port: MakeText keeps an inner Windows guard for now. Unlike MakePath it
+// needs GLYPH OUTLINES, which is the second of the two genuinely
+// platform-specific things in this region, and a FreeType implementation of it is
+// stage 6.6c. MakePath needs no font at all, which is why it goes first: it
+// isolates the new tessellator against a real operator before a font is added on
+// top.
+#if sPLATFORM==sPLAT_WINDOWS
 
 void Wz4Mesh::MakeText(const sChar *text,const sChar *font,sF32 height,sF32 extrude,sF32 maxErr,sInt flags)
 {
@@ -6442,6 +6510,17 @@ void Wz4Mesh::MakeText(const sChar *text,const sChar *font,sF32 height,sF32 extr
   DeleteObject(hFont);
   DeleteDC(hDC);
 }
+
+#else   // wz4port: no glyph outlines yet — stage 6.6c. See patch 12 for why this
+        // warns and leaves the mesh empty rather than calling sFatal.
+
+void Wz4Mesh::MakeText(const sChar *text,const sChar *font,sF32 height,sF32 extrude,sF32 maxErr,sInt flags)
+{
+  sPrintF(L"Wz4Mesh::MakeText: not implemented on this platform, mesh left empty (%s)\n",
+    text ? text : L"");
+}
+
+#endif  // sPLATFORM==sPLAT_WINDOWS — MakeText's glyph outlines
 
 static const sChar *skipWhitespace(const sChar *s)
 {
@@ -6681,8 +6760,13 @@ void Wz4Mesh::MakePath(const sChar *path,sF32 extrude,sF32 maxErr,sF32 weldThres
   }
 
   // last face generated is empty.
+  // wz4port: only with glu32, whose vertex callback opened a face before knowing
+  // whether one was coming. The sink appends complete faces, so removing the last
+  // one here would delete a real triangle.
+#if !WZ4PORT_TESS2D
   if(Faces.GetCount())
     Faces.RemTail();
+#endif
 
   gluDeleteTess(tess);
 
@@ -6692,6 +6776,23 @@ void Wz4Mesh::MakePath(const sChar *path,sF32 extrude,sF32 maxErr,sF32 weldThres
   Weld(diameter * weldThreshold);
   RemoveDegenerateFaces();
   Finish2DExtrusionOp(extrude,flags);
+
+  // wz4port: and again AFTER the extrusion, for the tess2d path only.
+  //
+  // A hole is tessellated by bridging it to its outer contour, which leaves two
+  // coincident edges — that is what a bridge is. Finish2DExtrusionOp begins by
+  // flipping degenerate triangles using Adjacency(), and a coincident pair makes
+  // that edge look like it has four incident faces, so the flip can emit a
+  // triangle with a repeated index. Measured on a 4x4 square with a 2x2 hole:
+  // 4 such faces out of 24, all zero-area.
+  //
+  // They contribute nothing, so removing them is safe, and it is the cost of
+  // ear-clipping-with-bridges rather than the sweep-line tessellator glu32 used
+  // — which creates real vertices at intersections and so never produces a
+  // coincident pair. See wz4port/geo/tess2d.hpp.
+#if WZ4PORT_TESS2D
+  RemoveDegenerateFaces();
+#endif
 }
 
 #else
