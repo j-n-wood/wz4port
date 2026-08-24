@@ -9,7 +9,7 @@ rediscovered the hard way.
 editor**: it opens a document, shows the stacking canvas, offers all 34 texture
 operators, inserts/deletes/moves/resizes them under the original's collision
 rules, edits every parameter from a panel generated entirely from metadata,
-previews the result live, and undoes all of it. `ctest` is **150 tests** on
+previews the result live, and undoes all of it. `ctest` is **151 tests** on
 arm64; the 90 texture goldens remain bit-identical between the NEON and SSE2
 builds.
 
@@ -337,7 +337,52 @@ insert and connect**, up from 67. Counted per output type (34 `GenBitmap`, 45
 `Wz4Mesh`) rather than as one total, which would still pass if one module lost
 operators while another gained them.
 
-Next: **6.6** — `Text3D` and `Path3D` on FreeType outlines plus a tessellator.
+**Stage 6.6a is done: the tessellator, tested alone.** 151/151 ctest.
+
+The 6.6 plan was rewritten from measurement first, because the survey's one-line
+description — "reimplement on FreeType plus a tessellator" — covers about a fifth
+of the region. Of the six things in `wz4_mesh.cpp`'s Windows-only block, **only
+two are platform-specific**: glyph outlines (`GetGlyphOutlineW`) and the
+tessellator (`glu32`). The Bézier flattening, the 150-line SVG path parser, the
+text layout and all 160 lines of `Finish2DExtrusionOp` are portable code trapped
+behind a platform guard — `Finish2DExtrusionOp` has **zero** references to `glu`,
+`HDC`, `HFONT`, `__stdcall` or `GLYPH`.
+
+So the approach is not "reimplement": it is to replace the GLU handle with a sink
+interface we supply and give the glyph walk a FreeType branch, leaving everything
+portable *shared* rather than copied. Duplicating the parser and the flattening
+into `wz4port/` would be a partial fork of 200 lines.
+
+**On the dependency question:** the plan named libtess2 or earcut, and both would
+have to be downloaded. Adding a vendored dependency is not a decision to take
+silently mid-stage, so `geo/tess2d.cpp` is ear clipping with hole bridging — the
+same approach earcut takes. **The honest trade:** GLU is a sweep-line
+tessellator and handles self-intersecting contours; ear clipping does not. For
+glyphs that costs nothing (TrueType and CFF outlines are non-self-intersecting
+with properly nested holes). For a hand-written self-intersecting `Path3D` string
+it is a real difference from the original tool. Vendoring libtess2 remains
+available if a case needs it — say the word.
+
+Tested before anything used it, and with no mesh library linked. Counts *and*
+areas: a square is 2 triangles / area 4; the same square wound clockwise gives
+the same (TrueType winds outers clockwise, CFF the other way, so accepting only
+one would work for half the fonts); a concave L is 4 triangles and area **5**,
+which is what catches an ear clipper that fills the notch; a square with a hole
+is 8 and area **12**; three nested squares give area **24**, so depth 2 is solid
+again. **The area assertions are the ones that earn their place** — counts can be
+right while the geometry is wrong.
+
+**A47 bit twice in this stage, from both ends.** 6.3b's lock printer used a
+file-scope `sTextBuffer`, which allocates in its *constructor* before Altona's
+memory handlers exist. This test used file-scope `sArray`s, whose *destructors*
+run after those handlers are gone — printing `FATAL ERROR: pointer ... seems not
+to belong to any sMemoryHandler` **with a zero exit code**, so the test passed
+while announcing a fatal error. Fixed at the root, then made un-missable: every
+test phase 6 added now carries `FAIL_REGULAR_EXPRESSION "FATAL ERROR"`.
+`editor_shot.cmake` already grepped for that string for exactly this reason.
+
+Next: **6.6b** — `Path3D` first, since it needs no font and so isolates the
+tessellator against a real operator, then `Text3D` on FreeType outlines.
 
 **`wz4ed` is the editor.** It has a window, a menu bar, a metadata-driven
 inspector, and the stacking canvas: blocks coloured by output type, selection,
@@ -472,7 +517,7 @@ about the build.
 | 3 — Text graph format + CLI | **Done**, phase gate passed |
 | 4 — Texture library + tests | **Done**, phase gate passed. All 34 operators run |
 | 5 — Texture GUI | **Done**, phase gate passed. `wz4ed` edits textures |
-| 6 — Geometry | **Phase gate passed.** 6.1–6.5 and 6.7 done; only 6.6 (Text3D/Path3D) remains |
+| 6 — Geometry | **Phase gate passed.** 6.1–6.5, 6.6a and 6.7 done; 6.6b (Text3D/Path3D) remains |
 | 7 — Animated geometry | Not started |
 
 ---
@@ -531,7 +576,8 @@ Clean build from scratch: **0 errors**. Warnings are expected and benign
 | `mesh_register` | Stage 6.1 gate: 45 of 47 operators register, and a `Cube` evaluates and measures |
 | `mesh_obj` | **Stage 6.2 gate:** OBJ write→read round-trips a Cube and a Sphere, plus a reject case |
 | `mesh_render_cli` | And that `wz4gen render` reaches the writer — matched on bounds, not just counts |
-| `wz4geochk` | **Ours.** The mesh invariant battery, shared by `wz4gen sweep` and the cases |
+| `wz4geochk` | **Ours.** The mesh invariant battery and `tess2d`, the polygon tessellator |
+| `tess2d_shapes` | **Stage 6.6a:** the tessellator alone — derived counts and, decisively, areas |
 | `mesh_ops` | **Stage 6.3a Suite A:** 48 derived cases, 45 of 45 operators, coverage asserted |
 | `mesh_sweep_*` (5) | **Stage 6.3a Suite B:** 1,386 mesh operators in the bundled documents |
 | `mesh_golden_*` (6) | **Stage 6.3b:** OBJ goldens, for the normals and UVs a checksum cannot see |
@@ -629,6 +675,8 @@ wz4port/
   tests/mesh_obj.cpp           stage 6.2 gate: OBJ round-trip, LoadOBJ as the oracle
   tests/geo/gen.wz4t           stage 6.2: Cube, Cube->Transform, Sphere
   geo/mesh_check.hpp/.cpp      ours: the mesh invariant battery + closedness
+  geo/tess2d.hpp/.cpp          stage 6.6a — ear clipping with hole bridging, no glu32
+  tests/tess2d_shapes.cpp        and its standalone test: counts and areas
   tests/mesh_edit.cpp          stage 6.5 phase gate: build, edit, export, headless
   tests/mesh_cases.cpp         stage 6.3a Suite A: 48 derived cases, with derivations
                                (not mesh_ops.cpp — .gitignore eats *_ops.cpp, A48)

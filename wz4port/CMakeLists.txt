@@ -546,7 +546,14 @@ target_compile_options(wz4geo PRIVATE
 # wz4geo is upstream sources compiled in place, and mixing our code into it would
 # blur the isolation seam. Used by `wz4gen sweep` and by the per-operator cases,
 # which is why it is a library rather than a file in either.
-add_library(wz4geochk STATIC "${CMAKE_CURRENT_SOURCE_DIR}/geo/mesh_check.cpp")
+#
+# tess2d joined in stage 6.6: the polygon tessellator Text3D and Path3D need,
+# replacing glu32. It has no mesh dependency at all — see tests/tess2d_shapes.cpp,
+# which is why it could be tested before anything used it.
+add_library(wz4geochk STATIC
+  "${CMAKE_CURRENT_SOURCE_DIR}/geo/mesh_check.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/geo/tess2d.cpp"
+)
 target_include_directories(wz4geochk PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/geo")
 target_link_libraries(wz4geochk PUBLIC wz4geo)
 target_compile_options(wz4geochk PRIVATE
@@ -1372,6 +1379,29 @@ add_test(NAME mesh_ops COMMAND mesh_ops
 set_tests_properties(mesh_ops PROPERTIES DEPENDS opsmeta_gate)
 
 #############################################################################
+##  tess2d_shapes — stage 6.6a, the tessellator alone                       ##
+#############################################################################
+
+# Tested before anything uses it, and with no mesh library linked — tess2d has no
+# mesh dependency, which is what makes that possible and is why it was written
+# that way. A subtle bug here would surface as "the text looks slightly off",
+# which is close to the worst failure signal available, so the assertions are
+# derived counts (a simple n-gon is always n-2 triangles) plus the total AREA,
+# which is the one check that catches a dropped ear or a filled hole.
+
+add_executable(tess2d_shapes
+  "${CMAKE_CURRENT_SOURCE_DIR}/tests/tess2d_shapes.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/geo/tess2d.cpp"
+)
+target_link_libraries(tess2d_shapes PRIVATE altona_base)
+target_include_directories(tess2d_shapes PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}/geo")
+target_compile_options(tess2d_shapes PRIVATE
+  "SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/tests/gui_poison.h"
+)
+add_test(NAME tess2d_shapes COMMAND tess2d_shapes)
+
+#############################################################################
 ##  mesh_edit — stage 6.5, the phase gate's headless half                   ##
 #############################################################################
 
@@ -1506,6 +1536,25 @@ foreach(_doc ${WZ4_MESH_SWEEP_DOCS})
   set_tests_properties(mesh_sweep_${_name} PROPERTIES
     PASS_REGULAR_EXPRESSION "class\\(es\\) exercised, 0 violation\\(s\\)")
 endforeach()
+
+#############################################################################
+##  "prints FATAL ERROR and exits 0" is a failure, not a curiosity          ##
+#############################################################################
+
+# A real failure mode here, not a hypothetical one: Altona unregisters its memory
+# handlers before static destructors run, so any file-scope container announces
+# "FATAL ERROR: pointer ... seems not to belong to any sMemoryHandler" on a
+# CLEAN exit while the exit code stays 0 (A47). It bit twice in stage 6.6 alone,
+# and editor_shot.cmake already greps for the same string for the same reason.
+#
+# ctest can assert it directly, so every test phase 6 added does. Placed here
+# because set_tests_properties needs its tests to exist already.
+#
+# The older tests are deliberately not retrofitted: that is a separate change
+# with its own chance of surprises, and this is the set where the hazard is live.
+set_tests_properties(
+  tess2d_shapes mesh_register mesh_obj mesh_ops mesh_edit
+  PROPERTIES FAIL_REGULAR_EXPRESSION "FATAL ERROR")
 
 #############################################################################
 ##  SIMD parity test                                                       ##

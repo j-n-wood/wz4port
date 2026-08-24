@@ -1554,6 +1554,62 @@ Which is why the gate asserts that line and not the image, and why the wireframe
 case exists at all: a screenshot of a *checked checkbox* is not evidence that the
 checkbox does anything.
 
+### A59 · A47 has two ends, and one of them exits zero — standing
+
+*Phase 6.6a.* A47 recorded that Altona's process-global allocator unregisters its
+handlers before static destructors run. Stage 6.6 hit that hazard **twice, from
+opposite ends**, in code written a day apart:
+
+- a file-scope `sTextBuffer` allocates in its **constructor**, which runs *before*
+  the handlers are registered — `sVERIFY(h)` fires inside `sAllocMem_`;
+- file-scope `sArray`s free in their **destructors**, which run *after* the
+  handlers are gone — `sFreeMem_` prints `FATAL ERROR: pointer ... seems not to
+  belong to any sMemoryHandler`.
+
+The second is the dangerous one, because **it exits 0**. The test printed a fatal
+error and passed. A47 already noted that property for the editor and
+`editor_shot.cmake` greps the string for exactly that reason, but the lesson had
+been filed as "the editor's teardown problem" rather than as a property of every
+binary that links Altona.
+
+Two things follow, both applied:
+
+- **No Altona container at file scope, ever.** Not a pointer allocated in `sMain`
+  as a workaround — in this case nothing needed a growable container at all, and a
+  fixed array removed the hazard class rather than routing around it once more.
+- **Assert it, do not remember it.** Every test phase 6 added carries
+  `FAIL_REGULAR_EXPRESSION "FATAL ERROR"`. ctest supports it natively, so a
+  convention that has to be recalled became a check that cannot be forgotten.
+
+The general shape is A39 again in a new costume: the exit code is a *proxy* for
+"the run was clean", and this is a case where the proxy and the thing disagree.
+The remedy is the same — assert on the output the program actually produced.
+
+### A60 · A one-line plan for a large region is a guess about its shape — standing
+
+*Phase 6.6.* The phase plan said of `Text3D` and `Path3D`: "reimplement on
+FreeType outline extraction plus a tessellator". Measured, that describes **two of
+the six things** in the 770-line Windows-only block:
+
+| | |
+|---|---|
+| platform-specific | glyph outlines (`GetGlyphOutlineW`), tessellation (`glu32`) |
+| **portable, merely guarded** | Bézier flattening; the 150-line SVG path parser; text layout; all 160 lines of `Finish2DExtrusionOp` — which has *zero* references to `glu`, `HDC`, `HFONT`, `__stdcall` or `GLYPH` |
+
+That changes the work from "reimplement" to "replace the tessellator handle with
+a sink interface and add a FreeType branch", which shares the portable four
+instead of copying them. Duplicating the parser and flattening into `wz4port/`
+would have been a 200-line partial fork — and it is what a plan phrased as
+"reimplement" invites.
+
+Third time in this phase a survey line has understated or misdescribed a region:
+6.1's materials exposure, 6.3's operator inventory (three of the "47" are not
+operators), and now this. The pattern is not carelessness in the original survey —
+it is that **a one-line summary of a large region records what the author
+noticed, and what gets noticed is the platform-specific part**, because that is
+what looks like work. The portable part is invisible precisely because it is
+unremarkable. Worth measuring the *ratio* before planning any region of this size.
+
 ---
 
 ## Part 3 — where inference lost to measurement
@@ -1604,6 +1660,8 @@ adopted because of this list.
 | The `Extrude` side-face path has never executed | It executes and works; only the boundary-edge branch of the rim test never ran (A56) |
 | ImGui's vendored loader covers GL 3.3 | It covers what ImGui references. Framebuffers, `glUniform3fv` and `glDepthFunc` are absent (A57) |
 | A mesh's GL buffers are copies, so the source object can be released | Frame 2 came back empty — the document's cache is not an independent reference (A58) |
+| `Text3D`/`Path3D` need reimplementing on FreeType plus a tessellator | Two of six parts are platform-specific; the parser, flattening, layout and all of `Finish2DExtrusionOp` are portable (A60) |
+| A47 is the editor's teardown problem | It is every Altona binary's, and the destructor end exits 0 while printing a fatal error (A59) |
 
 ---
 

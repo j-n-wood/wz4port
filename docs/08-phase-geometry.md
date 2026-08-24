@@ -699,14 +699,100 @@ which would still pass if one module lost operators while another gained them.
 
 ### 6.6 — Text3D and Path3D
 
-`MakeText` uses `GetGlyphOutlineW` to fetch glyph outlines and `glu32` to tessellate.
-Reimplement on FreeType outline extraction (`FT_Outline`) plus a tessellator — libtess2 or
-earcut, both small and permissive.
+**This section was rewritten from measurement before any code.** The survey's one-line description —
+"reimplement on FreeType plus a tessellator" — describes about a fifth of the region and misses that
+most of it is already portable.
 
-Deferred to last deliberately: two operators, real work, and everything else must not wait
-on it.
+#### What is actually platform-specific: two things out of six
 
-**Gate:** `Text3D` produces correct extruded geometry for a simple string.
+The Windows-only block is `wz4_mesh.cpp:5920`–`6690`, and it contains:
+
+| | | |
+|---|---|---|
+| glyph outlines | `GetGlyphOutlineW` + a `TTPOLYGONHEADER` walk | **Windows** |
+| tessellation | `glu32`, four callbacks, `GLU_TESS_*` | **Windows** (the DLL) |
+| Bézier flattening | `tess3DAddQuadratic`, `tess3DAddCubic` — recursive subdivision to a tolerance | portable |
+| the SVG path parser | `skipWhitespace`, `parseSVGVec`, the `PathCommand` loop, ~150 lines | portable |
+| text layout | pen advance, `\n` handling | portable |
+| `Finish2DExtrusionOp` | adjacency, degenerate-triangle flipping, the extrusion and its side walls, 160 lines | portable — **zero** references to `glu`, `HDC`, `HFONT`, `__stdcall` or `GLYPH` |
+
+So four of the six are portable code trapped behind a platform guard, and `Finish2DExtrusionOp` —
+the part that actually builds the extrusion — needs nothing but to be compiled.
+
+That changes the approach. Duplicating the SVG parser and the flattening into `wz4port/` would be a
+partial fork of 200 lines; the project rule prefers a patch to a fork. Instead the GLU handle becomes
+a **sink interface** we supply, the four callbacks disappear (a sink writes triangles directly), and
+the glyph walk gets a FreeType branch beside the Windows one. Everything portable is then shared
+rather than copied.
+
+`Finish2DExtrusionOp` is `private`, so it needs one line of upstream visibility change — justified,
+since the platform-specific half now lives out of tree.
+
+#### The tessellator, and a dependency question
+
+The plan named libtess2 or earcut. Both would have to be **downloaded**, and adding a vendored
+dependency is not a decision to take silently mid-stage — so this implements its own instead, in
+`wz4port/geo/tess2d.cpp`: ear clipping with hole bridging, the same approach earcut takes.
+
+**The honest trade.** GLU is a sweep-line tessellator: it handles self-intersecting contours and
+arbitrary winding. Ear clipping does not. For glyphs that costs nothing — TrueType and CFF outlines
+are non-self-intersecting closed contours with properly nested holes, which is exactly ear
+clipping's domain. For `Path3D` it is a real difference: a hand-written self-intersecting path that
+GLU would tessellate will fail here. Documented rather than hidden, and vendoring libtess2 stays
+available if a case ever needs it.
+
+#### Sequencing: the tessellator first, alone
+
+Two stages, and the order is the risk order.
+
+- **6.6a — `tess2d`, standalone and tested on its own.** The tessellator is the part most likely to
+  be subtly wrong, and a bug in it would surface as "the text looks slightly off", which is the
+  worst possible failure signal. So it gets its own unit test with derivable answers — a square is
+  2 triangles, a square with a square hole is 8, a concave L is 4 — plus invariants that hold for
+  any input: every output triangle non-degenerate, every index in range, and the **total signed
+  area equal to the input's**, which is the one check that catches a dropped or doubled ear.
+- **6.6b — `Path3D`, then `Text3D`.** `Path3D` first because it needs no font: it isolates the
+  tessellator against the real operator. `Text3D` then adds FreeType outlines and layout on top of
+  something already known to work.
+
+**Gate:** a square, a square with a hole and a concave polygon tessellate to the derived triangle
+counts with the input's area preserved; `Path3D` produces a closed extruded prism from a triangular
+path; `Text3D` produces correct extruded geometry for a simple string.
+
+#### 6.6a — `tess2d`, tested alone — **done**
+
+`wz4port/geo/tess2d.cpp`, with no mesh dependency at all, which is what let it be tested before
+anything used it. `tests/tess2d_shapes.cpp` — 151/151 ctest:
+
+| case | triangles | area | what it catches |
+|---|---:|---:|---|
+| square | 2 | 4 | the baseline: n vertices give n−2 triangles |
+| square, clockwise | 2 | 4 | **orientation must not matter** — TrueType winds outers clockwise, CFF counter-clockwise, so accepting only one would work for half the fonts on the machine |
+| concave L, 6 vertices | 4 | **5** | an ear clipper that ignored the reflex vertex would fill the notch and report 9 |
+| square + square hole | 8 | **12** | 4 + 4 + 2 bridge vertices, minus 2. Area 12 not 16, so the hole is a hole |
+| three nested squares | 10 | **24** | 36 − 16 + 4: depth 2 is **solid again**, which a plain inside/outside test gets wrong and a nesting-depth test gets right |
+| a two-point contour | 0 | — | dropped, not fatal: a space glyph has no usable contour |
+| repeated points | 2 | 4 | consecutive duplicates collapse. Every glyph outline has them, and a zero-length edge makes every cross product through it zero, which reads as "degenerate ear" and stalls the clip |
+
+**The area assertions are the ones that earn their place.** Counts can be right while the geometry
+is wrong — a filled notch, a solid hole and a doubled ear all produce plausible counts. Area is also
+the only assertion here that would survive replacing the algorithm.
+
+Two implementation notes worth carrying: holes are classified by **nesting depth**, not by the sign
+of the signed area, which is what makes the winding-agnostic and nested-island cases work; and the
+ear-clip loop is **bounded** rather than `while(ring >= 3)`, because a hang on a malformed font
+outline is a far worse failure than a reported one.
+
+**A47 bit twice in this one stage**, from both ends. 6.3b's lock printer used a file-scope
+`sTextBuffer`, which allocates in its *constructor* — before Altona registers its memory handlers,
+so `sVERIFY(h)` fired. This test used file-scope `sArray`s, whose *destructors* run after those
+handlers are gone, printing `FATAL ERROR: pointer ... seems not to belong to any sMemoryHandler`
+**with a zero exit code** — so the test passed while announcing a fatal error.
+
+Fixed at the root (fixed arrays; nothing here needed a growable container), and then made
+un-missable: every test phase 6 added now carries
+`FAIL_REGULAR_EXPRESSION "FATAL ERROR"`. `editor_shot.cmake` already grepped for that string for
+exactly this reason; ctest can assert it directly, so it should.
 
 ### 6.7 — `Extrude` builds side faces — **done**
 
