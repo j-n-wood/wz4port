@@ -152,9 +152,18 @@ wMeshView::wMeshView()
   Lo.Init(0,0,0);
   Hi.Init(0,0,0);
   Empty = 1;
+  Joints = 0;
+
+  Time = 0;
+  Playing = false;
+  Loop = true;
+  Fps = 30.0f;
 
   ShownOp = 0;
   ShownRevision = -1;
+  Source = 0;
+  PosedTime = 0;
+  Posed = 0;
 
   Program = LineProgram = 0;
   Vao = Vbo = Ibo = 0;
@@ -203,6 +212,9 @@ void wMeshView::Upload(Wz4Mesh *mesh)
   Lo.Init(0,0,0);
   Hi.Init(0,0,0);
   Empty = 1;
+  Joints = 0;
+  Source = 0;
+  Posed = 0;
 
   if(!mesh || mesh->Faces.GetCount()==0 || mesh->Vertices.GetCount()==0)
   {
@@ -218,27 +230,22 @@ void wMeshView::Upload(Wz4Mesh *mesh)
 
   const sInt vc = mesh->Vertices.GetCount();
 
-  // Interleaved position + normal. The normal comes straight from the vertex:
-  // every generator ends with CalcNormalAndTangents(), so there is no geometry
-  // pass to do here.
-  sArray<sF32> verts;
-  verts.AddMany(vc*6);
+  // Bounds from the REST pose, and computed once. An animated mesh's true bounds
+  // change every frame, and framing the camera or sizing the grid from those
+  // would make both jitter as it moves — so the rest pose is what the view is
+  // built around, which is also what a modelling package does.
   for(sInt i=0;i<vc;i++)
   {
-    const Wz4MeshVertex &v = mesh->Vertices[i];
-    sF32 *d = &verts[i*6];
-    d[0] = v.Pos.x; d[1] = v.Pos.y; d[2] = v.Pos.z;
-    d[3] = v.Normal.x; d[4] = v.Normal.y; d[5] = v.Normal.z;
-
+    const sVector31 &p = mesh->Vertices[i].Pos;
     if(i==0)
     {
-      Lo = Hi = v.Pos;
+      Lo = Hi = p;
     }
     else
     {
-      Lo.x = sMin(Lo.x,v.Pos.x); Hi.x = sMax(Hi.x,v.Pos.x);
-      Lo.y = sMin(Lo.y,v.Pos.y); Hi.y = sMax(Hi.y,v.Pos.y);
-      Lo.z = sMin(Lo.z,v.Pos.z); Hi.z = sMax(Hi.z,v.Pos.z);
+      Lo.x = sMin(Lo.x,p.x); Hi.x = sMax(Hi.x,p.x);
+      Lo.y = sMin(Lo.y,p.y); Hi.y = sMax(Hi.y,p.y);
+      Lo.z = sMin(Lo.z,p.z); Hi.z = sMax(Hi.z,p.z);
     }
   }
 
@@ -284,6 +291,9 @@ void wMeshView::Upload(Wz4Mesh *mesh)
 
   Verts = vc;
   Empty = 0;
+  Source = mesh;
+  Joints = mesh->Skeleton ? mesh->Skeleton->Joints.GetCount() : 0;
+  Posed = 0;
 
   if(!Vao) glGenVertexArrays(1,&Vao);
   if(!Vbo) glGenBuffers(1,&Vbo);
@@ -291,23 +301,115 @@ void wMeshView::Upload(Wz4Mesh *mesh)
 
   glBindVertexArray(Vao);
 
-  glBindBuffer(GL_ARRAY_BUFFER,Vbo);
-  glBufferData(GL_ARRAY_BUFFER,verts.GetCount()*sizeof(sF32),&verts[0],
-    GL_STATIC_DRAW);
-  glEnableVertexAttribArray(0);
-  glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,6*sizeof(sF32),(void *)0);
-  glEnableVertexAttribArray(1);
-  glVertexAttribPointer(1,3,GL_FLOAT,GL_FALSE,6*sizeof(sF32),
-    (void *)(3*sizeof(sF32)));
-
+  // The index buffer is built once: skinning moves vertices, never topology.
   glBindBuffer(GL_ELEMENT_ARRAY_BUFFER,Ibo);
   glBufferData(GL_ELEMENT_ARRAY_BUFFER,idx.GetCount()*sizeof(sU32),&idx[0],
     GL_STATIC_DRAW);
 
   glBindVertexArray(0);
 
+  RefreshVertices();
   BuildLines();
-  Fit();
+
+  // Fit() is NOT called here — see the header. An animated mesh refreshes its
+  // vertices every frame, and framing on every refresh would reset the camera
+  // sixty times a second. DrawPane frames on operator change instead.
+}
+
+/****************************************************************************/
+
+// Builds the interleaved position+normal buffer from Source, skinned to the
+// current Time if there is a skeleton.
+//
+// Rebuilt whole rather than sub-updated: positions and normals are interleaved,
+// so touching only the positions would mean one strided write per vertex, which
+// is slower than replacing the buffer and considerably easier to get wrong.
+
+void wMeshView::RefreshVertices()
+{
+  if(!Source || Verts<=0)
+    return;
+
+  const sInt vc = Source->Vertices.GetCount();
+
+  VertexScratch.Clear();
+  VertexScratch.AddMany(vc*6);
+
+  // GL_DYNAMIC_DRAW once the mesh is animated: the buffer is replaced every
+  // frame, which is exactly what the hint is for.
+  const sU32 usage = (Joints>0) ? GL_DYNAMIC_DRAW : GL_STATIC_DRAW;
+
+  if(Joints>0)
+  {
+    BoneMat.Clear(); BoneMat.AddMany(Joints);
+    BaseMat.Clear(); BaseMat.AddMany(Joints);
+    Source->Skeleton->Evaluate(PosedTime,&BoneMat[0],&BaseMat[0]);
+  }
+
+  for(sInt i=0;i<vc;i++)
+  {
+    Wz4MeshVertex &v = Source->Vertices[i];
+    sF32 *d = &VertexScratch[i*6];
+
+    sVector31 pos = v.Pos;
+    sVector30 nrm = v.Normal;
+
+    if(Joints>0)
+    {
+      // NON-DESTRUCTIVE. Skin writes to its out-parameter and reads v.Pos, so
+      // the mesh is untouched — unlike BakeAnim, which skins in place and then
+      // releases the skeleton. That distinction is what makes scrubbing
+      // possible at all: the rig has to survive every frame.
+      v.Skin(&BaseMat[0],Joints,pos);
+
+      // Skin does not do normals, and neither does BakeAnim — a baked mesh keeps
+      // its rest-pose normals. For a VIEWER that is wrong in a visible way: the
+      // shading would not follow the deformation. So the normal is blended by
+      // the same weights, using sVector30 so the matrices' translation row is
+      // ignored, and renormalised.
+      sVector30 accu(0,0,0);
+      for(sInt k=0;k<4;k++)
+      {
+        if(v.Index[k]<0 || v.Index[k]>=Joints)
+          break;
+        accu += (v.Normal*BaseMat[v.Index[k]])*v.Weight[k];
+      }
+      if(accu.LengthSq()>1e-12f)
+      {
+        accu.Unit();
+        nrm = accu;
+      }
+    }
+
+    d[0] = pos.x; d[1] = pos.y; d[2] = pos.z;
+    d[3] = nrm.x; d[4] = nrm.y; d[5] = nrm.z;
+  }
+
+  glBindVertexArray(Vao);
+  glBindBuffer(GL_ARRAY_BUFFER,Vbo);
+  glBufferData(GL_ARRAY_BUFFER,VertexScratch.GetCount()*sizeof(sF32),
+    &VertexScratch[0],usage);
+  glEnableVertexAttribArray(0);
+  glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,6*sizeof(sF32),(void *)0);
+  glEnableVertexAttribArray(1);
+  glVertexAttribPointer(1,3,GL_FLOAT,GL_FALSE,6*sizeof(sF32),
+    (void *)(3*sizeof(sF32)));
+  glBindVertexArray(0);
+
+  Posed = 1;
+}
+
+/****************************************************************************/
+
+void wMeshView::UpdatePose()
+{
+  if(Empty || Joints<=0)
+    return;
+  if(Posed && PosedTime==Time)
+    return;                           // the pose already on the GPU is current
+
+  PosedTime = Time;
+  RefreshVertices();
 }
 
 /****************************************************************************/
@@ -594,6 +696,13 @@ void wMeshView::DrawPane(wOp *op,sInt revision)
 
     Upload(mesh);
 
+    // Framing belongs to the operator CHANGING, not to the upload — an animated
+    // mesh uploads every frame and would otherwise snap the camera back
+    // constantly. This is the split that made scrubbing possible.
+    Fit();
+    PosedTime = Time;
+    RefreshVertices();
+
     // NOT released, and that is deliberate. The first version released the
     // object after uploading, reasoning that the GL buffers hold copies — and
     // the NEXT frame's evaluation then came back empty, because the document's
@@ -630,6 +739,46 @@ void wMeshView::DrawPane(wOp *op,sInt revision)
 
   ImGui::SameLine();
   ImGui::Text("%d v  %d tri",Verts,Tris);
+
+  // --- the timeline ---------------------------------------------------------
+  //
+  // Shown only when the mesh actually has a rig. Almost none do — every
+  // generator produces an unrigged mesh and Deform destroys the rig it builds
+  // unless told to keep it — so a permanent scrubber would be a control that
+  // does nothing on nearly every operator in the palette.
+  if(Joints>0)
+  {
+    if(ImGui::Button(Playing ? "pause" : "play"))
+      Playing = !Playing;
+    ImGui::SameLine();
+    ImGui::Checkbox("loop",&Loop);
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(-140.0f);
+    ImGui::SliderFloat("##time",&Time,0.0f,1.0f,"t = %.3f");
+    ImGui::SameLine();
+    ImGui::Text("%d bone(s)",Joints);
+
+    if(Playing)
+    {
+      // Wall-clock, not a frame count: the pose is continuous, so playback
+      // should run at the same speed whatever the frame rate happens to be.
+      // Fps is the cycle rate, so one second of playback at 1.0 is one cycle.
+      const sF32 dt = ImGui::GetIO().DeltaTime;
+      Time += dt*(Fps/30.0f);
+      if(Time>1.0f)
+      {
+        if(Loop)
+          Time -= sFFloor(Time);      // fmod, keeping the fractional phase
+        else
+        {
+          Time = 1.0f;
+          Playing = false;
+        }
+      }
+    }
+
+    UpdatePose();
+  }
 
   // --- the viewport ---------------------------------------------------------
 
@@ -686,6 +835,14 @@ void wMeshView::Describe(const sStringDesc &out) const
   if(Empty)
   {
     buf.PrintF(L"meshview: empty");
+  }
+  else if(Joints>0)
+  {
+    // The rig and the time are in the line because they are what a screenshot
+    // cannot show: a posed mesh and a rest mesh look equally plausible.
+    buf.PrintF(L"meshview: %d vertices, %d triangles uploaded (%d quad(s) split), "
+               L"rig %d bone(s) at t = %f",
+      Verts,Tris,Quads,Joints,PosedTime);
   }
   else
   {

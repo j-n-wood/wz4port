@@ -46,13 +46,25 @@ struct wMeshView
   bool ShowGrid;
   bool ShowBBox;
 
+  // --- the timeline, stage 7.4 ---------------------------------------------
+  //
+  // Only meaningful when the shown mesh carries a skeleton, which almost none
+  // do: every generator produces an unrigged mesh and Deform destroys the rig it
+  // builds unless told to keep it. So the scrubber appears only when there is
+  // something to scrub.
+  sF32 Time;                // 0..1, the range every channel here is built for
+  bool Playing;
+  bool Loop;
+  sF32 Fps;                 // playback rate; the pose is continuous, not stepped
+
   // --- what was last uploaded, for reporting and for the gate ---------------
 
   sInt Verts;               // vertices in the GL buffer
   sInt Tris;                // triangles, AFTER quads are split
   sInt Quads;               // quads in the source mesh, before splitting
-  sVector31 Lo,Hi;          // the source mesh's bounds
+  sVector31 Lo,Hi;          // the source mesh's bounds, at the REST pose
   sBool Empty;              // an evaluated mesh with nothing in it is not a fault
+  sInt Joints;              // 0 when the mesh has no skeleton — the usual case
 
   wMeshView();
   ~wMeshView();
@@ -60,7 +72,15 @@ struct wMeshView
   // Builds the GL buffers. A quad becomes two triangles here and nowhere else —
   // the mesh keeps its quads, which is what distinguishes this from the
   // Triangulate operator. Safe to call with 0 to release everything.
+  //
+  // Does NOT frame the view: Fit() is separate, because an animated mesh
+  // re-uploads its vertices every frame and framing on every upload would reset
+  // the camera sixty times a second. Callers frame on operator CHANGE instead.
   void Upload(Wz4Mesh *mesh);
+
+  // Re-skins at the current Time and re-uploads the vertex buffer. A no-op when
+  // the mesh has no skeleton or the time has not moved. Called per frame.
+  void UpdatePose();
 
   // Renders at the given pixel size and returns the colour texture, or 0 if
   // there is nothing to show. Size is in PIXELS, not points: on a retina display
@@ -87,6 +107,14 @@ private:
   wOp *ShownOp;
   sInt ShownRevision;
 
+  // Borrowed, never owned — the document's cache owns the evaluated object, and
+  // releasing it broke the next frame in stage 6.4 (A58). Refreshed whenever the
+  // operator or revision changes, which is the same moment the cache could have
+  // replaced it.
+  Wz4Mesh *Source;
+  sF32 PosedTime;           // the Time the vertex buffer currently reflects
+  sBool Posed;              // has a pose ever been uploaded?
+
   sU32 Program;
   sU32 LineProgram;
   sU32 Vao,Vbo,Ibo;
@@ -98,7 +126,15 @@ private:
   sBool EnsureShaders();
   sBool EnsureFbo(sInt w,sInt h);
   void BuildLines();        // grid and bounding box, as one line buffer
+  void RefreshVertices();   // (re)builds the interleaved VBO from Source
   void Release();
+
+  // Scratch, reused across frames rather than reallocated per frame. Members of
+  // a heap-allocated object, so no Altona container ever sits at file scope
+  // (A59).
+  sArray<sMatrix34> BoneMat;
+  sArray<sMatrix34> BaseMat;
+  sArray<sF32> VertexScratch;
 };
 
 /****************************************************************************/

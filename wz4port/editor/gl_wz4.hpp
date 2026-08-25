@@ -103,6 +103,9 @@
 #ifndef GL_STATIC_DRAW
 #define GL_STATIC_DRAW              0x88E4
 #endif
+#ifndef GL_DYNAMIC_DRAW
+#define GL_DYNAMIC_DRAW             0x88E8
+#endif
 #ifndef GL_DEPTH_BUFFER_BIT
 #define GL_DEPTH_BUFFER_BIT         0x00000100
 #endif

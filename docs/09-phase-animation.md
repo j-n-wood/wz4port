@@ -168,7 +168,52 @@ most matrix-convention errors immediately.
 
 **Gate:** animated cases pass at multiple times on both platforms.
 
-### 7.4 — Timeline scrubber
+### 7.4 — Timeline scrubber — **done**
+
+A rigged mesh scrubs in the 3D preview: play/pause, loop, and a `t = 0..1` slider, shown **only
+when the mesh actually has a rig** — almost none do, so a permanent scrubber would be a control that
+does nothing on nearly every operator in the palette. 152/152 ctest.
+
+#### The structural fix the plan predicted
+
+`wMeshView::Upload` called `Fit()`, so re-uploading each frame would have reset the camera sixty
+times a second. Upload and framing are now separate: `Upload` builds buffers, `DrawPane` frames on
+operator **change** and on the "fit" button. That split is what makes scrubbing possible at all.
+
+#### Skinning per frame, without destroying the rig
+
+`Wz4MeshVertex::Skin` writes to an out-parameter and reads `v.Pos`, so the mesh is untouched —
+unlike `BakeAnim`, which skins in place and then *releases the skeleton*. The rig has to survive
+every frame, so `BakeAnim` is exactly the wrong tool here despite being the obvious one.
+
+Three decisions worth keeping:
+
+- **Bounds come from the rest pose, computed once.** An animated mesh's true bounds change every
+  frame, and framing the camera or sizing the grid from those would make both jitter as it moves.
+- **Normals are skinned too**, which neither `Skin` nor `BakeAnim` does — a baked mesh keeps its
+  rest-pose normals. For a *viewer* that is visibly wrong: the shading would not follow the
+  deformation. They are blended by the same weights using `sVector30`, so the matrices' translation
+  row is ignored, then renormalised.
+- **The whole interleaved buffer is rebuilt**, not sub-updated. Positions and normals are
+  interleaved, so touching only positions means one strided write per vertex — slower than replacing
+  the buffer and considerably easier to get wrong.
+
+#### The gate asserts that scrubbing changes what you SEE
+
+`wz4ed_pose` renders the same operator at two times and requires the screenshots to **differ**.
+Nothing weaker establishes a scrubber:
+
+- the report line alone would pass if time were plumbed through and the vertices never re-skinned —
+  it prints what the code *believes*;
+- one screenshot would pass if the mesh were stuck in its rest pose, since a posed mesh and a rest
+  mesh look equally plausible;
+- a golden would be a false-failure generator, because the image depends on the display's DPI.
+
+Comparing two images from the **same binary in the same run** sidesteps the DPI problem entirely:
+whatever it is, both shots share it, so any difference is the pose. Verified negatively — pointing
+both times at the same value fails with the intended message.
+
+### 7.4 (original plan text) — Timeline scrubber
 
 Minimal UI: a time slider with a numeric field, play/pause, loop, and a frame-rate setting.
 Drives the preview's time value and nothing else.

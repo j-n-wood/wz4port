@@ -549,10 +549,40 @@ identified by a negative `Index[0]`: `wMeshTess::AddVertex` uses `sClear`, so
 construction. **Test the same condition the consumer tests**; an invariant
 invented alongside its check will disagree with the code it protects.
 
-Next: **7.4** — the timeline scrubber, the largest remaining piece, needing
-`wMeshView::Upload` split from `Fit()` and per-frame CPU skinning through
-`Wz4MeshVertex::Skin`, which writes to an out-parameter and so is non-destructive.
-Then **7.5**, skeleton visualisation.
+**Stage 7.4 is done: rigged meshes scrub in the 3D preview.** Play/pause, loop,
+and a `t = 0..1` slider — shown **only when the mesh has a rig**, since almost
+none do and a permanent scrubber would be a control that does nothing on nearly
+every operator in the palette. 152/152 ctest.
+
+The plan predicted the structural fix and it was the right one: `Upload()` called
+`Fit()`, so re-uploading each frame would have reset the camera sixty times a
+second. Upload and framing are now separate — `DrawPane` frames on operator
+*change* and on the fit button. Three further decisions came out of building it:
+
+- **Bounds are computed once, from the rest pose.** An animated mesh's true
+  bounds change every frame; framing the camera or sizing the grid from those
+  makes both jitter as it moves.
+- **Normals are skinned too.** Neither `Skin` nor `BakeAnim` does this — a baked
+  mesh keeps its rest-pose normals. For a viewer that is visibly wrong, because
+  the shading would not follow the deformation. Blended by the same weights as
+  `sVector30` so the translation row is ignored, then renormalised.
+- **`Skin` is non-destructive** — out-parameter, reads `v.Pos` — so the rig
+  survives every frame. `BakeAnim` skins in place and then *releases the
+  skeleton*, making the obvious tool exactly the wrong one here.
+
+**The gate asserts that scrubbing changes what you see.** `wz4ed_pose` renders
+the same operator at two times and requires the screenshots to **differ**.
+Nothing weaker establishes a scrubber: the report line alone would pass if time
+were plumbed through and the vertices never re-skinned — it prints what the code
+*believes* — and one screenshot would pass if the mesh were stuck in its rest
+pose, since a posed mesh and a rest mesh look equally plausible. A golden was
+rejected for the reason `editor_shot.cmake` records: the image depends on the
+display's DPI. Comparing two images from the **same binary in the same run**
+sidesteps that entirely — whatever the DPI, both shots share it, so any
+difference is the pose. Verified negatively by pointing both times at the same
+value, which fails with the intended message.
+
+Next: **7.5**, skeleton visualisation.
 
 **`wz4ed` is the editor.** It has a window, a menu bar, a metadata-driven
 inspector, and the stacking canvas: blocks coloured by output type, selection,
@@ -688,7 +718,7 @@ about the build.
 | 4 — Texture library + tests | **Done**, phase gate passed. All 34 operators run |
 | 5 — Texture GUI | **Done**, phase gate passed. `wz4ed` edits textures |
 | 6 — Geometry | **Done**, phase gate passed. All 45 operators, 3D preview, OBJ both ways, Text3D |
-| 7 — Animated geometry | **7.1–7.3 done** — `AnimateBones` added, geometry moves over time. 7.4 scrubber, 7.5 skeleton view remain |
+| 7 — Animated geometry | **7.1–7.4 done** — `AnimateBones` added, geometry moves over time, rigged meshes scrub in the preview. 7.5 skeleton view remains |
 
 ---
 

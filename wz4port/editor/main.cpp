@@ -1038,6 +1038,15 @@ void sMain()
   if(sGetShellSwitch(L"bbox"))
     Ed->MeshView.ShowBBox = true;
 
+  // And the timeline, so the 7.4 gate can assert a POSE rather than merely that
+  // a scrubber exists. Given as a percentage because Altona's shell parser has
+  // an integer parameter getter and no float one — 0..100 maps to t = 0..1.
+  {
+    const sInt pct = sGetShellParameterInt(L"time",0,-1);
+    if(pct>=0)
+      Ed->MeshView.Time = sClamp(sF32(pct)/100.0f,0.0f,1.0f);
+  }
+
   sBool quit = 0;
   sBool failed = 0;
   sInt drawn = 0;

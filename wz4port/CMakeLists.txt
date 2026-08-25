@@ -741,6 +741,21 @@ if(EXISTS "${WZ4_IMGUI_DIR}/imgui.cpp" AND EXISTS "${WZ4_GLFW_DIR}/CMakeLists.tx
       set_tests_properties(wz4ed_mesh_wire PROPERTIES
         DEPENDS opsmeta_gate RUN_SERIAL TRUE)
 
+      # Stage 7.4. Renders the SAME rigged operator at two times and requires the
+      # screenshots to differ — the only assertion that actually establishes a
+      # scrubber. The report line alone would pass if time were plumbed through
+      # but the vertices never re-skinned, and a single shot would pass if the
+      # mesh were stuck in its rest pose.
+      add_test(NAME wz4ed_pose COMMAND "${CMAKE_COMMAND}"
+        "-DWZ4ED=$<TARGET_FILE:wz4ed>"
+        "-DDOC=${CMAKE_CURRENT_SOURCE_DIR}/tests/geo/ops_anim.wz4t"
+        "-DMETA=${WZ4_META_DIR}"
+        "-DSELECT=an_animated"
+        "-DOUTDIR=${CMAKE_BINARY_DIR}/editor-shot"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/editor_pose.cmake")
+      set_tests_properties(wz4ed_pose PROPERTIES
+        DEPENDS opsmeta_gate RUN_SERIAL TRUE)
+
       # One window at a time: GLFW and the platform frameworks are not built for
       # several of these racing each other, and a flaky GUI test is worse than
       # none.
