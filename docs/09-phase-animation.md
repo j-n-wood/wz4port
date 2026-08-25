@@ -223,7 +223,61 @@ are the sequencer.
 
 **Gate:** dragging the scrubber animates the mesh in the 3D preview.
 
-### 7.5 — Skeleton visualisation
+### 7.5 — Skeleton visualisation — **done**
+
+Joints draw as three-axis crosses over the mesh, in the conventional red/green/blue, with a line to
+the parent where one exists. A `bones` checkbox next to `wire`/`grid`/`bbox`, offered only on a rig,
+and a `-nobones` switch for the gate. 153/153 ctest.
+
+#### The rigs this build makes have no hierarchy at all
+
+Building the overlay measured something the phase had not: **`Deform` produces a flat list of
+joints, not a chain.** `Wz4AnimJoint::Init` sets `Parent = -1` (`wz4_anim.cpp:55`) and `Deform`
+never assigns it. The only code in the tree that writes `Parent` is the merge remap
+(`wz4_mesh.cpp:1030`) and `LoadWz3MinMesh` (`:7388`) — **an import path**, with no assets here.
+
+So hierarchy arrived exactly the way time-varying animation did: with an imported asset, from a
+modelling package. That is the same shape as the finding that motivated this whole phase, one level
+up, and it means the bone half of the overlay draws nothing on anything this build can currently
+produce.
+
+Two consequences, both deliberate:
+
+- **The crosses carry the whole picture**, so they are sized to be *read* (0.20 of the bounding
+  radius) rather than merely to be present. The first attempt used 0.06 and rendered three specks.
+  The cross also shows **orientation**, which a dot cannot — and orientation is the entire content
+  of an `AnimateBones` rotation, whose joints turn in place. A skeleton drawn as points would look
+  completely static while the mesh moved.
+- **No chain is inferred from the joints' positions.** `Deform`'s joints do lie along a line, so
+  connecting them would look right and be a lie: it would draw a hierarchy the data does not have.
+  A viewer that invents structure is worse than one that shows none. The parent link is still drawn
+  because it costs six lines and is correct the moment an importer lands.
+
+The status line now separates the two — `rig 3 joint(s) 0 bone(s) at t = …` — so "no bones drawn"
+reads as the data being flat rather than the overlay being broken.
+
+#### Drawn last, with the depth test off
+
+A rig is *inside* its own geometry, so a depth-tested skeleton is an invisible one on every closed
+mesh — which is most of them. The cost is that near and far joints do not occlude each other, and at
+this joint count that reads fine.
+
+The bones also get their **own** buffer rather than a third section in `LineVbo`. They are the only
+line geometry that moves: grid and box are built once per mesh and uploaded `GL_STATIC_DRAW`, while
+the skeleton is rebuilt at every pose. Appending would have meant re-uploading the static geometry
+sixty times a second, and would have broken `Draw`'s offset arithmetic, which finds the two existing
+sections by counting back 24 vertices from the end.
+
+#### One gate shape, used twice
+
+`editor_pose.cmake` became **`editor_differs.cmake`** when 7.5 needed the same assertion: render
+twice, require the images to differ. `wz4ed_pose` varies `-time`; `wz4ed_bones` varies `-nobones`.
+
+The switch is `-nobones`, not `-bones`, because the overlay is **on by default** — a `-bones` switch
+would have been a no-op and the gate would have compared a render against itself, passing by
+accident. Both gates were verified negatively by pointing the two runs at identical arguments.
+
+### 7.5 (original plan text) — Skeleton visualisation
 
 Draw joints and bones in the 3D preview — small markers with connecting lines, and optional
 bone-influence colouring on the mesh. Cheap, and it makes skeleton problems obvious rather

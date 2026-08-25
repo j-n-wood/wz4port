@@ -741,19 +741,40 @@ if(EXISTS "${WZ4_IMGUI_DIR}/imgui.cpp" AND EXISTS "${WZ4_GLFW_DIR}/CMakeLists.tx
       set_tests_properties(wz4ed_mesh_wire PROPERTIES
         DEPENDS opsmeta_gate RUN_SERIAL TRUE)
 
-      # Stage 7.4. Renders the SAME rigged operator at two times and requires the
-      # screenshots to differ — the only assertion that actually establishes a
-      # scrubber. The report line alone would pass if time were plumbed through
-      # but the vertices never re-skinned, and a single shot would pass if the
-      # mesh were stuck in its rest pose.
+      # Stages 7.4 and 7.5, both the same shape: render twice and require the
+      # images to DIFFER. See tests/editor_differs.cmake for why nothing weaker
+      # establishes either control.
       add_test(NAME wz4ed_pose COMMAND "${CMAKE_COMMAND}"
         "-DWZ4ED=$<TARGET_FILE:wz4ed>"
         "-DDOC=${CMAKE_CURRENT_SOURCE_DIR}/tests/geo/ops_anim.wz4t"
         "-DMETA=${WZ4_META_DIR}"
         "-DSELECT=an_animated"
         "-DOUTDIR=${CMAKE_BINARY_DIR}/editor-shot"
-        -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/editor_pose.cmake")
+        "-DNAME=pose"
+        "-DARGSA=-time;0"
+        "-DARGSB=-time;50"
+        "-DREQUIRE=rig [1-9][0-9]* joint\\(s\\) [0-9]+ bone\\(s\\) at t ="
+        "-DWHAT=The timeline reported a rig and a time but the geometry did not move — so either the pose is not re-skinned per frame, or the channels are constant, which is what every operator produced before AnimateBones existed."
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/editor_differs.cmake")
       set_tests_properties(wz4ed_pose PROPERTIES
+        DEPENDS opsmeta_gate RUN_SERIAL TRUE)
+
+      # The skeleton overlay is ON by default, so this turns it OFF for one of the
+      # two runs — a -bones switch would have been a no-op and the gate would have
+      # compared a render against itself, passing by accident.
+      add_test(NAME wz4ed_bones COMMAND "${CMAKE_COMMAND}"
+        "-DWZ4ED=$<TARGET_FILE:wz4ed>"
+        "-DDOC=${CMAKE_CURRENT_SOURCE_DIR}/tests/geo/ops_anim.wz4t"
+        "-DMETA=${WZ4_META_DIR}"
+        "-DSELECT=an_animated"
+        "-DOUTDIR=${CMAKE_BINARY_DIR}/editor-shot"
+        "-DNAME=bones"
+        "-DARGSA=-time;25"
+        "-DARGSB=-time;25;-nobones"
+        "-DREQUIRE=rig [1-9][0-9]* joint\\(s\\) [0-9]+ bone\\(s\\) at t ="
+        "-DWHAT=The mesh has a rig and the overlay is on by default, so hiding it must change the image. Nothing was drawn for the skeleton."
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/editor_differs.cmake")
+      set_tests_properties(wz4ed_bones PROPERTIES
         DEPENDS opsmeta_gate RUN_SERIAL TRUE)
 
       # One window at a time: GLFW and the platform frameworks are not built for

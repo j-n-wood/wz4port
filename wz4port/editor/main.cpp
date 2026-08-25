@@ -1038,6 +1038,13 @@ void sMain()
   if(sGetShellSwitch(L"bbox"))
     Ed->MeshView.ShowBBox = true;
 
+  // -nobones rather than -bones: the skeleton overlay is ON by default, so the
+  // 7.5 gate needs a way to turn it OFF, and it renders the two and requires them
+  // to differ. A -bones switch would have been a no-op and the gate would have
+  // compared a pose against itself — passing only by accident.
+  if(sGetShellSwitch(L"nobones"))
+    Ed->MeshView.ShowBones = false;
+
   // And the timeline, so the 7.4 gate can assert a POSE rather than merely that
   // a scrubber exists. Given as a percentage because Altona's shell parser has
   // an integer parameter getter and no float one — 0..100 maps to t = 0..1.

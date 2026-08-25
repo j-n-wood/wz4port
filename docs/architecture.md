@@ -1663,6 +1663,37 @@ files live upstream") is not the same as a constraint. This one was worth testin
 and testing it removed the only reason phase 7 looked like it needed upstream
 surgery.
 
+### A63 · A rig in this build has no hierarchy, for the same reason it had no motion — standing
+
+*Phase 7.5.* The skeleton overlay was planned as "a point per joint and a line to
+its parent". The lines never appeared, and the data is why:
+`Wz4AnimJoint::Init` sets `Parent = -1` (`wz4_anim.cpp:55`) and **`Deform` never
+assigns it**. The only code in the tree that writes `Parent` is the merge remap
+(`wz4_mesh.cpp:1030`) and `LoadWz3MinMesh` (`:7388`) — an **import** path, and no
+`.wz3`/`.xsi`/`.lwo` asset exists here.
+
+This is the phase's founding finding repeating one level up. Phase 7 exists
+because every channel a registered operator can build is a `Wz4ChannelConstant`,
+so **motion** only ever came from import. **Hierarchy** turns out to have come
+from exactly the same place. `Deform` is a deformation tool — a set of control
+joints laid along a segment, weighted into the mesh — and neither a chain nor an
+animation. The user identified this from their own use of it before the code
+confirmed it.
+
+The design consequence is the part worth keeping. `Deform`'s joints *do* lie
+along a line, so connecting them would have looked correct in every screenshot —
+and would have drawn a hierarchy the data does not contain. **A viewer that
+invents structure is worse than one that shows none**, because the invented
+version is indistinguishable from the real thing precisely when it is wrong. So
+the overlay draws what is there (joint axes, plus a parent line when a parent
+exists) and the status line separates `joint(s)` from `bone(s)`, making "no bones"
+legible as flat data rather than a broken overlay.
+
+The general point: when a feature's data turns out to be absent, the choice is
+between showing the absence and simulating the feature. Simulating it costs
+nothing today and destroys the viewer's credibility the first time someone
+imports a real rig and cannot tell the drawn hierarchy from the inferred one.
+
 ---
 
 ## Part 3 — where inference lost to measurement
@@ -1721,6 +1752,7 @@ adopted because of this list.
 | `Wz4ChannelLinear` is implemented and merely never constructed | Implemented *incompletely* — no `CopyTo()`, no `Serialize()`, so `Wz4Skeleton::CopyFrom` would `sFatal` (7.2) |
 | A new operator means patching an upstream `.ops` | `wz4_add_ops` copies to the build tree first, so a `.ops` in `wz4port/` works — zero upstream changes (A62) |
 | An unskinned vertex has `Index[0] < 0` | It has `Index[0] >= joint count`; `sClear` leaves it at 0, which is a valid joint (A61) |
+| A skeleton is a chain, so bones can be drawn to parents | `Init` sets `Parent = -1` and `Deform` never assigns it. Hierarchy, like motion, only ever came from import (A63) |
 
 ---
 

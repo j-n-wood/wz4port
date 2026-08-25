@@ -582,7 +582,48 @@ sidesteps that entirely — whatever the DPI, both shots share it, so any
 difference is the pose. Verified negatively by pointing both times at the same
 value, which fails with the intended message.
 
-Next: **7.5**, skeleton visualisation.
+**Stage 7.5 is done, and phase 7 with it.** Joints draw as three-axis crosses
+over the mesh, red/green/blue, with a line to the parent where one exists; a
+`bones` checkbox offered only on a rig, and a `-nobones` switch for the gate.
+153/153 ctest.
+
+**Building it measured something the phase had not: the rigs this build can make
+have no hierarchy at all.** `Wz4AnimJoint::Init` sets `Parent = -1`
+(`wz4_anim.cpp:55`) and `Deform` never assigns it. The only code in the tree that
+writes `Parent` is the merge remap (`wz4_mesh.cpp:1030`) and `LoadWz3MinMesh`
+(`:7388`) — **an import path**, with no assets here. So hierarchy arrived exactly
+the way time-varying animation did: with an asset from a modelling package. Same
+shape as the finding that motivated the whole phase, one level up.
+
+Two consequences, both deliberate:
+
+- **The crosses carry the whole picture**, so they are sized to be *read* — 0.20
+  of the bounding radius. The first attempt used 0.06 and rendered three specks.
+  A cross also shows **orientation**, which a dot cannot, and orientation is the
+  entire content of an `AnimateBones` rotation, whose joints turn in place: a
+  skeleton drawn as points would look static while the mesh moved.
+- **No chain is inferred from the joints' positions.** `Deform`'s joints do lie
+  along a line, so connecting them would look right and be a lie — it would draw
+  a hierarchy the data does not have. A viewer that invents structure is worse
+  than one that shows none. The parent link is still drawn: it costs six lines
+  and is correct the moment an importer lands.
+
+The status line separates the two — `rig 3 joint(s) 0 bone(s) at t = …` — so "no
+bones drawn" reads as flat data rather than a broken overlay.
+
+Drawn last with the depth test **off**, because a rig is inside its own geometry
+and a depth-tested skeleton is an invisible one on every closed mesh. Its own
+buffer, not a third section in `LineVbo`: bones are the only line geometry that
+moves, and appending would re-upload the static grid every frame and break
+`Draw`'s offset arithmetic, which finds the existing sections by counting back 24
+vertices from the end.
+
+**One gate shape, used twice.** `editor_pose.cmake` became
+`editor_differs.cmake` when 7.5 needed the same assertion. `wz4ed_pose` varies
+`-time`; `wz4ed_bones` varies `-nobones`. The switch is `-nobones` rather than
+`-bones` because the overlay is **on by default** — a `-bones` switch would have
+been a no-op and the gate would have compared a render against itself, passing by
+accident. Both verified negatively.
 
 **`wz4ed` is the editor.** It has a window, a menu bar, a metadata-driven
 inspector, and the stacking canvas: blocks coloured by output type, selection,
@@ -718,7 +759,7 @@ about the build.
 | 4 — Texture library + tests | **Done**, phase gate passed. All 34 operators run |
 | 5 — Texture GUI | **Done**, phase gate passed. `wz4ed` edits textures |
 | 6 — Geometry | **Done**, phase gate passed. All 45 operators, 3D preview, OBJ both ways, Text3D |
-| 7 — Animated geometry | **7.1–7.4 done** — `AnimateBones` added, geometry moves over time, rigged meshes scrub in the preview. 7.5 skeleton view remains |
+| 7 — Animated geometry | **done** — `AnimateBones` added, geometry moves over time, rigged meshes scrub in the preview, joints draw over the mesh |
 
 ---
 

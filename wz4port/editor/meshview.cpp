@@ -147,12 +147,14 @@ wMeshView::wMeshView()
   Wireframe = 0;
   ShowGrid = 1;
   ShowBBox = 0;
+  ShowBones = 1;    // costs nothing when there is no rig, and almost nothing has one
 
   Verts = Tris = Quads = 0;
   Lo.Init(0,0,0);
   Hi.Init(0,0,0);
   Empty = 1;
   Joints = 0;
+  Bones = 0;
 
   Time = 0;
   Playing = false;
@@ -169,6 +171,8 @@ wMeshView::wMeshView()
   Vao = Vbo = Ibo = 0;
   LineVao = LineVbo = 0;
   LineVerts = 0;
+  BoneVao = BoneVbo = 0;
+  BoneVerts = 0;
   Fbo = ColorTex = DepthBuf = 0;
   FboW = FboH = 0;
 }
@@ -185,6 +189,8 @@ void wMeshView::Release()
   if(Vao)      { glDeleteVertexArrays(1,&Vao); Vao = 0; }
   if(LineVbo)  { glDeleteBuffers(1,&LineVbo); LineVbo = 0; }
   if(LineVao)  { glDeleteVertexArrays(1,&LineVao); LineVao = 0; }
+  if(BoneVbo)  { glDeleteBuffers(1,&BoneVbo); BoneVbo = 0; }
+  if(BoneVao)  { glDeleteVertexArrays(1,&BoneVao); BoneVao = 0; }
   if(ColorTex) { glDeleteTextures(1,&ColorTex); ColorTex = 0; }
   if(DepthBuf) { glDeleteRenderbuffers(1,&DepthBuf); DepthBuf = 0; }
   if(Fbo)      { glDeleteFramebuffers(1,&Fbo); Fbo = 0; }
@@ -213,6 +219,7 @@ void wMeshView::Upload(Wz4Mesh *mesh)
   Hi.Init(0,0,0);
   Empty = 1;
   Joints = 0;
+  Bones = 0;
   Source = 0;
   Posed = 0;
 
@@ -222,6 +229,7 @@ void wMeshView::Upload(Wz4Mesh *mesh)
     // build (patch 12), and a DeleteFace with everything selected is a legal
     // result. The pane says "empty" rather than showing a stale mesh.
     LineVerts = 0;
+    BoneVerts = 0;
     return;
   }
 
@@ -286,6 +294,7 @@ void wMeshView::Upload(Wz4Mesh *mesh)
   if(idx.GetCount()==0)
   {
     LineVerts = 0;
+    BoneVerts = 0;
     return;
   }
 
@@ -293,6 +302,21 @@ void wMeshView::Upload(Wz4Mesh *mesh)
   Empty = 0;
   Source = mesh;
   Joints = mesh->Skeleton ? mesh->Skeleton->Joints.GetCount() : 0;
+
+  // Counted separately, because a rig here usually has NO hierarchy at all.
+  // Wz4AnimJoint::Init sets Parent = -1 and Deform never assigns it; the only
+  // code that ever does is the merge remap and LoadWz3MinMesh — an IMPORT path.
+  // So hierarchy, exactly like time-varying animation, only ever arrived with an
+  // imported asset, and this build has none. Reporting joints and bones apart
+  // keeps "0 bones drawn" legible as the data being flat rather than the overlay
+  // being broken.
+  Bones = 0;
+  for(sInt i=0;i<Joints;i++)
+  {
+    const sInt p = mesh->Skeleton->Joints[i].Parent;
+    if(p>=0 && p<Joints)
+      Bones++;
+  }
   Posed = 0;
 
   if(!Vao) glGenVertexArrays(1,&Vao);
@@ -396,7 +420,107 @@ void wMeshView::RefreshVertices()
     (void *)(3*sizeof(sF32)));
   glBindVertexArray(0);
 
+  BuildBones();     // the skeleton is part of the pose, not of the mesh upload
+
   Posed = 1;
+}
+
+/****************************************************************************/
+
+// The posed skeleton, stage 7.5. Built from BoneMat, which RefreshVertices has
+// just filled at PosedTime — Evaluate's first output is each joint's WORLD
+// matrix, so mata[i].l is where the joint is and its i/j/k rows are how it is
+// turned. (The second output is the skinning matrix, BasePose^-1 * world, which
+// is the wrong thing to draw: it is a delta from the rest pose, so at rest every
+// joint would sit on the origin.)
+//
+// Each joint gets a bone to its parent AND a three-axis cross:
+//
+//   the bone alone would leave a single-joint rig, or any leaf, invisible;
+//   the cross alone would not show the hierarchy.
+//
+// The cross also shows ORIENTATION, which a dot could not — and orientation is
+// the whole content of an AnimateBones rotation, whose joints turn in place. A
+// skeleton drawn as points would look completely static while the mesh moved.
+//
+// MEASURED: on every rig this build can produce, the bone half draws NOTHING.
+// Wz4AnimJoint::Init sets Parent = -1, Deform never assigns it, and the only
+// code in the tree that does is the merge remap and LoadWz3MinMesh — an import
+// path with no assets here. So a Deform rig is a flat list of joints that happen
+// to lie along a line, not a chain. The crosses carry the whole picture, which
+// is why they are sized to be read rather than to be noticed.
+//
+// The parent link is still drawn, because it costs six lines and is correct the
+// moment an importer lands. What is NOT done is inferring a chain from the
+// joints' positions: that would draw a hierarchy the data does not have, and a
+// viewer that invents structure is worse than one that shows none.
+
+void wMeshView::BuildBones()
+{
+  BoneVerts = 0;
+  if(Joints<=0 || BoneMat.GetCount()<Joints || !Source || !Source->Skeleton)
+    return;
+
+  // Sized to the mesh for the same reason the grid is: these meshes run from 0.5
+  // to 32 units across, so a fixed marker is either invisible or fills the pane.
+  const sF32 sx = Hi.x-Lo.x, sy = Hi.y-Lo.y, sz = Hi.z-Lo.z;
+  const sF32 radius = sMax(0.001f,0.5f*sSqrt(sx*sx + sy*sy + sz*sz));
+  const sF32 mark = radius*0.20f;
+
+  sArray<sF32> v;
+
+  for(sInt i=0;i<Joints;i++)
+  {
+    const sMatrix34 &m = BoneMat[i];
+    const sVector31 p = sVector31(m.l);
+
+    // Bone to the parent, dim at the parent end and bright at the child, so the
+    // direction of the chain is readable without arrowheads.
+    const sInt parent = Source->Skeleton->Joints[i].Parent;
+    if(parent>=0 && parent<Joints)
+    {
+      const sVector31 q = sVector31(BoneMat[parent].l);
+      v.AddTail(q.x); v.AddTail(q.y); v.AddTail(q.z);
+      v.AddTail(0.16f); v.AddTail(0.42f); v.AddTail(0.52f);
+      v.AddTail(p.x); v.AddTail(p.y); v.AddTail(p.z);
+      v.AddTail(0.35f); v.AddTail(0.92f); v.AddTail(1.00f);
+      BoneVerts += 2;
+    }
+
+    // The joint's own axes, in the conventional x=red, y=green, z=blue. Drawn
+    // from the joint outwards rather than centred, so two adjacent joints do not
+    // produce a symmetric blur.
+    const sVector30 axis[3] = { m.i,m.j,m.k };
+    static const sF32 Col[3][3] =
+    {
+      { 0.95f,0.32f,0.32f },{ 0.42f,0.90f,0.40f },{ 0.42f,0.58f,0.98f },
+    };
+    for(sInt a=0;a<3;a++)
+    {
+      const sVector31 e = p + axis[a]*mark;
+      v.AddTail(p.x); v.AddTail(p.y); v.AddTail(p.z);
+      v.AddTail(Col[a][0]); v.AddTail(Col[a][1]); v.AddTail(Col[a][2]);
+      v.AddTail(e.x); v.AddTail(e.y); v.AddTail(e.z);
+      v.AddTail(Col[a][0]); v.AddTail(Col[a][1]); v.AddTail(Col[a][2]);
+      BoneVerts += 2;
+    }
+  }
+
+  if(BoneVerts<=0)
+    return;
+
+  if(!BoneVao) glGenVertexArrays(1,&BoneVao);
+  if(!BoneVbo) glGenBuffers(1,&BoneVbo);
+
+  glBindVertexArray(BoneVao);
+  glBindBuffer(GL_ARRAY_BUFFER,BoneVbo);
+  glBufferData(GL_ARRAY_BUFFER,v.GetCount()*sizeof(sF32),&v[0],GL_DYNAMIC_DRAW);
+  glEnableVertexAttribArray(0);
+  glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,6*sizeof(sF32),(void *)0);
+  glEnableVertexAttribArray(1);
+  glVertexAttribPointer(1,3,GL_FLOAT,GL_FALSE,6*sizeof(sF32),
+    (void *)(3*sizeof(sF32)));
+  glBindVertexArray(0);
 }
 
 /****************************************************************************/
@@ -665,6 +789,23 @@ sU32 wMeshView::Draw(sInt w,sInt h)
   if(Wireframe)
     glPolygonMode(GL_FRONT_AND_BACK,GL_FILL);
 
+  // The skeleton LAST and with the depth test off, so it shows through the mesh
+  // it deforms. That is the whole point of the overlay: a rig is inside its own
+  // geometry, so a depth-tested skeleton is an invisible one on every closed
+  // mesh — which is most of them. The cost is that near and far bones do not
+  // occlude each other, and for a handful of joints that reads fine.
+  if(ShowBones && BoneVerts>0)
+  {
+    glDisable(GL_DEPTH_TEST);
+    glUseProgram(LineProgram);
+    glUniformMatrix4fv(glGetUniformLocation(LineProgram,"uViewProj"),1,
+      GL_FALSE,m);
+    glBindVertexArray(BoneVao);
+    glDrawArrays(GL_LINES,0,BoneVerts);
+    glBindVertexArray(0);
+    glEnable(GL_DEPTH_TEST);
+  }
+
   // Everything ImGui's backend assumes is restored. It sets most of its own
   // state per frame, but not the framebuffer binding or the depth test, and
   // leaving either would show up as the whole UI vanishing.
@@ -730,6 +871,13 @@ void wMeshView::DrawPane(wOp *op,sInt revision)
   ImGui::Checkbox("grid",&ShowGrid);
   ImGui::SameLine();
   ImGui::Checkbox("bbox",&ShowBBox);
+  if(Joints>0)
+  {
+    // Offered only on a rig, for the same reason as the scrubber: a toggle that
+    // can do nothing on all but a handful of operators is clutter, not a feature.
+    ImGui::SameLine();
+    ImGui::Checkbox("bones",&ShowBones);
+  }
 
   if(Empty)
   {
@@ -756,7 +904,7 @@ void wMeshView::DrawPane(wOp *op,sInt revision)
     ImGui::SetNextItemWidth(-140.0f);
     ImGui::SliderFloat("##time",&Time,0.0f,1.0f,"t = %.3f");
     ImGui::SameLine();
-    ImGui::Text("%d bone(s)",Joints);
+    ImGui::Text("%d joint(s)",Joints);
 
     if(Playing)
     {
@@ -841,8 +989,8 @@ void wMeshView::Describe(const sStringDesc &out) const
     // The rig and the time are in the line because they are what a screenshot
     // cannot show: a posed mesh and a rest mesh look equally plausible.
     buf.PrintF(L"meshview: %d vertices, %d triangles uploaded (%d quad(s) split), "
-               L"rig %d bone(s) at t = %f",
-      Verts,Tris,Quads,Joints,PosedTime);
+               L"rig %d joint(s) %d bone(s) at t = %f",
+      Verts,Tris,Quads,Joints,Bones,PosedTime);
   }
   else
   {
