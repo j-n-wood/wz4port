@@ -1,0 +1,147 @@
+wz4t 1
+
+// Phase 7 — the animated-geometry cases.
+//
+// The chain is the whole point, and every link is load-bearing:
+//
+//   Cube            an ordinary generated mesh, no rig
+//   Deform          builds a rig — joints, BasePose, Catmull-Rom weights — but
+//                   its "keep bones" flag is ESSENTIAL: without it Deform calls
+//                   BakeAnim(0) itself and BakeAnim releases the skeleton, so
+//                   the rig is destroyed the moment it is made
+//   AnimateBones    ours (wz4port/geo/animate_ops.ops). Replaces each joint's
+//                   Wz4ChannelConstant with a Wz4ChannelPerFrame. Without it
+//                   every channel in scope is constant and the pose cannot vary
+//   BakeAnim        skins at a given time and flattens the result
+//
+// Two bakes at different times, as separate stores: BakeAnim's Time is an
+// operator parameter, so several times are several operators and wz4gen needs
+// no new switch.
+
+page "anim"
+
+// --- the rigged, animated mesh --------------------------------------------
+
+stack at 0,0 {
+  op Wz4Mesh.Cube { name = an_in  Tesselate = 1,8,1  Scale = 1,1,1 }
+
+  op Wz4Mesh.Deform {
+    name = an_rig
+    Count = 3
+    Start = 0, -0.5, 0
+    End = 0, 0.5, 0
+    UpVector = 0, 0, 1
+    Flags = "-", "keep bones"
+    element { Pos = 0, 0, 0   Twist = 0  Scale = 1 }
+    element { Pos = 0.5, 0, 0 Twist = 0  Scale = 1 }
+    element { Pos = 1, 0, 0   Twist = 0  Scale = 1 }
+  }
+
+  // A quarter turn about z over the cycle, with a per-joint phase so the chain
+  // bends progressively rather than rotating as one rigid piece.
+  op Wz4Mesh.AnimateBones {
+    name = an_animated
+    Mode = rotate
+    Axis = 0, 0, 1
+    Amount = 0.25
+    Phase = 0.25
+    Keys = 16
+    FirstJoint = 0
+    JointCount = 0
+  }
+}
+
+// --- the same rig baked at two different times ----------------------------
+//
+// Separate stacks rather than one chain: BakeAnim consumes the rig, so a second
+// bake downstream of the first would have nothing left to skin.
+
+stack at 4,0 {
+  op Wz4Mesh.Cube { name = an_in0  Tesselate = 1,8,1  Scale = 1,1,1 }
+  op Wz4Mesh.Deform {
+    name = an_rig0
+    Count = 3
+    Start = 0, -0.5, 0
+    End = 0, 0.5, 0
+    UpVector = 0, 0, 1
+    Flags = "-", "keep bones"
+    element { Pos = 0, 0, 0   Twist = 0  Scale = 1 }
+    element { Pos = 0.5, 0, 0 Twist = 0  Scale = 1 }
+    element { Pos = 1, 0, 0   Twist = 0  Scale = 1 }
+  }
+  op Wz4Mesh.AnimateBones {
+    name = an_anim0
+    Mode = rotate
+    Axis = 0, 0, 1
+    Amount = 0.25
+    Phase = 0.25
+    Keys = 16
+  }
+  op Wz4Mesh.BakeAnim { name = an_baked_t0  Time = 0 }
+}
+
+stack at 8,0 {
+  op Wz4Mesh.Cube { name = an_in1  Tesselate = 1,8,1  Scale = 1,1,1 }
+  op Wz4Mesh.Deform {
+    name = an_rig1
+    Count = 3
+    Start = 0, -0.5, 0
+    End = 0, 0.5, 0
+    UpVector = 0, 0, 1
+    Flags = "-", "keep bones"
+    element { Pos = 0, 0, 0   Twist = 0  Scale = 1 }
+    element { Pos = 0.5, 0, 0 Twist = 0  Scale = 1 }
+    element { Pos = 1, 0, 0   Twist = 0  Scale = 1 }
+  }
+  op Wz4Mesh.AnimateBones {
+    name = an_anim1
+    Mode = rotate
+    Axis = 0, 0, 1
+    Amount = 0.25
+    Phase = 0.25
+    Keys = 16
+  }
+  op Wz4Mesh.BakeAnim { name = an_baked_t1  Time = 0.5 }
+}
+
+// --- the rest-pose identity ------------------------------------------------
+//
+// The strongest signal available, and it is exact rather than a comparison
+// against a locked number: a rig whose channels are left ALONE, baked at time 0,
+// must reproduce exactly what Deform's own internal bake produces. That pins the
+// whole BasePose x mata x weights chain in one assertion.
+//
+// So: no AnimateBones here, just keep-bones-then-bake, which mesh_cases asserts
+// equals the plain default Deform.
+
+stack at 12,0 {
+  op Wz4Mesh.Cube { name = an_in_rest  Tesselate = 1,8,1  Scale = 1,1,1 }
+  op Wz4Mesh.Deform {
+    name = an_rig_rest
+    Count = 3
+    Start = 0, -0.5, 0
+    End = 0, 0.5, 0
+    UpVector = 0, 0, 1
+    Flags = "-", "keep bones"
+    element { Pos = 0, 0, 0   Twist = 0  Scale = 1 }
+    element { Pos = 0.5, 0, 0 Twist = 0  Scale = 1 }
+    element { Pos = 1, 0, 0   Twist = 0  Scale = 1 }
+  }
+  op Wz4Mesh.BakeAnim { name = an_rest_baked  Time = 0 }
+}
+
+// And the reference it must equal: the same Deform with no flag, which bakes
+// internally at time 0.
+stack at 16,0 {
+  op Wz4Mesh.Cube { name = an_in_ref  Tesselate = 1,8,1  Scale = 1,1,1 }
+  op Wz4Mesh.Deform {
+    name = an_ref
+    Count = 3
+    Start = 0, -0.5, 0
+    End = 0, 0.5, 0
+    UpVector = 0, 0, 1
+    element { Pos = 0, 0, 0   Twist = 0  Scale = 1 }
+    element { Pos = 0.5, 0, 0 Twist = 0  Scale = 1 }
+    element { Pos = 1, 0, 0   Twist = 0  Scale = 1 }
+  }
+}

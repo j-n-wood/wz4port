@@ -63,6 +63,7 @@ void RegisterWZ4Classes()
     // mesh operators take a bitmap input.
     sREGOPS(wz4_anim,0);
     sREGOPS(wz4_mesh,0);
+    sREGOPS(animate,0);             // ours — phase 7's AnimateBones
   }
 }
 
@@ -925,6 +926,30 @@ void sMain()
   if(!metadir)
     metadir = WZ4ED_META_DIR;
 
+  // A run that only wants a screenshot is not an interactive run, and it must not
+  // behave like one. GLFW's macOS backend calls
+  //
+  //     [NSApp activateIgnoringOtherApps:YES]        (cocoa_window.m:1266)
+  //
+  // whenever a window is shown, which STEALS FOCUS from whatever the user is
+  // doing — and `ctest` runs three of these in a row, so a full suite interrupts
+  // typing three times and drops keystrokes into other applications.
+  //
+  // It is also the most likely explanation for wz4ed_shell's intermittent
+  // failures: both were the first GUI test after a clean build, which is exactly
+  // when activation contention is worst.
+  //
+  // So a non-interactive run creates the window HIDDEN and suppresses the menu
+  // bar. Nothing is shown, so nothing is activated.
+  const sBool headlessrun = (shot!=0) || (frames>0);
+
+  if(headlessrun)
+  {
+    // An INIT hint, not a window hint: the menu bar and dock icon are created
+    // inside glfwInit, so this has to precede it.
+    glfwInitHint(GLFW_COCOA_MENUBAR,GLFW_FALSE);
+  }
+
   glfwSetErrorCallback(GlfwError);
   if(!glfwInit())
   {
@@ -945,6 +970,15 @@ void sMain()
 #if defined(__APPLE__)
   glfwWindowHint(GLFW_COCOA_RETINA_FRAMEBUFFER,GLFW_TRUE);
 #endif
+
+  if(headlessrun)
+  {
+    // Never shown, so never activated. FOCUS_ON_SHOW is belt-and-braces for the
+    // case where something later decides to show it anyway.
+    glfwWindowHint(GLFW_VISIBLE,GLFW_FALSE);
+    glfwWindowHint(GLFW_FOCUS_ON_SHOW,GLFW_FALSE);
+    glfwWindowHint(GLFW_FOCUSED,GLFW_FALSE);
+  }
 
   GLFWwindow *window = glfwCreateWindow(1280,800,"wz4ed",0,0);
   if(!window)

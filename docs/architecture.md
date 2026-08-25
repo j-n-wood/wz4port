@@ -1610,6 +1610,59 @@ noticed, and what gets noticed is the platform-specific part**, because that is
 what looks like work. The portable part is invisible precisely because it is
 unremarkable. Worth measuring the *ratio* before planning any region of this size.
 
+### A61 · Test the condition the consumer tests — standing
+
+*Phase 7.2.* New rig invariants in `geo/mesh_check.cpp` immediately fired on every
+`Text3D` and `Path3D` mesh: *"196 skinned vertex(es) naming a joint outside
+0..-1"*. The meshes were correct; **the check was wrong.**
+
+It identified an unskinned vertex as one with a negative `Index[0]`. But
+`wMeshTess::AddVertex` builds vertices with `sClear`, so `Index[0]` is **0** — and
+0 is a perfectly good joint number. Upstream's own `Wz4MeshVertex::Skin`
+(`wz4_mesh.cpp:188`) tests
+
+```cpp
+if(Index[0]<0 || Index[0]>=max)     // max = the joint count
+```
+
+so on a mesh with no skeleton *every* vertex is unskinned by construction, and
+the negative index never has to occur.
+
+The invariant had been invented alongside the check rather than read off the code
+it protects, and the two then disagreed. **An invariant is a claim about what a
+consumer requires; derive it from the consumer.** The cheapest way to get it right
+was to copy `Skin`'s own predicate — which is what the fix does, guarded on
+`Joints > 0`.
+
+Worth noting what caught it: four *existing, unrelated* cases from stage 6.6.
+A new check that only ever ran against new data would have looked clean. This is
+an argument for adding invariants to a shared battery rather than to the test
+that motivated them.
+
+### A62 · New operators can live in `wz4port/`, and that was not obvious — standing
+
+*Phase 7.2.* All 33 `.ops` modules in the dump live in two upstream directories,
+so adding an operator looked like it had to mean patching an upstream `.ops` —
+against the project's own "new code goes in `wz4port/`" rule.
+
+It does not. `wz4_add_ops` **copies the file into the build tree and runs the
+generator there** (`CMakeLists.txt:224-226`), so the tool never sees the original
+path. `wz4port/geo/animate_ops.ops` is the first non-port operator in the project
+and it cost **zero upstream changes**.
+
+Two constraints, both discovered rather than assumed:
+
+- The file must be named `<t>_ops.ops`, because `sREGOPS(t,s)` expands to
+  `AddTypes_##t##_ops` (`doc_core.hpp:70`).
+- A module needs `wz4_add_meta` as well as `wz4_add_ops`, or the operator
+  registers but has **no parameters in the editor panel** — the panel is
+  generated from metadata, and the corpus glob only covers upstream directories.
+
+The general point: a convention observed across every existing example ("`.ops`
+files live upstream") is not the same as a constraint. This one was worth testing,
+and testing it removed the only reason phase 7 looked like it needed upstream
+surgery.
+
 ---
 
 ## Part 3 — where inference lost to measurement
@@ -1662,6 +1715,12 @@ adopted because of this list.
 | A mesh's GL buffers are copies, so the source object can be released | Frame 2 came back empty — the document's cache is not an independent reference (A58) |
 | `Text3D`/`Path3D` need reimplementing on FreeType plus a tessellator | Two of six parts are platform-specific; the parser, flattening, layout and all of `Finish2DExtrusionOp` are portable (A60) |
 | A47 is the editor's teardown problem | It is every Altona binary's, and the destructor end exits 0 while printing a fatal error (A59) |
+| Skeletal animation may be entangled with the sequencer | Zero script references; `Evaluate` takes time as a plain argument. The phase's "main risk" did not exist (7.0) |
+| A skinned mesh needs an imported asset | `Deform` builds a skeleton with weights procedurally, and has been in the suite since 6.3 unnoticed (7.0) |
+| Porting the animation module makes animation work | It makes *skinning* work. Every procedurally-creatable channel is CONSTANT; nothing in scope can move a joint (7.0) |
+| `Wz4ChannelLinear` is implemented and merely never constructed | Implemented *incompletely* — no `CopyTo()`, no `Serialize()`, so `Wz4Skeleton::CopyFrom` would `sFatal` (7.2) |
+| A new operator means patching an upstream `.ops` | `wz4_add_ops` copies to the build tree first, so a `.ops` in `wz4port/` works — zero upstream changes (A62) |
+| An unskinned vertex has `Index[0] < 0` | It has `Index[0] >= joint count`; `sClear` leaves it at 0, which is a valid joint (A61) |
 
 ---
 

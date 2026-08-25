@@ -16,6 +16,13 @@
 # REQUIRES A GRAPHICAL SESSION. It fails over ssh or in headless CI, where GLFW
 # cannot open a display. Configure with -DWZ4_GUI_TESTS=OFF there.
 #
+# IT DOES NOT STEAL FOCUS. A -shot run creates its window hidden and suppresses
+# the macOS menu bar, because GLFW calls [NSApp activateIgnoringOtherApps:YES]
+# whenever a window is shown (cocoa_window.m:1266) — so a full ctest run used to
+# interrupt whatever the user was typing, three times, and drop keystrokes into
+# other applications. glReadPixels on a hidden window's framebuffer works: the
+# screenshots are identical to the visible ones. See editor/main.cpp.
+#
 #   cmake -DWZ4ED=<exe> -DDOC=<file.wz4t> -DMETA=<dir> -DOUT=<file.png>
 #         [-DSELECT=<storename>] [-DEXPECT=mesh|bitmap] [-DARGS=<extra;switches>]
 #         -P editor_shot.cmake

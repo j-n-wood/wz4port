@@ -13,6 +13,7 @@ wMeshFacts::wMeshFacts()
 {
   Verts = Faces = Tris = Quads = OtherArity = Clusters = 0;
   Degenerate = BadVertexIndex = BadClusterIndex = NonFinite = UnusedVerts = 0;
+  Joints = SkinnedVerts = BadJointIndex = BadWeightSum = 0;
   Lo.Init(0,0,0);
   Hi.Init(0,0,0);
   Checksum = 0;
@@ -24,7 +25,8 @@ sInt wMeshFacts::Violations() const
   // vertices behind (Select writes a flag without touching topology; Add merges
   // without compacting), and upstream's own MergeVertices exists precisely
   // because that is a normal intermediate state. It is reported, not counted.
-  return OtherArity + Degenerate + BadVertexIndex + BadClusterIndex + NonFinite;
+  return OtherArity + Degenerate + BadVertexIndex + BadClusterIndex + NonFinite
+       + BadJointIndex + BadWeightSum;
 }
 
 /****************************************************************************/
@@ -38,6 +40,59 @@ wMeshFacts wMeshMeasure(Wz4Mesh *mesh)
   f.Verts = mesh->Vertices.GetCount();
   f.Faces = mesh->Faces.GetCount();
   f.Clusters = mesh->Clusters.GetCount();
+  f.Joints = mesh->Skeleton ? mesh->Skeleton->Joints.GetCount() : 0;
+
+  // The rig, if there is one. Two things are checked because Wz4MeshVertex::Skin
+  // (wz4_mesh.cpp:186) fails silently on both:
+  //
+  //   an out-of-range joint index makes Skin fall through to an UNSKINNED copy
+  //   for that vertex, which looks like a stiff limb rather than an error;
+  //
+  //   weights are accumulated as sVector30 and the matrix carries a translation
+  //   row, so weights that do not sum to 1 scale the POSITION toward or away
+  //   from the origin — a subtle drift, not an obvious break.
+  //
+  // Slots are filled contiguously from Index[0]: Skin breaks at the first
+  // invalid one, so a hole silently truncates the blend. That is why the loop
+  // below stops the same way rather than scanning all four.
+  //
+  // GUARDED ON Joints > 0, and the first version was not — which produced false
+  // violations on every Text3D and Path3D mesh. An unskinned vertex is NOT
+  // identified by a negative Index[0]: wMeshTess::AddVertex builds vertices with
+  // sClear, so Index[0] is 0, and 0 is a perfectly good joint number. Upstream's
+  // own Skin (wz4_mesh.cpp:188) tests `Index[0]<0 || Index[0]>=max` — with max
+  // being the joint count — so on a mesh with no skeleton every vertex is
+  // unskinned by construction.
+  //
+  // The lesson is the one that keeps recurring: test the same condition the
+  // CONSUMER tests. An invariant invented alongside the check rather than read
+  // off the code it protects will disagree with it.
+  for(sInt i=0;f.Joints>0 && i<f.Verts;i++)
+  {
+    const Wz4MeshVertex &v = mesh->Vertices[i];
+    if(v.Index[0]<0)
+      continue;                       // not skinned; the common case
+
+    f.SkinnedVerts++;
+
+    sF32 sum = 0;
+    for(sInt k=0;k<4;k++)
+    {
+      if(v.Index[k]<0)
+        break;
+      if(v.Index[k]>=f.Joints)
+      {
+        f.BadJointIndex++;
+        break;
+      }
+      sum += v.Weight[k];
+    }
+
+    // 1e-3 rather than an ULP: Deform's Catmull-Rom weights are computed from a
+    // cubic and sum to 1 only to float precision.
+    if(sFAbs(sum-1.0f)>1e-3f)
+      f.BadWeightSum++;
+  }
 
   // Which vertices any face refers to. Sized to the vertex count, so an
   // out-of-range index is detected before it is used as a subscript here.
@@ -156,6 +211,8 @@ sInt wMeshReport(const sChar *label,const wMeshFacts &f)
   sPrintF(L"), %d cl",f.Clusters);
   if(f.UnusedVerts)
     sPrintF(L", %d unused v",f.UnusedVerts);
+  if(f.Joints)
+    sPrintF(L", rig %d joint(s) %d skinned v",f.Joints,f.SkinnedVerts);
   sPrint(L"\n");
 
   if(f.Verts>0)
@@ -181,6 +238,12 @@ sInt wMeshReport(const sChar *label,const wMeshFacts &f)
     sPrintF(L"    VIOLATION  %d vertex position(s) with an inf or nan\n",f.NonFinite);
   if(f.Degenerate)
     sPrintF(L"    VIOLATION  %d degenerate face(s)\n",f.Degenerate);
+  if(f.BadJointIndex)
+    sPrintF(L"    VIOLATION  %d skinned vertex(es) naming a joint outside 0..%d\n",
+      f.BadJointIndex,f.Joints-1);
+  if(f.BadWeightSum)
+    sPrintF(L"    VIOLATION  %d skinned vertex(es) whose weights do not sum to 1\n",
+      f.BadWeightSum);
 
   return f.Violations();
 }

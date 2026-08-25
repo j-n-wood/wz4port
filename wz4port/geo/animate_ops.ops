@@ -1,0 +1,161 @@
+/****************************************************************************/
+/***                                                                      ***/
+/***   animate_ops — time-varying skeletal animation, wz4port phase 7      ***/
+/***                                                                      ***/
+/****************************************************************************/
+//
+// THE ONE PIECE WERKKZEUG4 NEVER HAD. Measurement before this phase found that
+// every channel any registered operator can build is a Wz4ChannelConstant:
+// BoneChain makes one, and Wz4Mesh::Deform makes one per joint. Time-varying
+// channels came only from importing an animated asset — XSI or a wz3 blob — and
+// the original tool needed nothing else, because its animation was authored in a
+// modelling package.
+//
+// This port has neither importer (XSI is stubbed, and there is not a single
+// .wz3/.xsi/.lwo asset in the tree), so without this operator a skeleton can be
+// built and skinned but can never move. See docs/09-phase-animation.md.
+//
+// IT IS A wz4port MODULE, NOT AN UPSTREAM ONE. wz4_add_ops copies a .ops into
+// the build tree and runs the generator there, so the source may live anywhere —
+// which is what lets new operators obey CLAUDE.md's "new code goes in wz4port/".
+// The file MUST be named <t>_ops.ops: sREGOPS(t,s) expands to AddTypes_##t##_ops
+// (wz4lib/doc_core.hpp:70).
+//
+// This module declares no `type` of its own — it borrows Wz4Mesh from the mesh
+// module. That is ordinary: thirteen upstream modules do the same, and the
+// mechanism is just the header block below pulling in
+// `extern class Wz4MeshType_ *Wz4MeshType;`. Minimal example: wz4_ssao_ops.ops.
+
+header
+{
+#include "wz4frlib/wz4_mesh_ops.hpp"      // Wz4MeshType, for the input/output type
+}
+
+code
+{
+#include "wz4frlib/wz4_mesh.hpp"
+#include "wz4frlib/wz4_anim.hpp"
+}
+
+/****************************************************************************/
+
+operator Wz4Mesh AnimateBones(Wz4Mesh)
+{
+  column = 1;
+  flags = passinput|passoutput;
+
+  parameter
+  {
+    flags Mode ("rotate|translate|scale");
+    float30 Axis (-16..16 step 0.01) = { 0,1,0 };
+    float Amount (-64..64 step 0.01) = 0.25;
+    float Phase (-16..16 step 0.01) = 0.25;
+    int Keys (2..256) = 16;
+    label "joints (count 0 = all)";
+    int FirstJoint (0..1024) = 0;
+    int JointCount (0..1024) = 0;
+  }
+
+  code
+  {
+    if(!out->Skeleton || out->Skeleton->Joints.GetCount()==0)
+    {
+      // Said, not swallowed. A mesh with no rig is a graph mistake — almost
+      // always a Deform without its "keep bones" flag, which bakes the rig away
+      // the moment it makes it (wz4_mesh_ops.ops, Deform: `if(!(Flags & 2))
+      // out->BakeAnim(0);`). Silently doing nothing here would look exactly like
+      // an animation that does not play.
+      cmd->SetError(L"AnimateBones: the input mesh has no skeleton. Use Deform "
+                    L"with its \"keep bones\" flag set.");
+      return 0;
+    }
+
+    const sInt jointcount = out->Skeleton->Joints.GetCount();
+    const sInt first = sClamp(para->FirstJoint,0,jointcount-1);
+    const sInt count = para->JointCount>0
+      ? sMin(para->JointCount,jointcount-first)
+      : jointcount-first;
+    const sInt keys = sClamp(para->Keys,2,256);
+
+    sVector30 axis = para->Axis;
+    if(axis.LengthSq()<1e-12f)
+      axis.Init(0,1,0);                 // a zero axis would give a nan quaternion
+    axis.Unit();
+
+    for(sInt n=0;n<count;n++)
+    {
+      Wz4AnimJoint *j = &out->Skeleton->Joints[first+n];
+
+      // The pose to animate AROUND, taken by evaluating whatever channel is
+      // already there rather than by assuming it is a Constant. Deform's are,
+      // but reading the channel through its own interface means this operator
+      // keeps working if that ever changes — and it costs one virtual call.
+      Wz4AnimKey base;
+      base.Init();
+      if(j->Channel)
+        j->Channel->Evaluate(0,base);
+
+      Wz4ChannelPerFrame *ch = new Wz4ChannelPerFrame;
+      ch->Start = base;
+      ch->Keys = keys;
+
+      // MaxTime 1, matching TotalTime below. Callers disagree about time units —
+      // the skeleton preview feeds 0..1 and BakeAnim feeds a raw parameter — and
+      // 1 is the value that makes both read the same.
+      ch->MaxTime = 1.0f;
+
+      // Only the animated component is allocated. Wz4ChannelPerFrame::Evaluate
+      // starts from Start and overwrites a component only where the array is
+      // non-null, so leaving the others at 0 is how "this component is not
+      // animated" is expressed. The channel owns these and deletes them.
+      const sF32 phase = para->Phase * sF32(n);
+
+      switch(para->Mode)
+      {
+      default:
+      case 0:   // rotate
+        ch->Rot = new sQuaternion[keys];
+        for(sInt k=0;k<keys;k++)
+        {
+          const sF32 f = sF32(k)/sF32(keys-1);
+          sQuaternion a;
+          // Amount is in TURNS, as Wz4ChannelLinear::RotSpeed is — sPI2F is the
+          // conversion that file uses (wz4_anim.cpp:155).
+          a.Init(axis,(f+phase)*para->Amount*sPI2F);
+          ch->Rot[k] = base.Rot * a;
+        }
+        break;
+
+      case 1:   // translate
+        ch->Trans = new sVector31[keys];
+        for(sInt k=0;k<keys;k++)
+        {
+          const sF32 f = sF32(k)/sF32(keys-1);
+          ch->Trans[k] = base.Trans + axis*(sSin((f+phase)*sPI2F)*para->Amount);
+        }
+        break;
+
+      case 2:   // scale
+        ch->Scale = new sVector31[keys];
+        for(sInt k=0;k<keys;k++)
+        {
+          const sF32 f = sF32(k)/sF32(keys-1);
+          const sF32 s = 1.0f + sSin((f+phase)*sPI2F)*para->Amount;
+          ch->Scale[k].Init(base.Scale.x*s,base.Scale.y*s,base.Scale.z*s);
+        }
+        break;
+      }
+
+      // Hand-off. The skeleton owns exactly one reference per joint channel and
+      // releases it in its destructor (wz4_anim.cpp:396), so the old one must be
+      // released here and the new one must NOT be — it arrives with RefCount 1.
+      if(j->Channel)
+        j->Channel->Release();
+      j->Channel = ch;
+    }
+
+    out->Skeleton->TotalTime = 1.0f;
+  }
+}
+
+/****************************************************************************/

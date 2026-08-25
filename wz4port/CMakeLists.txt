@@ -280,6 +280,12 @@ endfunction()
 wz4_add_meta(META_BASIC  wz4lib   "${ALTONA_MAIN}/wz4lib/basic_ops.ops")
 wz4_add_meta(META_BITMAP wz4frlib "${WZ4_DIR}/wz4frlib/wz3_bitmap_ops.ops")
 
+# Ours. Without this the editor's panel has no parameters for AnimateBones and
+# the .wz4t reader cannot resolve them either — metadata is what both are built
+# on. wMetaLibrary::LoadDirectory recurses one level, so meta/geo/ is found with
+# no list to maintain.
+wz4_add_meta(META_ANIMATE geo "${CMAKE_CURRENT_SOURCE_DIR}/geo/animate_ops.ops")
+
 # The whole corpus, not just the two gate modules.
 #
 # This is coverage, not a deliverable: most of these modules are out of scope
@@ -311,7 +317,8 @@ endforeach()
 list(LENGTH WZ4_ALL_OPS _opscount)
 message(STATUS "opsmeta corpus: ${_opscount} .ops modules")
 
-add_custom_target(opsmeta_gate ALL DEPENDS ${META_BASIC} ${META_BITMAP} ${META_ALL})
+add_custom_target(opsmeta_gate ALL
+  DEPENDS ${META_BASIC} ${META_BITMAP} ${META_ANIMATE} ${META_ALL})
 
 #############################################################################
 ##  headless_ops_gate — phase 2 stage 2.2                                  ##
@@ -321,6 +328,14 @@ wz4_add_ops(GENHL_BASIC  wz4lib   "${ALTONA_MAIN}/wz4lib/basic_ops.ops"      HEA
 wz4_add_ops(GENHL_BITMAP wz4frlib "${WZ4_DIR}/wz4frlib/wz3_bitmap_ops.ops"   HEADLESS)
 wz4_add_ops(GENHL_ANIM   wz4frlib "${WZ4_DIR}/wz4frlib/wz4_anim_ops.ops"     HEADLESS)
 wz4_add_ops(GENHL_MESH   wz4frlib "${WZ4_DIR}/wz4frlib/wz4_mesh_ops.ops"     HEADLESS)
+
+# OURS, and the first .ops in this project that is not upstream. It works because
+# wz4_add_ops copies the file into the build tree and runs the generator there,
+# so the source may live anywhere — which is what lets a NEW operator obey
+# CLAUDE.md's "new code goes in wz4port/" instead of patching an upstream .ops.
+#
+# The stem must be <t>_ops: sREGOPS(t,s) expands to AddTypes_##t##_ops.
+wz4_add_ops(GENHL_ANIMATE geo "${CMAKE_CURRENT_SOURCE_DIR}/geo/animate_ops.ops" HEADLESS)
 
 # Compiles both headless operator modules with the GUI poisoned. This is the
 # stage 2.2 gate, and it is the only thing that proves -headless produces code
@@ -533,6 +548,7 @@ add_library(wz4geo STATIC
   "${CMAKE_CURRENT_SOURCE_DIR}/geo/mesh_tess.cpp"
   "${GENHL_ANIM}"
   "${GENHL_MESH}"
+  "${GENHL_ANIMATE}"                # ours — phase 7's AnimateBones
 )
 # wz4_anim.cpp includes "wz4_anim_ops.hpp" unqualified, so the generated
 # wz4frlib subdirectory goes on the path as well — same as genvector.hpp in

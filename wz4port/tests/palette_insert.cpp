@@ -48,6 +48,7 @@ void RegisterWZ4Classes()
     sREGOPS(wz3_bitmap,0);
     sREGOPS(wz4_anim,0);
     sREGOPS(wz4_mesh,0);
+    sREGOPS(animate,0);
   }
 }
 
@@ -161,7 +162,8 @@ void sMain()
   sPrintF(L"  %d classes output GenBitmap, %d output Wz4Mesh\n",
     genbitmap,wz4mesh);
   Check(genbitmap==34,L"all 34 GenBitmap operators are registered");
-  Check(wz4mesh==45,L"all 45 Wz4Mesh operators are registered");
+  // 46 since phase 7 — 45 upstream plus our own AnimateBones.
+  Check(wz4mesh==46,L"all 45 upstream Wz4Mesh operators, plus AnimateBones");
 
   // --- repeated insertion builds a connected stack -------------------------
 

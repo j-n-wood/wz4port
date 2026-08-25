@@ -59,6 +59,10 @@ void RegisterWZ4Classes()
     sREGOPS(wz3_bitmap,0);
     sREGOPS(wz4_anim,0);
     sREGOPS(wz4_mesh,0);
+    // Ours, and last: AnimateBones outputs Wz4Mesh, so the mesh module must have
+    // registered that type first. Pass 0 runs every module's types before pass 1
+    // runs any operators, which is what makes borrowing a type legal at all.
+    sREGOPS(animate,0);
   }
 }
 

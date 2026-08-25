@@ -48,6 +48,7 @@ void RegisterWZ4Classes()
     sREGOPS(wz3_bitmap,0);
     sREGOPS(wz4_anim,0);
     sREGOPS(wz4_mesh,0);
+    sREGOPS(animate,0);
   }
 }
 

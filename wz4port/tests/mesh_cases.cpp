@@ -50,6 +50,7 @@ void RegisterWZ4Classes()
     sREGOPS(wz3_bitmap,0);
     sREGOPS(wz4_anim,0);
     sREGOPS(wz4_mesh,0);
+    sREGOPS(animate,0);
   }
 }
 
@@ -431,12 +432,58 @@ static const wExpect AttrCases[] =
     L"+-0.5 — 12 faces would mean the two had been added rather than welded" },
 };
 
+/****************************************************************************/
+
+// Phase 7. The chain is Cube -> Deform(keep bones) -> AnimateBones -> BakeAnim,
+// and the interesting assertions here are the THREE PAIRS that must agree or
+// disagree. Counts and bounds alone would not catch any of them.
+
+static const wExpect AnimCases[] =
+{
+  { L"an_rig", 34,0,34, CL_CLOSED, -0.5f,-0.5f,-0.5f, 0.5f,0.5f,0.5f, 0,0,1,
+    L"Deform with \"keep bones\": the rig survives and the vertices stay in the "
+    L"REST pose, because the bend now lives in the joint channels rather than in "
+    L"the geometry. Without that flag Deform calls BakeAnim(0) itself and "
+    L"BakeAnim RELEASES the skeleton, so the rig is destroyed the moment it is "
+    L"built — which is why nothing in this port could animate before phase 7" },
+
+  { L"an_animated", 34,0,34, CL_CLOSED, -0.5f,-0.5f,-0.5f, 0.5f,0.5f,0.5f, 0,0,1,
+    L"after AnimateBones. PAIR 1: its checksum must EQUAL an_rig's — the operator "
+    L"replaces channels and must not touch a single vertex. A checksum that moved "
+    L"here would mean it had baked something by accident" },
+
+  { L"an_baked_t0", 34,0,34, CL_CLOSED, NOB,NOB,-0.5f, NOB,NOB,0.5f, 0,0,1,
+    L"baked at t = 0. The z extent IS asserted and the others are not, and that "
+    L"is the derivation: the animation rotates about the z axis, so x and y move "
+    L"and z cannot. A rotation leaking into z would be a quaternion or "
+    L"matrix-convention error, which is exactly the class of bug that otherwise "
+    L"produces plausible-looking output" },
+
+  { L"an_baked_t1", 34,0,34, CL_CLOSED, NOB,NOB,-0.5f, NOB,NOB,0.5f, 0,0,1,
+    L"baked at t = 0.5. PAIR 2: its checksum must DIFFER from an_baked_t0's. "
+    L"That single inequality is the phase-7 gate — two times, two geometries — "
+    L"and it was unreachable before this operator existed, because every channel "
+    L"any registered operator could build was a Wz4ChannelConstant" },
+
+  { L"an_rest_baked", 34,0,34, CL_CLOSED, 0.0f,-0.5f,-0.5f, 1.0f,0.5f,0.5f, 0,0,1,
+    L"a kept rig with its channels left ALONE, baked at 0. PAIR 3 with an_ref "
+    L"below, and the strongest assertion in the file" },
+
+  { L"an_ref", 34,0,34, CL_CLOSED, 0.0f,-0.5f,-0.5f, 1.0f,0.5f,0.5f, 0,0,1,
+    L"the same Deform with no flag, which bakes internally at 0. Its checksum "
+    L"must equal an_rest_baked's EXACTLY: skinning a preserved rig has to "
+    L"reproduce, bit for bit, the bake Deform does for itself. That is the "
+    L"rest-pose identity, and it pins the whole BasePose x mata x weights chain "
+    L"in one comparison — no locked constant required for it to mean something" },
+};
+
 static const wCaseFile CaseFiles[] =
 {
   { L"ops_gen.wz4t",       GenCases,       sCOUNTOF(GenCases) },
   { L"ops_transform.wz4t", TransformCases, sCOUNTOF(TransformCases) },
   { L"ops_topo.wz4t",      TopoCases,      sCOUNTOF(TopoCases) },
   { L"ops_attr.wz4t",      AttrCases,      sCOUNTOF(AttrCases) },
+  { L"ops_anim.wz4t",      AnimCases,      sCOUNTOF(AnimCases) },
 };
 
 /****************************************************************************/
@@ -569,6 +616,27 @@ static const wLock Locks[] =
   { L"a_export",              0x9968b939a75dd34dULL },
   { L"a_displace",            0x020b2c4e121a02f8ULL },
   { L"a_heal",                0x9968b939a75dd34dULL },
+
+  // Phase 7. Three PAIRS, and the pairs carry more than the values do:
+  //
+  //   an_rig == an_animated          AnimateBones replaces channels and moves
+  //                                  no vertex
+  //   an_baked_t0 != an_baked_t1     THE PHASE GATE — two times, two geometries,
+  //                                  unreachable before this operator existed
+  //   an_rest_baked == an_ref        the rest-pose identity: skinning a preserved
+  //                                  rig reproduces Deform's own internal bake
+  //                                  bit for bit
+  //
+  // And a fourth agreement that fell out for free: 0x71f2ce517a5cde7d is also
+  // t_deform's, from ops_transform.wz4t — the same bar deformed along the same
+  // straight line, reached through a different case file with a different key
+  // count. Corroboration nobody arranged.
+  { L"an_rig",                0xd503c483805cde7dULL },
+  { L"an_animated",           0xd503c483805cde7dULL },
+  { L"an_baked_t0",           0x209ea678bf99b7e7ULL },
+  { L"an_baked_t1",           0xce974691c1d02a52ULL },
+  { L"an_rest_baked",         0x71f2ce517a5cde7dULL },
+  { L"an_ref",                0x71f2ce517a5cde7dULL },
 };
 
 /****************************************************************************/

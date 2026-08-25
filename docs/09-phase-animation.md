@@ -53,13 +53,87 @@ scrubber.
 
 ## Stages
 
-### 7.1 — Build the animation module
+### 7.1 — Build the animation module — **already done, in stage 6.1**
 
-Add `wz4_anim.cpp` and generated `wz4_anim_ops` to `libwz4geo`. Register the operators.
+`wz4_anim.cpp` and the generated `wz4_anim_ops` went into `wz4geo` when the mesh library did, and
+`BoneChain` and `ImportSkeleton` have been registered since. The module needed nothing: measured
+zero graphics, GUI, Win32, SIMD **and script** dependencies.
 
-**Gate:** `BoneChain` constructs a skeleton headlessly and its joint hierarchy is printable.
+**Gate — met** as a side effect of 6.1.
 
-### 7.2 — Skeleton evaluation and skinning
+### 7.2 / 7.3 — `AnimateBones`, and animation that moves — **done**
+
+**Zero upstream changes.** The first operator in this project that is not a port lives entirely in
+`wz4port/geo/animate_ops.ops`, because `wz4_add_ops` copies a `.ops` into the build tree and runs
+the generator there — the source may live anywhere. 151/151 ctest.
+
+#### "keep bones" verified first, and it paid off twice
+
+The plan's top risk was that `Deform`'s `keep bones` flag had never been executed. Verified before
+writing anything, and it behaves exactly as the code predicted:
+
+| | bounds | checksum |
+|---|---|---|
+| `Deform` default — bakes, destroys the rig | x 0..1, bent | `512429fc92000000` |
+| `Deform` + keep bones — rig preserved | x −0.5..0.5, **rest pose** | `b8b8f35dea000000` |
+| that rig, `BakeAnim(0)` | x 0..1 | **`512429fc92000000`** |
+
+Baking a preserved rig reproduces Deform's own internal bake **bit for bit**. That retired the risk
+and handed the phase a correctness oracle for free — it is now the `an_rest_baked == an_ref`
+assertion, and it pins the whole `BasePose` × `mata` × weights chain without a locked constant
+meaning anything.
+
+#### The operator
+
+`Wz4Mesh AnimateBones(Wz4Mesh)` replaces each joint's `Wz4ChannelConstant` with a
+`Wz4ChannelPerFrame` sampling a rotation, translation or scale, with a per-joint phase so a chain
+bends progressively. Modules that declare no `type` of their own are ordinary — thirteen upstream
+ones do — so it borrows `Wz4Mesh` through its `header` block.
+
+Three decisions worth keeping:
+
+- **`Wz4ChannelPerFrame`, not `Wz4ChannelLinear`.** Linear overrides neither `CopyTo()` nor
+  `Serialize()`, and `Wz4Skeleton::CopyFrom` calls `CopyTo()` on every channel — so an ordinary
+  edit downstream would hit `sFatal(L"cant copy this kind of channel")`. PerFrame has both, plus a
+  construction template at `wz4_mesh.cpp:7393`. This is the correction to "Linear is implemented
+  and merely never constructed": it is implemented *incompletely*.
+- **The base pose is read via `Channel->Evaluate(0, key)`**, not by assuming the existing channel is
+  a Constant. It costs one virtual call and keeps working if that ever changes.
+- **A mesh with no rig is an error, said out loud** via `cmd->SetError`. It is almost always a
+  `Deform` without `keep bones`, and silently doing nothing looks exactly like an animation that
+  will not play.
+
+#### The three pairs
+
+The cases assert relationships, not just numbers — counts and bounds would catch none of them:
+
+| | |
+|---|---|
+| `an_rig` **==** `an_animated` | the operator replaces channels and moves no vertex |
+| `an_baked_t0` **≠** `an_baked_t1` | **the phase gate** — two times, two geometries |
+| `an_rest_baked` **==** `an_ref` | the rest-pose identity, exact |
+
+A fourth agreement fell out unarranged: `an_ref`'s checksum equals `t_deform`'s from
+`ops_transform.wz4t` — the same bar along the same line, reached through a different case file with
+a different key count.
+
+Only the z extent is asserted on the baked cases, and that is the derivation: the animation rotates
+about z, so x and y must move and **z cannot**. A rotation leaking into z is the quaternion or
+matrix-convention error that otherwise produces plausible-looking output.
+
+#### A false invariant, caught by existing cases
+
+The new rig checks in `geo/mesh_check.cpp` initially fired on every `Text3D` and `Path3D` mesh:
+*"196 skinned vertex(es) naming a joint outside 0..-1"*. The meshes were fine — the check was wrong.
+An unskinned vertex is **not** identified by a negative `Index[0]`: `wMeshTess::AddVertex` builds
+vertices with `sClear`, so `Index[0]` is 0, and 0 is a valid joint number. Upstream's own `Skin`
+tests `Index[0] < 0 || Index[0] >= max` against the *joint count*, so on a mesh with no skeleton
+every vertex is unskinned by construction.
+
+The recurring lesson, in a new place: **test the same condition the consumer tests.** An invariant
+invented alongside its check, rather than read off the code it protects, will disagree with it.
+
+### 7.2 (original plan text) — Skeleton evaluation and skinning
 
 Evaluate a `Wz4Skeleton` at a given time to joint matrices, and apply four-bone skinning to a
 `Wz4Mesh`. Both already exist in the source; the work is exposing them headlessly and
@@ -70,6 +144,15 @@ and therefore the first thing to get working.
 
 **Gate:** a `BoneChain` skeleton driving a skinned mesh produces different vertex positions at
 different times, verified by exporting OBJ at two times and diffing.
+
+> **This gate is not reachable as written** — see "What measurement found" below. Every channel a
+> registered operator can construct is constant over time, so two times give one answer. Measured:
+> `Cube → Deform → BakeAnim` at times 0 and 1 both give checksum `512429fc92000000`. The gate needs
+> a decision on option A/B/C before it can be restated.
+>
+> The half that *is* reachable and worth doing first: the **rest-pose identity check**. Skinning a
+> mesh at its bind pose must reproduce the unskinned mesh exactly, which is an exact assertion and
+> catches most matrix-convention errors immediately.
 
 ### 7.3 — Test cases
 
@@ -113,19 +196,89 @@ it animate with the skeleton overlaid, export a frame to OBJ.
 - `wz4port/tests/anim/`
 - Timeline scrubber and skeleton visualisation in the editor
 
-## Open questions to resolve in this phase
+## Open questions — **answered by measurement, before any code**
 
-1. How does `Wz4Channel` obtain its time value once the script/sequencer layer is absent? This
-   determines how the scrubber connects, and should be answered before stage 7.2.
-2. Is `ImportSkeleton` usable without XSI assets, or is `BoneChain` the only practical source
-   of skeletons in our scope?
-3. Does anything in the skeletal path reach into `script.cpp`? Phase 2 should already have
-   settled whether `script.cpp` is linked at all; confirm here.
+Taken in the order the plan asks them. Two dissolve; the third turns out to be the wrong
+question, and answering it properly reshapes the phase.
 
-## Risks
+### 1. How does a channel get its time once the sequencer is absent? — **it never needed one**
+
+`Wz4Skeleton::Evaluate(sF32 time, sMatrix34 *mata, sMatrix34 *basemat)` takes time as a **plain
+argument**. So does every `Wz4Channel::Evaluate`. The caller supplies it; in the original that
+caller was the renderer, and for us it is `BakeAnim`'s `Time` parameter or a scrubber.
+
+There is no coupling to unwind. The risk table below called this "the main risk" and it does not
+exist.
+
+### 2. Does the skeletal path reach `script.cpp`? — **no, zero references**
+
+`wz4_anim.cpp`, `wz4_anim.hpp` and `wz4_anim_ops.ops` contain **no** occurrence of
+`ScriptContext`, `script.hpp` or `sScript`. Counted, not skimmed.
+
+### 3. Is `ImportSkeleton` usable without assets? — the wrong question
+
+The real one is **"what can put a moving skeleton on a mesh?"**, and the answer changes the phase.
+
+---
+
+## What measurement found: skinning works, animation has no source
+
+**Stage 7.1 is already done.** `wz4_anim.cpp` and the generated `wz4_anim_ops` went into `wz4geo`
+in stage 6.1, and `BoneChain` and `ImportSkeleton` have been registered and sweeping clean since.
+
+**A skinned mesh *is* constructible procedurally**, which the plan doubted. `Wz4Mesh::Deform`
+(`wz4_mesh.cpp:1883`) creates a `Wz4Skeleton` on **both** of its branches, with joints and
+per-vertex `Index`/`Weight` — so `Cube → Deform` is a skinned mesh needing no imported asset. The
+`Deform` operator has been in the suite since 6.3 without anyone noticing it produces one.
+
+**But nothing procedural can make a joint move.** Every channel a registered operator can build is
+a `Wz4ChannelConstant`:
+
+| Channel | Constructed by | Reachable here? |
+|---|---|---|
+| `Wz4ChannelConstant` | `BoneChain`, `Deform` | **yes** — and constant over time by definition |
+| `Wz4ChannelPerFrame` | `LoadWz3MinMesh` (`wz4_mesh.cpp:7393`), XSI import, deserialisation | no — see below |
+| `Wz4ChannelSpline` | deserialisation, `chaosmesh_ops.ops` | no |
+| `Wz4ChannelLinear` | **nothing, anywhere in the dump** | dead code |
+| `Wz4ChannelCat` | **nothing, anywhere in the dump** | dead code |
+
+The three real sources of time-varying channels are all imports or deserialisation:
+
+- **XSI import** — stubbed (patch 11); it constructs materials and textures across 2,142 lines.
+- **`LoadWz3MinMesh`**, reachable from the `Import` operator — but **there are no `.wz3`, `.xsi` or
+  `.lwo` assets anywhere in the tree**. Searched: zero.
+- **Deserialisation** — real and working, but it needs a saved skeleton to load, which requires
+  one of the other two to have made it first.
+
+Measured end to end: `Cube → Deform → BakeAnim` at `Time = 0` and `Time = 1` produce **the same
+checksum**, `512429fc92000000`, identical to `Deform` alone. Skinning is applied and the bake is an
+identity, because the pose does not vary.
+
+### What this means for the phase
+
+**The 7.2 gate as written — "different vertex positions at different times" — is not reachable with
+the operators that exist.** That is not a porting problem to solve; it is an absence of content.
+Three ways forward, and this is a scope decision rather than a technical one:
+
+| Option | | |
+|---|---|---|
+| **A** | Scope the phase to what the port can honestly do: skeletons, skinning, `BakeAnim`, the rest-pose identity check, skeleton visualisation and a scrubber that drives a *constant* pose. Honest, small, and leaves the phase gate unmet as originally written. | port only |
+| **B** | Write a small **animation channel operator** — a `Wz4Skeleton` filter that installs a time-varying channel (linear or spline) on selected joints, plus an operator to bind a skeleton to a mesh. This is **new functionality**, not a port, but it is small and it makes every other piece testable. | new work |
+| **C** | Unstub XSI import. Large — it needs the materials and texture stack, which CLAUDE.md places out of scope — and still needs an asset nobody has. | not viable |
+
+**Recommendation: B**, and it is worth being clear that it is a change of kind. Everything so far
+has been "make the existing thing run"; this would be "add the operator Werkkzeug4 never had,
+because its animation came from a modelling package". The alternative is a phase that can prove
+skinning is wired correctly but can never show anything move.
+
+`Wz4ChannelLinear` already exists, fully implemented, and **has never been constructed by any code
+in the dump** — so option B is largely a matter of exposing code that is already there.
+
+## Risks — revised
 
 | Risk | Assessment |
 |---|---|
-| Skeletal animation is more entangled with the script/sequencer layer than it appears | **The main risk.** Open question 1 should be answered early — before committing to the phase — since it determines whether this is a small phase or a large one |
-| No usable skinned test assets | Moderate. `BoneChain` generates skeletons procedurally, so a synthetic case is constructible without imported assets |
-| Matrix convention errors producing plausible but wrong deformation | Low, given the rest-pose identity check |
+| ~~Skeletal animation is entangled with the script/sequencer layer~~ | **Dissolved.** Zero script references; time is a function argument |
+| **No source of time-varying animation in scope** | **The real risk, and it is certain rather than probable.** No assets, XSI stubbed, and every procedural channel is constant. Decides whether the phase is a port or a small feature |
+| No usable skinned test assets | **Dissolved.** `Deform` builds a skeleton with weights procedurally |
+| Matrix convention errors producing plausible but wrong deformation | Low, and the rest-pose identity check is exact. Still worth having first |

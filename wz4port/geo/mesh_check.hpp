@@ -47,6 +47,16 @@ struct wMeshFacts
   sInt NonFinite;           // vertex position with an inf or a nan in it
   sInt UnusedVerts;         // referenced by no face; not an error, but telling
 
+  // --- the rig, added in phase 7 -------------------------------------------
+  //
+  // A mesh usually has none: every generator produces an unrigged mesh, and
+  // Deform destroys the rig it builds unless its "keep bones" flag is set. So
+  // Joints == 0 is the normal case and not a defect.
+  sInt Joints;              // 0 if there is no skeleton at all
+  sInt SkinnedVerts;        // vertices with a valid Index[0]
+  sInt BadJointIndex;       // a skinned vertex naming a joint that does not exist
+  sInt BadWeightSum;        // skinned weights not summing to 1
+
   sVector31 Lo,Hi;
   sU64 Checksum;            // over positions AND face indices — see the .cpp
 

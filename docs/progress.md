@@ -421,9 +421,32 @@ lifting the pen.
   merges them — producing degenerate faces that do not exist at any real extrude
   value. Time went into chasing an artefact of the measurement rather than a bug.
 
-One flaky observation worth recording: `wz4ed_shell` failed once in a full run and
-passed on every re-run. Three GL windows opening in quick succession is the likely
-cause. Not diagnosed further, but noted rather than ignored.
+**The GUI tests no longer steal focus, and that probably fixes a flake too.**
+
+GLFW's macOS backend calls `[NSApp activateIgnoringOtherApps:YES]` whenever a
+window is shown (`cocoa_window.m:1266`), so every `-shot` run yanked focus from
+whatever the user was doing — three times per `ctest` run, dropping keystrokes
+into other applications. Reported by the user, and a real defect rather than a
+nuisance.
+
+A run that only wants a screenshot is not interactive, so it now creates the
+window **hidden** (`GLFW_VISIBLE=false`, plus `FOCUS_ON_SHOW`/`FOCUSED` false) and
+suppresses the macOS menu bar via `glfwInitHint(GLFW_COCOA_MENUBAR,...)` — an
+*init* hint, since the menu bar is created inside `glfwInit`. Nothing is shown, so
+nothing is activated. `glReadPixels` on a hidden window's framebuffer works fine:
+the screenshots are pixel-identical to the visible ones, verified by looking at
+them.
+
+**`wz4ed_shell` had failed twice in ~20 full-suite runs**, both times as the first
+GUI test after a clean rebuild — exactly when activation contention is worst.
+That is now the leading explanation, though not proven: absence of a flake is not
+evidence, and it should be watched.
+
+Recording one process lesson: both times the diagnostic was **lost**, because
+ctest suppresses a test's output unless `--output-on-failure` is given, and the
+next run overwrites `LastTest.log`. `editor_shot.cmake` prints everything it
+captures — it simply never reached the terminal. **Run the suite with
+`--output-on-failure`.**
 
 **Stage 6.6c is done — and with it PHASE 6 IS COMPLETE.** 151/151 ctest.
 
@@ -454,7 +477,82 @@ re-lock **preserves** rather than overwriting, so "do not lock this" cannot
 quietly become a lock. Still asserted: the invariant battery and `z` spanning
 exactly the extrude depth.
 
-Next: **phase 7** — animated geometry, the third priority.
+**Phase 7 begins with a plan correction, not code** — as phase 6 did, and it found
+the same kind of thing. `09-phase-animation.md` is rewritten from measurement.
+
+**Two of the plan's three open questions dissolve.** `Wz4Skeleton::Evaluate` takes
+time as a **plain argument**, so there is no sequencer coupling to unwind — the
+risk table's "main risk" does not exist. And the animation module contains
+**zero** references to `ScriptContext`, `script.hpp` or `sScript`.
+
+**7.1 is already done**, as a side effect of stage 6.1: `wz4_anim` has been in
+`wz4geo` and registered since the mesh library landed.
+
+**A skinned mesh is constructible procedurally**, which the plan doubted:
+`Wz4Mesh::Deform` creates a `Wz4Skeleton` with joints and per-vertex weights on
+both its branches. `Cube → Deform` has been in the test suite since 6.3 without
+anyone noticing it produces one.
+
+**But nothing procedural can make a joint move, and that is the real finding.**
+Every channel a registered operator can build is a `Wz4ChannelConstant`.
+Time-varying channels come only from XSI import (stubbed), `LoadWz3MinMesh` (no
+`.wz3`, `.xsi` or `.lwo` assets exist anywhere in the tree — searched, zero), or
+deserialisation of a skeleton one of those made first. `Wz4ChannelLinear` and
+`Wz4ChannelCat` are **constructed by nothing in the entire dump**.
+
+Measured end to end: `Cube → Deform → BakeAnim` at `Time = 0` and `Time = 1` give
+the **same checksum**, identical to `Deform` alone. Skinning is applied; the pose
+simply does not vary.
+
+**So 7.2's gate — "different vertex positions at different times" — is not
+reachable with the operators that exist.** That is an absence of content, not a
+porting problem, and it makes the next step a scope decision rather than a
+technical one. The options and a recommendation are in the phase doc; the short
+version is that showing anything move requires writing **one small new operator**
+that installs a time-varying channel — new functionality rather than a port,
+though `Wz4ChannelLinear` is already implemented and merely never constructed.
+
+**Decision taken: option B.** Write the one operator. Stages **7.2 and 7.3 are
+done** — 151/151 ctest, and **zero upstream changes**: `wz4port/geo/animate_ops.ops`
+is the first `.ops` in this project that is not a port, which works because
+`wz4_add_ops` copies the file into the build tree and runs the generator there,
+so the source may live anywhere.
+
+**"keep bones" was verified before anything was written**, being the plan's top
+risk, and it paid off twice: `Deform` + keep bones then `BakeAnim(0)` reproduces
+Deform's own internal bake **bit for bit** (`512429fc92000000`). That retired the
+risk and became the phase's correctness oracle.
+
+`Wz4Mesh AnimateBones(Wz4Mesh)` replaces each joint's constant channel with a
+`Wz4ChannelPerFrame`. **Not `Wz4ChannelLinear`** — correcting what I said earlier,
+that class is implemented *incompletely*: it overrides neither `CopyTo()` nor
+`Serialize()`, and `Wz4Skeleton::CopyFrom` calls `CopyTo()` on every channel, so
+an ordinary downstream edit would hit `sFatal`.
+
+**The cases assert three relationships, not just numbers:**
+
+- `an_rig` **==** `an_animated` — the operator moves no vertex
+- `an_baked_t0` **≠** `an_baked_t1` — **the phase gate**: two times, two geometries
+- `an_rest_baked` **==** `an_ref` — the rest-pose identity, exact
+
+A fourth agreement fell out unarranged: `an_ref` matches `t_deform` from a
+different case file with a different key count. Only the **z** extent is asserted
+on the baked cases — the animation rotates about z, so x and y must move and z
+cannot, which is what catches a quaternion or matrix-convention error.
+
+**One self-inflicted bug worth recording.** The new rig checks fired on every
+`Text3D` and `Path3D` mesh — *"196 skinned vertices naming a joint outside
+0..-1"*. The meshes were fine; the check was wrong. An unskinned vertex is **not**
+identified by a negative `Index[0]`: `wMeshTess::AddVertex` uses `sClear`, so
+`Index[0]` is 0 — a valid joint number. Upstream's `Skin` tests
+`Index[0] >= joint count` instead, so a mesh with no skeleton is unskinned by
+construction. **Test the same condition the consumer tests**; an invariant
+invented alongside its check will disagree with the code it protects.
+
+Next: **7.4** — the timeline scrubber, the largest remaining piece, needing
+`wMeshView::Upload` split from `Fit()` and per-frame CPU skinning through
+`Wz4MeshVertex::Skin`, which writes to an out-parameter and so is non-destructive.
+Then **7.5**, skeleton visualisation.
 
 **`wz4ed` is the editor.** It has a window, a menu bar, a metadata-driven
 inspector, and the stacking canvas: blocks coloured by output type, selection,
@@ -590,7 +688,7 @@ about the build.
 | 4 — Texture library + tests | **Done**, phase gate passed. All 34 operators run |
 | 5 — Texture GUI | **Done**, phase gate passed. `wz4ed` edits textures |
 | 6 — Geometry | **Done**, phase gate passed. All 45 operators, 3D preview, OBJ both ways, Text3D |
-| 7 — Animated geometry | Not started |
+| 7 — Animated geometry | **7.1–7.3 done** — `AnimateBones` added, geometry moves over time. 7.4 scrubber, 7.5 skeleton view remain |
 
 ---
 
@@ -751,6 +849,9 @@ wz4port/
   geo/tess2d.hpp/.cpp          stage 6.6a — ear clipping with hole bridging, no glu32
   tests/tess2d_shapes.cpp        and its standalone test: counts and areas
   geo/mesh_tess.hpp/.cpp       stage 6.6b — the sink that replaces GLUtesselator
+  geo/animate_ops.ops          phase 7 — OUR OWN operator module, not a port.
+                               AnimateBones: time-varying skeletal channels
+  tests/geo/ops_anim.wz4t        and its cases, asserting three checksum pairs
   compat/font_outline.hpp      stage 6.6c — glyph outlines for Text3D, on FreeType
                                (implemented in compat/font_freetype.cpp, which
                                 already owns the library handle and font lookup)

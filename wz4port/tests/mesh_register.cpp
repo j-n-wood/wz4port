@@ -49,6 +49,7 @@ void RegisterWZ4Classes()
     sREGOPS(wz3_bitmap,0);
     sREGOPS(wz4_anim,0);
     sREGOPS(wz4_mesh,0);
+    sREGOPS(animate,0);
   }
 }
 
@@ -112,8 +113,13 @@ void sMain()
     if(cl->OutputType==meshtype)
       meshops++;
   }
+  // 46 since phase 7: 45 upstream, plus AnimateBones from wz4port's own
+  // geo/animate_ops.ops — the first .ops in this project that is not upstream.
   sPrintF(L"  %d operators output Wz4Mesh\n",meshops);
-  Check(meshops==45,L"45 operators output Wz4Mesh");
+  Check(meshops==46,L"45 upstream operators plus our AnimateBones output Wz4Mesh");
+  Check(HasClass(L"AnimateBones"),
+    L"and AnimateBones is one of them — a wz4port module registered alongside "
+    L"the upstream ones");
 
   // Named, not just counted. These are the two patch 11 drops, and the reason
   // is the input type in each case, not the operator body.
