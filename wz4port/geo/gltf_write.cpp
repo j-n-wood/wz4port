@@ -468,13 +468,47 @@ sBool wWriteGltf(sTextBuffer &json,sArray<sU8> &bin,Wz4Mesh *mesh,
 /***   files                                                               ***/
 /****************************************************************************/
 
-// The JSON is written UTF-8 rather than Ansi, for the reason wz4t_write.cpp:441
-// gives at length: a mesh name is arbitrary document text and sSaveTextAnsi
-// truncates every sChar to one byte. In practice glTF names here are ASCII, but
-// "in practice" is how phase 3 lost "café".
+// sChar is 2 bytes here (-fshort-wchar) and a glTF file is bytes, so the JSON is
+// narrowed explicitly. Exact rather than lossy, because wJsonWriter escapes
+// everything outside 0x20..0x7e as \uXXXX — its output is ASCII by construction.
+// A non-ASCII character therefore means the writer changed, not that the input
+// was exotic, and it is a refusal rather than a guess.
+static sBool NarrowAscii(const sChar *s,sArray<sU8> &out)
+{
+  for(;*s;s++)
+  {
+    if(sU32(*s)>127)
+      return 0;
+    *out.AddMany(1) = sU8(*s);
+  }
+  return 1;
+}
+
+// NOT sSaveTextUTF8, and the reason is worth stating because it is the obvious
+// call and it is wrong here: it writes a BOM *and the string's terminating NUL*
+// into the file. Both are defects in a glTF:
+//
+//   RFC 8259 says a JSON implementation MUST NOT add a BOM, and the glTF spec
+//     requires the GLB JSON chunk to be UTF-8 WITHOUT one;
+//   a NUL is not JSON whitespace, so a strict parser is entitled to reject the
+//     file outright;
+//   and a NUL makes every tool treat the file as BINARY — `file` reports "data",
+//     grep refuses to search it, git will not diff it. That defeats the entire
+//     reason the goldens are .gltf rather than .glb, which was that a failure
+//     should be readable rather than a byte offset.
+//
+// Found by trying to grep an exported file for its buffer uri and getting
+// nothing back.
 static sBool WriteJsonFile(const sChar *path,sTextBuffer &json)
 {
-  if(!sSaveTextUTF8(path,json.Get()))
+  sArray<sU8> bytes;
+  if(!NarrowAscii(json.Get(),bytes))
+  {
+    sPrintF(L"gltf: non-ASCII in the JSON, which this writer does not encode\n");
+    return 0;
+  }
+  if(!sSaveFile(path,bytes.GetCount() ? &bytes[0] : (const sU8 *)"",
+    bytes.GetCount()))
   {
     sPrintF(L"gltf: could not write <%s>\n",path);
     return 0;
@@ -487,21 +521,12 @@ static sBool WriteJsonFile(const sChar *path,sTextBuffer &json)
 // which, because a parser may hand the JSON chunk straight to a text parser.
 static sBool WriteGlb(const sChar *path,sTextBuffer &json,sArray<sU8> &bin)
 {
-  // sChar is 2 bytes here (-fshort-wchar), and a GLB chunk is bytes, so the JSON
-  // is narrowed explicitly rather than blitted.
   sArray<sU8> jsonbytes;
+  if(!NarrowAscii(json.Get(),jsonbytes))
   {
-    const sChar *s = json.Get();
-    for(;*s;s++)
-    {
-      if(sU32(*s)>127)
-      {
-        sPrintF(L"gltf: non-ASCII in the JSON chunk, which this writer does not"
-                L" encode — rename the mesh or write .gltf instead\n");
-        return 0;
-      }
-      *jsonbytes.AddMany(1) = sU8(*s);
-    }
+    sPrintF(L"gltf: non-ASCII in the JSON chunk, which this writer does not"
+            L" encode\n");
+    return 0;
   }
   Pad4(jsonbytes,' ');
   Pad4(bin,0);

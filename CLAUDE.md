@@ -13,7 +13,11 @@ code dump. All new work lives in `wz4port/`.
 gotchas. Then `docs/architecture.md` (**why the structure is shaped like this**,
 and what was tried and rejected), `docs/00-overview.md`,
 `docs/01-existing-model.md` (how Werkkzeug4 works — the reference document),
-`docs/02-target-model.md`. Per-phase plans are `docs/03`–`docs/09`.
+`docs/02-target-model.md`. Per-phase plans are `docs/03`–`docs/10`.
+
+`docs/editor.md` is the **user** guide to `wz4ed` — panes, shortcuts, switches
+and glTF export. It documents behaviour, not decisions; keep it in step with the
+editor, and with `wz4ed -help`, whenever a control or switch changes.
 
 ## Working process
 

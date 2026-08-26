@@ -218,6 +218,35 @@ That negative test also caught a mistake of mine first — I truncated a 3820-by
 which copied it whole, and read the resulting pass as a hole in the checker. The checker was right
 and the test input was wrong.
 
+### Found while writing the user guide: the `.gltf` was not text
+
+Writing `docs/editor.md` meant checking its claims, and grepping an exported file for its buffer uri
+returned nothing. The cause: **`sSaveTextUTF8` writes a BOM and the string's terminating NUL** into
+the file, so every `.gltf` ended `}\n\0`.
+
+Three separate defects in one call:
+
+- RFC 8259 says a JSON implementation MUST NOT add a BOM, and the glTF spec requires the GLB JSON
+  chunk to be UTF-8 *without* one;
+- a NUL is not JSON whitespace, so a strict parser may reject the file outright;
+- and a NUL makes every tool treat the file as **binary** — `file` reported `data`, grep refused to
+  search it, git would not diff it.
+
+That third one **defeated the reason the goldens are `.gltf` rather than `.glb`**, which was that a
+failure should be readable rather than a byte offset. The goldens were being compared as opaque
+blobs and nobody had noticed, because `cmake -E compare_files` does not care.
+
+Fixed by narrowing to bytes and using `sSaveFile`. `wJsonWriter` escapes everything outside
+0x20..0x7e as `\uXXXX`, so its output is ASCII by construction and the narrowing is exact rather than
+lossy; a non-ASCII character now means the writer changed and is refused rather than guessed at. The
+GLB path was already correct — it iterated to the terminator and never copied it. Each golden shrank
+by exactly 4 bytes and no `.bin` changed. `file` now reports `JSON data`.
+
+**The same defect is still present in `wz4t_write.cpp`**, which also uses `sSaveTextUTF8`: generated
+`.wz4t` files carry a BOM and a trailing NUL, and grep cannot search them. That matters more there
+than here — a text graph format exists to be diffable. Pre-existing, out of scope for this phase, and
+recorded rather than fixed.
+
 ## 8.4 (original plan text) — Editor
 
 `wz4ed`'s File menu holds only Reload and Quit (`editor/main.cpp:545`); there is no export of any

@@ -7,9 +7,12 @@ see [patches/](patches/) for the complete list of changes made to it.
 
 Planning and reference documentation is in [`../docs/`](../docs/) —
 start with `00-overview.md`, then `01-existing-model.md` (how Werkkzeug4
-works) and `02-target-model.md` (what we are building). The five notes below
+works) and `02-target-model.md` (what we are building). The six notes below
 are the build mechanics; `../docs/architecture.md` is the full decision record
 behind them, including the alternatives that were rejected.
+
+**To use the editor, see [`../docs/editor.md`](../docs/editor.md)** — the panes,
+the shortcuts, and glTF export.
 
 ## Build
 
@@ -18,20 +21,27 @@ cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
 ninja -C build
 ```
 
-Requires clang (or gcc), CMake ≥ 3.20 and Ninja. No external libraries yet.
+Requires clang (or gcc), CMake ≥ 3.20 and Ninja.
 
-## Current state — phases 1, 2 and 3 complete
+Dear ImGui and GLFW are **vendored** in [`third_party/`](third_party/) and need
+no installation. FreeType is an **optional system package**: without it
+`GenBitmap.Text` and `Text3D` stay stubbed and everything else builds. OpenGL
+comes from the platform; without it the editor is skipped and the headless tools
+still build. See [`third_party/VENDORED.md`](third_party/VENDORED.md).
+
+## Current state — phases 1–8 complete
 
 **The Werkkzeug operator runtime builds and runs with no GUI, no graphics API
-and no window system**, and there is a text graph format with a working
-converter. `.wz4` → `.wz4t` → `.wz4` round-trips all six bundled documents with
-identity, geometry, parameters and the derived graph intact.
+and no window system.** On top of it: a text graph format, texture and mesh
+generation, an ImGui editor with a 3D preview, and glTF export.
 
 ```sh
 wz4gen list                        # registered operators
 wz4gen list doc.wz4 -stores        # what is in a document
 wz4gen describe GenBitmap.Perlin   # the full parameter description
 wz4gen convert doc.wz4 doc.wz4t    # and back
+wz4gen render doc.wz4t -op name -out mesh.glb     # or .gltf, .obj, .png
+wz4ed doc.wz4t -meta build/meta                   # the editor
 ```
 
 | Target | What it is |
@@ -45,8 +55,12 @@ wz4gen convert doc.wz4 doc.wz4t    # and back
 | `headless_core_gate` | Compiles `wz4lib/doc_core.hpp` alone, with the GUI poisoned |
 | `headless_ops_gate` | Generates and compiles both op modules `-headless`, GUI poisoned |
 | `opsmeta_gate` | Emits and validates metadata for all 33 `.ops` modules into `build/meta/` |
-| **`wz4t`** | **Ours. JSON, the runtime metadata model, and the `.wz4t` reader + writer** |
+| **`wz4t`** | **Ours. JSON reader + writer, the runtime metadata model, and the `.wz4t` reader + writer** |
+| `wz4tex` | The texture library: `wz3_bitmap`, and `GenBitmap.Text` when FreeType links |
+| `wz4geo` | The mesh library: `wz4_anim`, `wz4_mesh`, plus our 2D tessellator for `Text3D`/`Path3D` |
+| **`wz4geochk`** | **Ours. The mesh invariant battery and the glTF writer** |
 | **`wz4gen`** | **Ours. The headless CLI** |
+| **`wz4ed`** | **Ours. The editor — see [`../docs/editor.md`](../docs/editor.md)** |
 | `core_connect` | Phase 2 gate: links `wz4core`, derives a graph from geometry (`ctest`) |
 | `wz4t_read`, `wz4t_round_*` | Stage 3.1b/3.2 gates over hand-written cases (`ctest`) |
 | `docround_*` | Phase 3 gate: `.wz4` → `.wz4t` → `.wz4` over six documents (`ctest`) |
@@ -54,7 +68,13 @@ wz4gen convert doc.wz4 doc.wz4t    # and back
 | `checkmeta` | The metadata reads back consistently (`ctest`) |
 | `simd_parity` | Verifies all 43 SSE2 intrinsics against scalar models (`ctest`) |
 
-Not yet built: the texture library and the editor.
+The table above lists the phase 1–3 gates; the suite has grown to 161 tests and
+`ctest --test-dir build` runs all of them. `../docs/progress.md` is the current
+state in detail.
+
+Still out of scope, and not merely deferred: the sequencer, the render graph, the
+material system, post-processing, audio, video, packfiles and networking. See
+`../docs/00-overview.md`.
 
 ## Six things that are not obvious
 

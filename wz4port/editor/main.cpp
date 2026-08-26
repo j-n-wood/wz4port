@@ -401,8 +401,10 @@ static void DrawOperatorList()
 {
   if(!Doc || Doc->Pages.GetCount()==0)
   {
+    // There is no File > Open — the editor has no file dialog. Say what the
+    // user can actually do, not what a more complete editor would offer.
     ImGui::TextDisabled("No document loaded.");
-    ImGui::TextDisabled("File > Open, or pass a .wz4t on the command line.");
+    ImGui::TextDisabled("Pass a .wz4t on the command line: wz4ed <doc> -meta <dir>");
     return;
   }
 
@@ -989,13 +991,22 @@ static void GlfwError(int code,const char *text)
 
 static void Usage()
 {
-  sPrint(L"usage: wz4ed [<document.wz4t>] [-meta <dir>]\n");
-  sPrint(L"             [-frames <n>] [-shot <file.png>] [-select <name>]\n\n");
-  sPrint(L"  -frames  render n frames and exit, instead of running\n");
-  sPrint(L"  -shot    write the last frame as a PNG. Implies -frames 2\n");
-  sPrint(L"  -select  select an operator by store name at startup\n");
-  sPrint(L"  -guides  start with connection guides on (View toggle otherwise)\n");
+  sPrint(L"usage: wz4ed [<document.wz4t>] [-meta <dir>] [switches]\n\n");
+  sPrint(L"  -meta     where the operator metadata is (default \"meta\")\n");
+  sPrint(L"  -select   select an operator by store name at startup\n");
+  sPrint(L"  -export   write the selected operator as glTF and exit\n");
+  sPrint(L"            (.glb or .gltf by extension; needs -select)\n");
+  sPrint(L"  -shot     write the last frame as a PNG. Implies -frames 2\n");
+  sPrint(L"  -frames   render n frames and exit, instead of running\n");
+  sPrint(L"  -time     animation time as a percentage, 0..100\n");
+  sPrint(L"  -wire     start with wireframe on\n");
+  sPrint(L"  -bbox     start with the bounding box on\n");
+  sPrint(L"  -nobones  start with the skeleton overlay OFF (it is on by default)\n");
+  sPrint(L"  -guides   start with connection guides on (View toggle otherwise)\n");
   sPrint(L"\n");
+  sPrint(L"-shot, -frames and -export run non-interactively: the window is\n");
+  sPrint(L"created hidden so the run does not steal keyboard focus.\n\n");
+  sPrint(L"See docs/editor.md for the panes, the shortcuts and glTF export.\n\n");
   sPrint(L"Switches go after the filename: Altona's shell parser treats the\n");
   sPrint(L"token after a -switch as that switch's first parameter.\n");
 }

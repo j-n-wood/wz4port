@@ -678,6 +678,23 @@ blob is not a reviewable diff. The most-used output path was the only untested
 one. The checker now parses the GLB container and the editor gate reads a `.glb`
 the editor produced.
 
+**Writing the user guide found a real defect: the `.gltf` was not text.**
+`sSaveTextUTF8` writes a BOM *and the string's terminating NUL*, so every export
+ended `}\n\0`. RFC 8259 forbids the BOM, a NUL is not JSON whitespace, and — the
+part that mattered — a NUL makes `file` report `data`, grep refuse to search, and
+git refuse to diff. That **defeated the reason the goldens are `.gltf` rather than
+`.glb`**: they were being compared as opaque blobs, and `cmake -E compare_files`
+does not care. Fixed by narrowing to bytes and using `sSaveFile`; each golden
+shrank by exactly 4 bytes and no `.bin` changed. The GLB path was already correct.
+Found by grepping an exported file for its buffer uri and getting nothing back —
+a claim in `docs/editor.md` that turned out to be untestable as written.
+
+**The same defect is still in `wz4t_write.cpp`.** Generated `.wz4t` files carry a
+BOM and a trailing NUL and grep cannot search them, which matters more there than
+in glTF — a text graph format exists to be diffable. Hand-written case files are
+unaffected. Recorded, not fixed: it is phase 3 code and every generated-document
+comparison would need re-checking.
+
 **Still outstanding: nobody has opened one of these files in a viewer.** The
 structural evidence is strong and the handedness gate is a good proxy, but the
 goldens record what the writer does, not that it is right — 6.3b's OBJ review is
