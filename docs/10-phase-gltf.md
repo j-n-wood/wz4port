@@ -186,7 +186,39 @@ export for spec conformance; absent, the test skips. Not installed here and ther
 it stays dormant until `npm i -g gltf-validator` — but it is the only check that verifies
 conformance rather than self-consistency.
 
-## 8.4 — Editor
+## 8.4 — Editor — **done**
+
+**File → Export glTF**, enabled only for a mesh operator with a document loaded — a menu item that
+can only fail is worse than one that is greyed out. No file dialog (ImGui has none and one is not in
+scope), so it writes beside the document, named after the operator, and reports in the status line:
+
+```
+wz4ed: exported 24 vertices, 12 triangles to gltf/from_editor.glb (3820 bytes)
+```
+
+The `-export <path>` switch drives **the same `ExportGltf`** the menu item calls, and `wz4ed_export`
+validates the result with the 8.3 checker rather than a second one written to agree with it. The
+gate also asserts the status line reports a non-empty export — otherwise a structurally valid empty
+file would pass every other check.
+
+### Two things this stage caught
+
+**`-export` had to join `headlessrun`.** Forgetting it would have reintroduced the focus-stealing
+defect phase 7 fixed: an export run draws nothing and exits, so a window that appears and grabs the
+keyboard on the way past is pure damage.
+
+**Nothing was testing `.glb` at all.** The writer emits it, the editor's export defaults to it, and
+no golden covers it — deliberately, since a single binary blob is not a reviewable diff. So the
+most-used output path was the only untested one. The checker now parses the GLB container
+(header, chunk tiling, 4-alignment, the JSON chunk) and `wz4ed_export` reads a `.glb` the editor
+produced. Verified negatively: a truncated container is rejected with *"the glb header's total
+length is not the file's size"*.
+
+That negative test also caught a mistake of mine first — I truncated a 3820-byte file to 4530 bytes,
+which copied it whole, and read the resulting pass as a hole in the checker. The checker was right
+and the test input was wrong.
+
+## 8.4 (original plan text) — Editor
 
 `wz4ed`'s File menu holds only Reload and Quit (`editor/main.cpp:545`); there is no export of any
 kind. Add **File → Export glTF** for the selected operator, reporting the path and byte count.

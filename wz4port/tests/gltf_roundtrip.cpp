@@ -123,15 +123,143 @@ static sBool Fault(sBool quiet,const sChar *what)
   return 0;
 }
 
-// Reads path (.gltf plus its sidecar) and validates it against the specification.
-// Returns 0 on the first structural fault. `quiet` suppresses the reason, for the
-// negative cases where a rejection is the expected result.
+// Both containers, resolved to the same thing: a parsed JSON tree and a byte
+// buffer. .gltf keeps its buffer in a sidecar named by a uri; .glb keeps it in a
+// chunk of the same file.
+//
+// GLB is handled here rather than skipped because otherwise NOTHING would test
+// it: the writer emits it, the editor's export defaults to it, and no golden
+// covers it — a single binary blob is not a reviewable diff, which is why the
+// goldens are .gltf. Without this the most-used output path would be the only
+// untested one.
+struct wGltfSource
+{
+  wJsonDoc Doc;
+  wJsonValue *Root;
+  sU8 *Bin;                 // owned
+  sDInt BinSize;
+  sChar *Text;              // owned; the widened JSON chunk, GLB only
+
+  wGltfSource() { Root = 0; Bin = 0; BinSize = 0; Text = 0; }
+  ~wGltfSource() { delete[] Bin; delete[] Text; }
+};
+
+static sU32 ChunkU32(const sU8 *b,sDInt off)
+{
+  return sU32(b[off]) | (sU32(b[off+1])<<8) | (sU32(b[off+2])<<16)
+       | (sU32(b[off+3])<<24);
+}
+
+static sBool OpenGlb(const sChar *path,sU8 *raw,sDInt size,wGltfSource &s,
+  sBool quiet)
+{
+  if(size<12)
+    return Fault(quiet,L"glb is shorter than its header");
+  if(ChunkU32(raw,4)!=2)
+    return Fault(quiet,L"glb version is not 2");
+  if(sDInt(ChunkU32(raw,8))!=size)
+    return Fault(quiet,L"the glb header's total length is not the file's size");
+
+  sDInt at = 12;
+  sDInt jsonoff = -1, jsonlen = 0, binoff = -1, binlen = 0;
+
+  while(at+8<=size)
+  {
+    const sU32 len = ChunkU32(raw,at);
+    const sU32 kind = ChunkU32(raw,at+4);
+    at += 8;
+    if(sDInt(at)+sDInt(len)>size)
+      return Fault(quiet,L"a glb chunk runs past the end of the file");
+    if(len & 3)
+      return Fault(quiet,L"a glb chunk length is not 4-aligned");
+    if(kind==0x4E4F534A)      { jsonoff = at; jsonlen = len; }
+    else if(kind==0x004E4942) { binoff = at; binlen = len; }
+    at += len;
+  }
+  if(at!=size)
+    return Fault(quiet,L"the glb chunks do not tile the file exactly");
+  if(jsonoff<0)
+    return Fault(quiet,L"the glb has no JSON chunk");
+
+  // The chunk is UTF-8 bytes and sChar is 2 wide here. This writer emits ASCII
+  // and refuses anything else, so widening is exact — and a non-ASCII byte is a
+  // fault rather than something to guess at.
+  s.Text = new sChar[jsonlen+1];
+  for(sDInt i=0;i<jsonlen;i++)
+  {
+    if(raw[jsonoff+i]>127)
+      return Fault(quiet,L"non-ASCII in the glb JSON chunk");
+    s.Text[i] = sChar(raw[jsonoff+i]);
+  }
+  s.Text[jsonlen] = 0;
+
+  s.Root = s.Doc.Parse(s.Text);
+  if(!s.Root)
+    return Fault(quiet,s.Doc.GetError());
+
+  if(binoff>=0)
+  {
+    s.BinSize = binlen;
+    s.Bin = new sU8[binlen ? binlen : 1];
+    sCopyMem(s.Bin,raw+binoff,binlen);
+  }
+  return 1;
+}
+
+static sBool OpenGltf(const sChar *path,wGltfSource &s,sBool quiet)
+{
+  sDInt size = 0;
+  sU8 *raw = sLoadFile(path,size);
+  if(!raw)
+    return Fault(quiet,L"the file is missing");
+
+  // 'glTF' little-endian.
+  const sBool glb = (size>=4 && ChunkU32(raw,0)==0x46546C67);
+  if(glb)
+  {
+    const sBool ok = OpenGlb(path,raw,size,s,quiet);
+    delete[] raw;
+    return ok;
+  }
+  delete[] raw;
+
+  s.Root = s.Doc.Load(path);
+  if(!s.Root)
+    return Fault(quiet,s.Doc.GetError());
+
+  const wJsonValue *buffers = s.Root->GetArray(L"buffers");
+  if(!buffers || buffers->Items.GetCount()!=1)
+    return Fault(quiet,L"expected exactly one buffer");
+  sPoolString uri = buffers->Items[0]->GetString(L"uri");
+  if(uri.IsEmpty())
+    return Fault(quiet,L"a .gltf buffer must name a uri");
+
+  // Resolved relative to the .gltf, as a uri must be.
+  sString<1024> binpath(path);
+  {
+    sInt cut = -1;
+    for(sInt i=0;binpath[i];i++)
+      if(binpath[i]=='/' || binpath[i]=='\\')
+        cut = i;
+    binpath[cut+1] = 0;
+    binpath.Add(uri);
+  }
+  s.Bin = sLoadFile(binpath,s.BinSize);
+  if(!s.Bin)
+    return Fault(quiet,L"the buffer file is missing");
+  return 1;
+}
+
+// Reads path (.gltf plus its sidecar, or .glb) and validates it against the
+// specification. Returns 0 on the first structural fault. `quiet` suppresses the
+// reason, for the negative cases where a rejection is the expected result.
 static sBool CheckGltf(const sChar *path,wGltfMesh *out,sBool quiet=0)
 {
-  wJsonDoc doc;
-  wJsonValue *root = doc.Load(path);
-  if(!root)
-    return Fault(quiet,doc.GetError());
+  wGltfSource src;
+  if(!OpenGltf(path,src,quiet))
+    return 0;
+
+  wJsonValue *root = src.Root;
   if(root->Type!=wJSON_OBJECT)
     return Fault(quiet,L"root is not an object");
 
@@ -148,32 +276,15 @@ static sBool CheckGltf(const sChar *path,wGltfMesh *out,sBool quiet=0)
   if(buffers->Items.GetCount()!=1)
     return Fault(quiet,L"expected exactly one buffer");
 
-  /*--- the buffer, resolved relative to the .gltf as a uri must be ---*/
-
   const sInt declared = buffers->Items[0]->GetInt(L"byteLength",-1);
-  sPoolString uri = buffers->Items[0]->GetString(L"uri");
-  if(uri.IsEmpty())
-    return Fault(quiet,L"buffer has no uri (a .glb chunk is not read here)");
+  const sU8 *bin = src.Bin;
+  const sDInt binsize = src.BinSize;
 
-  sString<1024> binpath(path);
-  {
-    sInt cut = -1;
-    for(sInt i=0;binpath[i];i++)
-      if(binpath[i]=='/' || binpath[i]=='\\')
-        cut = i;
-    binpath[cut+1] = 0;
-    binpath.Add(uri);
-  }
-
-  sDInt binsize = 0;
-  sU8 *bin = sLoadFile(binpath,binsize);
-  if(!bin)
-    return Fault(quiet,L"the buffer file is missing");
-  if(sInt(binsize)!=declared)
-  {
-    delete[] bin;
-    return Fault(quiet,L"buffer.byteLength disagrees with the file's size");
-  }
+  // For a .gltf this catches a truncated or stale sidecar; for a .glb it catches
+  // a chunk length that disagrees with what the JSON claims. Both are silent
+  // corruption in a viewer.
+  if(!bin || sInt(binsize)!=declared)
+    return Fault(quiet,L"buffer.byteLength disagrees with the buffer's size");
 
   /*--- every bufferView inside the buffer ---*/
 
@@ -184,9 +295,7 @@ static sBool CheckGltf(const sChar *path,wGltfMesh *out,sBool quiet=0)
     const sInt len = v->GetInt(L"byteLength",-1);
     if(v->GetInt(L"buffer",-1)!=0 || off<0 || len<0
       || sDInt(off)+sDInt(len)>binsize)
-    {
-      delete[] bin;
-      return Fault(quiet,L"a bufferView falls outside its buffer");
+    {      return Fault(quiet,L"a bufferView falls outside its buffer");
     }
   }
 
@@ -200,18 +309,14 @@ static sBool CheckGltf(const sChar *path,wGltfMesh *out,sBool quiet=0)
     const wJsonValue *a = accs->Items[i];
     const sInt vi = a->GetInt(L"bufferView",-1);
     if(vi<0 || vi>=views->Items.GetCount())
-    {
-      delete[] bin;
-      return Fault(quiet,L"an accessor names a bufferView that does not exist");
+    {      return Fault(quiet,L"an accessor names a bufferView that does not exist");
     }
 
     const sInt comp = ComponentSize(a->GetInt(L"componentType",0));
     const sInt elems = TypeCount(a->GetString(L"type"));
     const sInt count = a->GetInt(L"count",-1);
     if(comp==0 || elems==0 || count<0)
-    {
-      delete[] bin;
-      return Fault(quiet,L"an accessor has an unknown componentType, type or count");
+    {      return Fault(quiet,L"an accessor has an unknown componentType, type or count");
     }
 
     const wJsonValue *v = views->Items[vi];
@@ -221,17 +326,13 @@ static sBool CheckGltf(const sChar *path,wGltfMesh *out,sBool quiet=0)
     const sInt need = count*comp*elems;
 
     if(aoff<0 || aoff+need>vlen)
-    {
-      delete[] bin;
-      return Fault(quiet,L"an accessor overruns its bufferView");
+    {      return Fault(quiet,L"an accessor overruns its bufferView");
     }
 
     // glTF requires an accessor's effective offset to be a multiple of its
     // component size.
     if(((voff+aoff)%comp)!=0)
-    {
-      delete[] bin;
-      return Fault(quiet,L"an accessor is misaligned for its component type");
+    {      return Fault(quiet,L"an accessor is misaligned for its component type");
     }
 
     wAcc r;
@@ -242,15 +343,11 @@ static sBool CheckGltf(const sChar *path,wGltfMesh *out,sBool quiet=0)
   /*--- the mesh, its primitives, and the indices ---*/
 
   if(meshes->Items.GetCount()!=1)
-  {
-    delete[] bin;
-    return Fault(quiet,L"expected exactly one mesh");
+  {    return Fault(quiet,L"expected exactly one mesh");
   }
   const wJsonValue *prims = meshes->Items[0]->GetArray(L"primitives");
   if(!prims || prims->Items.GetCount()==0)
-  {
-    delete[] bin;
-    return Fault(quiet,L"the mesh has no primitives");
+  {    return Fault(quiet,L"the mesh has no primitives");
   }
 
   sInt posacc = -1, nrmacc = -1;
@@ -260,34 +357,24 @@ static sBool CheckGltf(const sChar *path,wGltfMesh *out,sBool quiet=0)
     const wJsonValue *pr = prims->Items[p];
     const wJsonValue *at = pr->Member(L"attributes");
     if(!at)
-    {
-      delete[] bin;
-      return Fault(quiet,L"a primitive has no attributes");
+    {      return Fault(quiet,L"a primitive has no attributes");
     }
     const sInt pa = at->GetInt(L"POSITION",-1);
     const sInt na = at->GetInt(L"NORMAL",-1);
     const sInt ia = pr->GetInt(L"indices",-1);
     if(pa<0 || pa>=acc.GetCount() || ia<0 || ia>=acc.GetCount())
-    {
-      delete[] bin;
-      return Fault(quiet,L"a primitive names an accessor that does not exist");
+    {      return Fault(quiet,L"a primitive names an accessor that does not exist");
     }
     if(pr->GetInt(L"mode",4)!=4)
-    {
-      delete[] bin;
-      return Fault(quiet,L"a primitive is not TRIANGLES");
+    {      return Fault(quiet,L"a primitive is not TRIANGLES");
     }
     if(p==0) { posacc = pa; nrmacc = na; }
     else if(pa!=posacc)
-    {
-      delete[] bin;
-      return Fault(quiet,L"primitives disagree about POSITION");
+    {      return Fault(quiet,L"primitives disagree about POSITION");
     }
 
     if(acc[ia].Count%3)
-    {
-      delete[] bin;
-      return Fault(quiet,L"an index count is not a multiple of 3");
+    {      return Fault(quiet,L"an index count is not a multiple of 3");
     }
 
     // THE CHECK THAT MAKES THE REST MEAN SOMETHING: every index must name a
@@ -296,9 +383,7 @@ static sBool CheckGltf(const sChar *path,wGltfMesh *out,sBool quiet=0)
     {
       const sU32 idx = GetU32(bin,acc[ia].Off+k*4);
       if(sInt(idx)>=acc[pa].Count)
-      {
-        delete[] bin;
-        return Fault(quiet,L"an index is past the end of POSITION");
+      {        return Fault(quiet,L"an index is past the end of POSITION");
       }
       out->Idx.AddTail(idx);
     }
@@ -316,9 +401,7 @@ static sBool CheckGltf(const sChar *path,wGltfMesh *out,sBool quiet=0)
   if(nrmacc>=0)
   {
     if(acc[nrmacc].Count!=vc)
-    {
-      delete[] bin;
-      return Fault(quiet,L"NORMAL and POSITION disagree about the vertex count");
+    {      return Fault(quiet,L"NORMAL and POSITION disagree about the vertex count");
     }
     for(sInt i=0;i<vc;i++)
       for(sInt k=0;k<3;k++)
@@ -332,9 +415,7 @@ static sBool CheckGltf(const sChar *path,wGltfMesh *out,sBool quiet=0)
   const wJsonValue *mn = accs->Items[posacc]->GetArray(L"min");
   const wJsonValue *mx = accs->Items[posacc]->GetArray(L"max");
   if(!mn || !mx || mn->Items.GetCount()!=3 || mx->Items.GetCount()!=3)
-  {
-    delete[] bin;
-    return Fault(quiet,L"POSITION has no min/max, which the spec requires");
+  {    return Fault(quiet,L"POSITION has no min/max, which the spec requires");
   }
   for(sInt k=0;k<3;k++)
   {
@@ -350,14 +431,11 @@ static sBool CheckGltf(const sChar *path,wGltfMesh *out,sBool quiet=0)
       lo = sMin(lo,e); hi = sMax(hi,e);
     }
     if(sFAbs(lo-out->Min[k])>1e-5f || sFAbs(hi-out->Max[k])>1e-5f)
-    {
-      delete[] bin;
-      return Fault(quiet,L"POSITION min/max do not describe the actual data");
+    {      return Fault(quiet,L"POSITION min/max do not describe the actual data");
     }
   }
 
-  delete[] bin;
-  return 1;
+  return 1;    // wGltfSource owns the buffer and frees it
 }
 
 /****************************************************************************/
@@ -559,9 +637,32 @@ void sMain()
   const sChar *dir = sGetShellParameter(0,0);
   if(!dir)
   {
-    sPrint(L"usage: gltf_roundtrip <outdir>\n");
+    sPrint(L"usage: gltf_roundtrip <outdir> | gltf_roundtrip -check <file>\n");
     sSetErrorCode();
     return;
+  }
+
+  // -check <file> validates one existing file and stops. It exists so the 8.4
+  // editor gate can use THIS checker rather than a second one written to agree
+  // with it — the same reason the export switch drives the menu's own function.
+  // Accepts .glb as well as .gltf, which is what the editor writes.
+  {
+    const sChar *one = sGetShellParameter(L"check",0);
+    if(one)
+    {
+      wGltfMesh m;
+      Check(CheckGltf(one,&m)!=0,L"the exported file validates");
+      if(m.Verts>0)
+      {
+        sPrintF(L"  %d vertices, %d triangles, %d primitive(s)\n",
+          m.Verts,sInt(m.Idx.GetCount()/3),m.Prims);
+        CheckOutward(m,L"exported");
+      }
+      sPrintF(L"\ngltf_roundtrip: %d failure(s)\n",Failures);
+      if(Failures)
+        sSetErrorCode();
+      return;
+    }
   }
 
   Doc = new wDocument;

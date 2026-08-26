@@ -38,6 +38,7 @@
 #include "params.hpp"
 #include "preview.hpp"
 #include "meshview.hpp"
+#include "gltf_write.hpp"         // phase 8.4: File -> Export glTF
 #include "gl_wz4.hpp"
 #include "undo.hpp"
 
@@ -262,6 +263,83 @@ struct wEditor
       MarkDirty(n==1 ? L"delete" : L"delete several");
     }
     return n!=0;
+  }
+
+  // Exports the selected operator as glTF. Phase 8.4.
+  //
+  // Evaluates through Doc->CalcOp and does NOT release the result, matching
+  // wMeshView and wPreview: the document's cache and this pointer are not
+  // independent references, and releasing one broke the next frame in 6.4
+  // (architecture.md A58).
+  //
+  // Shared by the menu item and the -export switch, so the gate exercises the
+  // same code the menu does rather than a parallel path that could drift.
+  sBool ExportGltf(const sChar *path)
+  {
+    if(!Selected)
+    {
+      Status = L"select an operator first";
+      return 0;
+    }
+
+    wType *meshtype = Doc ? Doc->FindType(L"Wz4Mesh") : 0;
+    wObject *obj = Doc->CalcOp(Selected);
+    if(!obj || !meshtype || !obj->IsType(meshtype))
+    {
+      Status.PrintF(L"%s is not a mesh — glTF export is for Wz4Mesh",
+        Selected->Class ? Selected->Class->Name : L"the selection");
+      return 0;
+    }
+
+    wGltfStats st;
+    if(!wWriteGltfFile(path,(Wz4Mesh *)obj,&st))
+    {
+      Status.PrintF(L"could not write %s",path);
+      return 0;
+    }
+
+    // A writer's success return is not evidence that anything landed (A39), and
+    // the editor has no console the user is watching, so the byte count goes in
+    // the status line where it can be read.
+    sDInt size = 0;
+    sU8 *bytes = sLoadFile(path,size);
+    if(!bytes || size<=0)
+    {
+      delete[] bytes;
+      Status.PrintF(L"the writer reported success but %s is missing or empty",path);
+      return 0;
+    }
+    delete[] bytes;
+
+    Status.PrintF(L"exported %d vertices, %d triangles to %s (%d bytes)",
+      st.Verts,st.Tris,path,sInt(size));
+    sPrintF(L"wz4ed: %s\n",(const sChar *)Status);
+    return 1;
+  }
+
+  // Where the menu item writes, having no file dialog: beside the document,
+  // named after the operator. A name is what the user typed, so it is what they
+  // will look for; an unnamed operator falls back to its class.
+  void DefaultExportPath(const sStringDesc &out)
+  {
+    sString<1024> path(DocPath);
+    sInt cut = -1;
+    for(sInt i=0;path[i];i++)
+      if(path[i]=='/' || path[i]=='\\')
+        cut = i;
+    path[cut+1] = 0;
+
+    const sChar *leaf = L"mesh";
+    if(Selected)
+    {
+      if(!Selected->Name.IsEmpty())
+        leaf = Selected->Name;
+      else if(Selected->Class)
+        leaf = Selected->Class->Name;
+    }
+    path.Add(leaf);
+    path.Add(L".glb");
+    sCopyString(out,path);
   }
 
   // Restoring replaces every wStackOp on the page, so every operator pointer the
@@ -549,6 +627,25 @@ static void DrawFrame(GLFWwindow *window,sBool &quit)
         sString<1024> path(Ed->DocPath);
         Ed->LoadDoc(path);
       }
+      ImGui::Separator();
+
+      // Enabled only for a mesh operator, because glTF export is for Wz4Mesh and
+      // a menu item that can only fail is worse than one that is greyed out.
+      // There is no file dialog — ImGui has none and one is not in scope — so it
+      // writes beside the document, named after the operator, and says where in
+      // the status line.
+      {
+        wType *meshtype = Doc ? Doc->FindType(L"Wz4Mesh") : 0;
+        const sBool exportable = Ed->Selected && Ed->Selected->Class && meshtype
+          && Ed->Selected->Class->OutputType==meshtype && !Ed->DocPath.IsEmpty();
+        if(ImGui::MenuItem("Export glTF",0,false,exportable!=0))
+        {
+          sString<1024> path;
+          Ed->DefaultExportPath(path);
+          Ed->ExportGltf(path);
+        }
+      }
+
       ImGui::Separator();
       if(ImGui::MenuItem("Quit","Ctrl+Q"))
         quit = 1;
@@ -941,7 +1038,12 @@ void sMain()
   //
   // So a non-interactive run creates the window HIDDEN and suppresses the menu
   // bar. Nothing is shown, so nothing is activated.
-  const sBool headlessrun = (shot!=0) || (frames>0);
+  //
+  // -export counts, and forgetting it would have reintroduced exactly the defect
+  // this whole block exists to fix: an export run draws nothing and exits, so a
+  // window that appears and grabs the keyboard on the way past is pure damage.
+  const sBool headlessrun = (shot!=0) || (frames>0)
+                         || (sGetShellParameter(L"export",0)!=0);
 
   if(headlessrun)
   {
@@ -1057,6 +1159,28 @@ void sMain()
   sBool quit = 0;
   sBool failed = 0;
   sInt drawn = 0;
+
+  // -export <path> runs the File menu's export on the selected operator and
+  // exits. It drives ExportGltf, the SAME function the menu item calls, for the
+  // reason -wire, -time and -nobones all exist: a screenshot of a menu item is
+  // not evidence that the menu item works, and a gate that reimplemented the
+  // export would be testing itself.
+  //
+  // Sets quit rather than returning, so the frame loop is skipped and the one
+  // teardown below runs — duplicating it here is how a shutdown order gets
+  // subtly wrong, and this file already carries two A47 scars from that.
+  {
+    const sChar *exportpath = sGetShellParameter(L"export",0);
+    if(exportpath)
+    {
+      if(!Ed->ExportGltf(exportpath))
+      {
+        sPrintF(L"wz4ed: %s\n",(const sChar *)Ed->Status);
+        failed = 1;
+      }
+      quit = 1;
+    }
+  }
 
   while(!quit && !glfwWindowShouldClose(window))
   {

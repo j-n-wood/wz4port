@@ -625,11 +625,12 @@ vertices from the end.
 been a no-op and the gate would have compared a render against itself, passing by
 accident. Both verified negatively.
 
-**Phase 8 stages 8.1–8.3 are done: meshes export as glTF 2.0.** `wz4gen render
-… -out x.gltf` writes JSON plus a `.bin` sidecar, `-out x.glb` writes the single
-binary container, and both carry what OBJ drops — the second UV set, the
-tangents, and the cluster structure as separate primitives. 160/160 ctest, zero
-upstream footprint. See `docs/10-phase-gltf.md`.
+**Phase 8 is done: meshes export as glTF 2.0.** `wz4gen render … -out x.gltf`
+writes JSON plus a `.bin` sidecar, `-out x.glb` writes the single binary
+container, and the editor has **File → Export glTF** for the selected operator.
+All of it carries what OBJ drops — the second UV set, the tangents, and the
+cluster structure as separate primitives. 161/161 ctest, zero upstream
+footprint. See `docs/10-phase-gltf.md`.
 
 **fx/gltf and nlohmann/json were considered and declined, on evidentiary
 grounds.** `tests/mesh_obj.cpp` is a real test of `SaveOBJ` rather than a
@@ -664,6 +665,18 @@ comparison fails. A JSON-only golden would accept a writer that emitted the righ
 accessors over the wrong vertices. A43 inverted twice — there a PNG golden was
 blind to the low 8 bits and needed a checksum beside it; here the JSON is blind to
 every coordinate.
+
+**The editor's export and the `.glb` gap.** File → Export glTF is enabled only
+for a mesh operator with a document loaded, writes beside the document named
+after the operator, and reports in the status line. The `-export <path>` switch
+drives the **same** function the menu item calls, and `wz4ed_export` validates
+the result with the 8.3 checker. Two things this caught: `-export` had to join
+`headlessrun`, or it would have reintroduced the focus-stealing defect phase 7
+fixed; and **nothing was testing `.glb` at all** — the writer emits it, the
+editor defaults to it, and no golden covers it, deliberately, because a binary
+blob is not a reviewable diff. The most-used output path was the only untested
+one. The checker now parses the GLB container and the editor gate reads a `.glb`
+the editor produced.
 
 **Still outstanding: nobody has opened one of these files in a viewer.** The
 structural evidence is strong and the handedness gate is a good proxy, but the
@@ -808,7 +821,7 @@ about the build.
 | 5 — Texture GUI | **Done**, phase gate passed. `wz4ed` edits textures |
 | 6 — Geometry | **Done**, phase gate passed. All 45 operators, 3D preview, OBJ both ways, Text3D |
 | 7 — Animated geometry | **done** — `AnimateBones` added, geometry moves over time, rigged meshes scrub in the preview, joints draw over the mesh |
-| 8 — glTF export | **8.1–8.3 done** — meshes export as `.gltf`+`.bin` or `.glb` from `wz4gen`, with a round-trip oracle and six goldens. 8.4 editor menu remains |
+| 8 — glTF export | **done** — meshes export as `.gltf`+`.bin` or `.glb` from `wz4gen` and from the editor's File menu, with a round-trip oracle and six goldens |
 
 ---
 

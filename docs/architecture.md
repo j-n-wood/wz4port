@@ -1786,6 +1786,7 @@ adopted because of this list.
 | A skeleton is a chain, so bones can be drawn to parents | `Init` sets `Parent = -1` and `Deform` never assigns it. Hierarchy, like motion, only ever came from import (A63) |
 | glTF export needs a JSON library | A reader and a writer already existed in-tree, in separate files — and using them keeps the round-trip oracle a vendored library would have destroyed (A64) |
 | A cube is enough to test a coordinate conversion | It is symmetric in z, so omitting the mirror ENTIRELY passes every check. The asymmetric case is the only one that decides it (8.3) |
+| The goldens cover the exporter | They cover `.gltf`, because a `.glb` is not a reviewable diff — so the container the editor writes by default was the one format nothing tested (8.4) |
 
 ---
 

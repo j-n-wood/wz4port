@@ -695,7 +695,9 @@ if(EXISTS "${WZ4_IMGUI_DIR}/imgui.cpp" AND EXISTS "${WZ4_GLFW_DIR}/CMakeLists.tx
     # library from stage 6.4 on. The GL 3.3 entry points the viewer uses come from
     # the loader already inside `imgui` — see editor/gl_wz4.hpp for why that is
     # the whole story rather than a new dependency.
-    target_link_libraries(wz4ed PRIVATE wz4t wz4geo imgui)
+    # wz4geochk rather than wz4geo since 8.4: the editor's File -> Export glTF
+    # goes through geo/gltf_write.cpp, and wz4geochk links wz4geo anyway.
+    target_link_libraries(wz4ed PRIVATE wz4t wz4geochk imgui)
     target_compile_options(wz4ed PRIVATE
       "SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/tests/gui_poison.h"
     )
@@ -786,6 +788,21 @@ if(EXISTS "${WZ4_IMGUI_DIR}/imgui.cpp" AND EXISTS "${WZ4_GLFW_DIR}/CMakeLists.tx
         "-DWHAT=The mesh has a rig and the overlay is on by default, so hiding it must change the image. Nothing was drawn for the skeleton."
         -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/editor_differs.cmake")
       set_tests_properties(wz4ed_bones PROPERTIES
+        DEPENDS opsmeta_gate RUN_SERIAL TRUE)
+
+      # Stage 8.4. Exercises File -> Export glTF through the switch that drives
+      # the same function, and validates the result with the phase 8.3 checker.
+      # Also the only end-to-end test of the .glb container: the goldens are
+      # .gltf because a binary blob is not a reviewable diff.
+      add_test(NAME wz4ed_export COMMAND "${CMAKE_COMMAND}"
+        "-DWZ4ED=$<TARGET_FILE:wz4ed>"
+        "-DCHECKER=$<TARGET_FILE:gltf_roundtrip>"
+        "-DDOC=${CMAKE_CURRENT_SOURCE_DIR}/tests/geo/gen.wz4t"
+        "-DMETA=${WZ4_META_DIR}"
+        "-DSELECT=cube_wide"
+        "-DOUT=${CMAKE_BINARY_DIR}/gltf/editor_cube_wide.glb"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/editor_export.cmake")
+      set_tests_properties(wz4ed_export PROPERTIES
         DEPENDS opsmeta_gate RUN_SERIAL TRUE)
 
       # One window at a time: GLFW and the platform frameworks are not built for
