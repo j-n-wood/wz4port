@@ -237,15 +237,48 @@ failure should be readable rather than a byte offset. The goldens were being com
 blobs and nobody had noticed, because `cmake -E compare_files` does not care.
 
 Fixed by narrowing to bytes and using `sSaveFile`. `wJsonWriter` escapes everything outside
-0x20..0x7e as `\uXXXX`, so its output is ASCII by construction and the narrowing is exact rather than
-lossy; a non-ASCII character now means the writer changed and is refused rather than guessed at. The
-GLB path was already correct — it iterated to the terminator and never copied it. Each golden shrank
-by exactly 4 bytes and no `.bin` changed. `file` now reports `JSON data`.
+0x20..0x7e as `\uXXXX` (`json_write.cpp:64`), so its output is ASCII by construction and the
+narrowing is exact rather than lossy; a non-ASCII character now means the writer changed and is
+refused rather than guessed at. The GLB path was already correct — it iterated to the terminator and
+never copied it, and glTF requires that chunk to be UTF-8 *without* a BOM. Each golden shrank by
+exactly 4 bytes and no `.bin` changed. `file` now reports `JSON data`.
 
-**The same defect is still present in `wz4t_write.cpp`**, which also uses `sSaveTextUTF8`: generated
-`.wz4t` files carry a BOM and a trailing NUL, and grep cannot search them. That matters more there
-than here — a text graph format exists to be diffable. Pre-existing, out of scope for this phase, and
-recorded rather than fixed.
+#### And the round-trip gate could not have caught it
+
+`CheckGltf` parses with `wJsonDoc`, which reads through `sLoadText` — and `sLoadText` **strips the
+BOM**. The trailing NUL sits after the closing brace, so the parse succeeds too. **Neither defect was
+visible to the test that exists to validate this output**, which is precisely the shape of the
+`.wz4t` failure in A65: the writer was fixed and nothing could tell if it regressed.
+
+So `gltf_roundtrip` now checks the **bytes** as well as the tree, on both containers — no BOM, no
+NUL, starts at `{`, and for GLB a 4-aligned JSON chunk padded with spaces rather than NULs. Verified
+by reverting the writer to `sSaveTextUTF8`: six failures, `1 NUL(s) in 2332 bytes`. The `.glb`
+assertions stayed green throughout, which is the check discriminating rather than blanket-failing.
+
+Independently confirmed with Node's `JSON.parse` on both containers — a third-party parser, since
+every other check in this suite is ultimately our own reading of the spec:
+
+```
+file:           BOM=false NUL=false first=0x7b last=0xa   JSON.parse: OK
+GLB JSON chunk: type 0x4e4f534a, len 2300, len%4=0
+                BOM=false NUL=false first=0x7b last=0x20  JSON.parse: OK
+```
+
+**`wz4t_write.cpp` had the same defect and was fixed with it.** Generated `.wz4t` files carried the
+same trailing NUL, which matters more there than here — a text graph format exists to be diffable.
+
+The **BOM stays** in `.wz4t`, and that asymmetry with glTF is deliberate: `sLoadText` decodes UTF-8
+only when the BOM is present (`system.cpp:1080`) and otherwise falls back to Latin-1, so removing it
+would reintroduce the mojibake that format already lost "café" to once. glTF forbids the BOM; `.wz4t`
+requires it. Removing the BOM and removing the NUL look like the same tidy-up and are opposites.
+
+Two things worth keeping from this. The original move from `sSaveTextAnsi` to `sSaveTextUTF8` was
+made *because* Ansi "produced a file `grep` reported as binary" — and it fixed the encoding while
+leaving the file binary, so **the symptom that motivated the fix survived it** for five phases. And
+`wWriteWz4tFile` was covered by no test at all: `wz4t_round` exercised the in-memory writer and the
+text reader, never the one the CLI calls. It now writes a real file and asserts the BOM, the absence
+of any NUL, and that `café °C — ΔΣ 中文` survives the file encoder. Verified by reverting the fix:
+`1 NUL(s) in 670 bytes`, FAIL.
 
 ## 8.4 (original plan text) — Editor
 

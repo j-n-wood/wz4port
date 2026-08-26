@@ -319,6 +319,78 @@ void sMain()
     }
   }
 
+  // --- the FILE writer ----------------------------------------------------
+  //
+  // Everything above goes through wWriteWz4t and wReadWz4tText, which never
+  // touch a disk — so the encoding wWriteWz4tFile applies was untested for five
+  // phases, and a defect sat in it that whole time: sSaveTextUTF8 wrote the
+  // string's terminating NUL into the file, which made every generated .wz4t
+  // binary to grep, git and diff. For a format whose entire purpose is being
+  // diffable that is the one property worth having.
+  //
+  // The file goes in the working directory, which ctest sets to the build tree.
+  {
+    sString<256> path;
+    path.PrintF(L"wz4t_round_%d.wz4t",Doc->Pages.GetCount());
+
+    Check(wWriteWz4tFile(path,meta)!=0,L"wWriteWz4tFile reports success");
+
+    sDInt size = 0;
+    sU8 *bytes = sLoadFile(path,size);
+    Check(bytes!=0 && size>0,L"and the file exists and is not empty");
+
+    if(bytes && size>0)
+    {
+      // The BOM is REQUIRED, not decoration: sLoadText decodes UTF-8 only when
+      // it is present (system.cpp:1080) and otherwise falls back to Latin-1.
+      Check(size>=3 && bytes[0]==0xef && bytes[1]==0xbb && bytes[2]==0xbf,
+        L"the file starts with a UTF-8 BOM, which the reader needs to decode it");
+
+      sInt nuls = 0;
+      for(sDInt i=0;i<size;i++)
+        if(bytes[i]==0)
+          nuls++;
+      Check(nuls==0,L"and contains NO NUL byte, so it is text to grep and git");
+      if(nuls)
+        sPrintF(L"        %d NUL(s) in %d bytes\n",nuls,sInt(size));
+    }
+    delete[] bytes;
+
+    // And the bytes decode back to the same document. Writing valid-looking
+    // UTF-8 that the reader disagrees with would pass every check above.
+    delete Doc;
+    Doc = new wDocument;
+    if(!wReadWz4t(path,meta))
+    {
+      sPrintF(L"  FAIL  the written FILE did not parse\n");
+      Failures++;
+    }
+    else
+    {
+      Doc->Connect();
+      sArray<Snap *> reread;
+      Take(reread);
+      Sort(reread);
+      Check(reread.GetCount()==before.GetCount(),
+        L"the file round trip preserves the operator count");
+
+      // The non-ASCII assertion again, this time across a real file — the path
+      // that actually encodes. "café °C — ΔΣ 中文" spans two-byte and three-byte
+      // sequences, so a truncated or mis-shifted encoder shows up here.
+      if(reread.GetCount() && reread[0]->Strings.GetCount())
+      {
+        const sChar *got = reread[0]->Strings[0];
+        if(sFindString(got,L"caf")>=0)
+        {
+          Check(sCmpString(got,L"café °C — ΔΣ 中文")==0,
+            L"and non-ASCII survives the FILE encoder, not just the in-memory one");
+          if(sCmpString(got,L"café °C — ΔΣ 中文")!=0)
+            sPrintF(L"        got \"%s\"\n",got);
+        }
+      }
+    }
+  }
+
   if(Failures)
   {
     sPrintF(L"\n--- first pass output ---\n%s\n",first.Get());

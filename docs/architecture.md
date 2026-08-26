@@ -1725,6 +1725,40 @@ A library that supplies both sides of a round trip removes the very thing that m
 worth running. Phase 6 declined libtess2 on effort grounds; this declined fx/gltf on evidentiary
 ones, which is the stronger argument and the one to reach for first.
 
+### A65 · Check the fix against the symptom that motivated it — standing
+
+*Phase 8, retroactive to phase 3.* `.wz4t` output was moved from `sSaveTextAnsi` to
+`sSaveTextUTF8` for a stated reason, recorded in the code: Ansi "produced a file `grep` reported as
+binary, which defeats the format's whole point." The move fixed the *encoding* — and the file stayed
+binary, because `sSaveTextUTF8` writes the string's terminating **NUL** into it
+(`system.cpp:1217`). The symptom that motivated the change survived the change, in the same file,
+under a comment explaining that it had been dealt with. Five phases passed.
+
+Two failures, and they compound:
+
+- **The fix was verified against its mechanism, not its symptom.** "Is the encoding now UTF-8?" was
+  asked and answered. "Can grep search the file?" — the actual complaint — was not re-run.
+- **The tested function was not the shipped one.** `wz4t_round` covers `wWriteWz4t` and
+  `wReadWz4tText`, both in memory, exhaustively — including a non-ASCII assertion added precisely
+  because stability is not correctness. `wWriteWz4tFile`, one line away and the function every CLI
+  path actually calls, was covered by nothing. The gap is invisible in a coverage-by-intent reading
+  because the two names differ by four characters.
+
+Neither test could have failed. Every comparison in the suite is whole-file — `cmp`, `compare_files`,
+`sCmpString` — and none of them cares about a trailing NUL. A file can be structurally perfect,
+byte-stable across round trips, and still unusable by the tools it exists to be read by.
+
+The same defect reached glTF export by the same route and was found there first, by trying to `grep`
+an exported file for its buffer uri while writing `docs/editor.md` and getting nothing back. **Writing
+the user documentation was what found it** — because a user guide makes claims about observable
+behaviour, and checking those claims exercises the product the way a user does rather than the way a
+test does.
+
+One asymmetry to keep straight, since it looks like an inconsistency: **glTF forbids the BOM and
+`.wz4t` requires it.** RFC 8259 says a JSON implementation must not add one; `sLoadText` decodes
+UTF-8 only when one is present and otherwise falls back to Latin-1. Removing the BOM and removing
+the NUL look like the same tidy-up and are opposites.
+
 ---
 
 ## Part 3 — where inference lost to measurement
@@ -1787,6 +1821,8 @@ adopted because of this list.
 | glTF export needs a JSON library | A reader and a writer already existed in-tree, in separate files — and using them keeps the round-trip oracle a vendored library would have destroyed (A64) |
 | A cube is enough to test a coordinate conversion | It is symmetric in z, so omitting the mirror ENTIRELY passes every check. The asymmetric case is the only one that decides it (8.3) |
 | The goldens cover the exporter | They cover `.gltf`, because a `.glb` is not a reviewable diff — so the container the editor writes by default was the one format nothing tested (8.4) |
+| `.wz4t` is written as text | `sSaveTextUTF8` appends the terminating NUL, so every generated file was binary to grep and git — under a comment saying that had been fixed (A65) |
+| `wz4t_round` tests the `.wz4t` writer | It tests the in-memory one. `wWriteWz4tFile`, which every CLI path calls, was untested for five phases (A65) |
 
 ---
 

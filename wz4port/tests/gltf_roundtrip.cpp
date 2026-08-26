@@ -439,6 +439,75 @@ static sBool CheckGltf(const sChar *path,wGltfMesh *out,sBool quiet=0)
 }
 
 /****************************************************************************/
+/***   the bytes, before any parser gets to be forgiving about them        ***/
+/****************************************************************************/
+//
+// CheckGltf above cannot catch either of the defects this checks for, and that is
+// the point of having it separately.
+//
+//   a BOM is STRIPPED by sLoadText on the way into wJsonDoc, so a file that
+//     violates RFC 8259 parses cleanly here and is rejected by stricter loaders;
+//   a trailing NUL sits after the closing brace, so the parse succeeds and the
+//     file is nonetheless binary to grep, git and diff.
+//
+// Both were real: the .gltf writer used sSaveTextUTF8 until phase 8 and emitted
+// both. In .wz4t the same defect survived five phases under a comment saying it
+// had been fixed (architecture.md A65), because every test there compared whole
+// files and none of them read one. So these assertions are byte-level on purpose.
+//
+// RFC 8259: an implementation MUST NOT add a BOM. glTF: the GLB JSON chunk is
+// UTF-8 without one, and is padded to four bytes with SPACES (0x20) — trailing
+// NULs there would be a different spec violation with the same cause.
+
+static void CheckBytes(const sChar *path,const sChar *label)
+{
+  sDInt size = 0;
+  sU8 *raw = sLoadFile(path,size);
+  if(!raw || size<=0)
+  {
+    sPrintF(L"  FAIL  %s: cannot read it back\n",label);
+    Failures++;
+    delete[] raw;
+    return;
+  }
+
+  const sU8 *json = raw;
+  sDInt len = size;
+  sBool glb = 0;
+
+  if(size>=20 && ChunkU32(raw,0)==0x46546C67)
+  {
+    glb = 1;
+    len = sDInt(ChunkU32(raw,12));
+    json = raw+20;
+    Check((len%4)==0,L"the GLB JSON chunk length is 4-aligned");
+    Check(sDInt(20)+len<=size,L"and the chunk fits the file");
+    if(len>0 && sDInt(20)+len<=size)
+      Check(json[len-1]==' ' || json[len-1]=='}' || json[len-1]=='\n',
+        L"and is padded with spaces, not NULs");
+  }
+
+  if(len>=3)
+    Check(!(json[0]==0xef && json[1]==0xbb && json[2]==0xbf),
+      glb ? L"the GLB JSON chunk has NO BOM (glTF requires UTF-8 without one)"
+          : L"the .gltf has NO BOM (RFC 8259: an implementation must not add one)");
+
+  Check(len>0 && json[0]=='{',L"and starts at the opening brace");
+
+  sInt nuls = 0;
+  for(sDInt i=0;i<len;i++)
+    if(json[i]==0)
+      nuls++;
+  Check(nuls==0,
+    glb ? L"and contains no NUL byte"
+        : L"and contains no NUL, so it is text to grep, git and diff");
+  if(nuls)
+    sPrintF(L"        %d NUL(s) in %d bytes\n",nuls,sInt(len));
+
+  delete[] raw;
+}
+
+/****************************************************************************/
 /***   the handedness gate                                                 ***/
 /****************************************************************************/
 //
@@ -610,10 +679,29 @@ static void Export(Wz4Mesh *mesh,const sChar *dir,const sChar *name,
   Check(bytes!=0 && size>0,L"and the file exists and is not empty");
   delete[] bytes;
 
+  CheckBytes(path,name);
+
   wGltfMesh m;
   Check(CheckGltf(path,&m)!=0,L"and a separate JSON parser validates it");
   if(m.Verts==0)
     return;
+
+  // The same mesh as a .glb, so the container the editor writes by default gets
+  // the same byte-level scrutiny. Its JSON chunk has different padding rules and
+  // is the one glTF explicitly requires to carry no BOM.
+  {
+    sString<1024> glbpath(dir);
+    glbpath.Add(L"/"); glbpath.Add(name); glbpath.Add(L".glb");
+
+    wGltfStats gst;
+    Check(wWriteGltfFile(glbpath,mesh,&gst)!=0,L"the same mesh writes as .glb");
+    CheckBytes(glbpath,name);
+
+    wGltfMesh gm;
+    Check(CheckGltf(glbpath,&gm)!=0,L"and the .glb validates");
+    Check(gm.Verts==m.Verts && gm.Idx.GetCount()==m.Idx.GetCount(),
+      L"and both containers describe the same geometry");
+  }
 
   Check(m.Verts==mesh->Vertices.GetCount(),
     L"every vertex reached the buffer, used or not");

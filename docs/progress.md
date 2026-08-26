@@ -685,15 +685,45 @@ part that mattered — a NUL makes `file` report `data`, grep refuse to search, 
 git refuse to diff. That **defeated the reason the goldens are `.gltf` rather than
 `.glb`**: they were being compared as opaque blobs, and `cmake -E compare_files`
 does not care. Fixed by narrowing to bytes and using `sSaveFile`; each golden
-shrank by exactly 4 bytes and no `.bin` changed. The GLB path was already correct.
+shrank by exactly 4 bytes and no `.bin` changed. The GLB path was already
+correct — glTF requires that chunk to be UTF-8 *without* a BOM, and it never
+copied the terminator.
+
+**The round-trip gate could not have caught it**, which is the same shape as the
+`.wz4t` failure: `CheckGltf` parses with `wJsonDoc`, which reads through
+`sLoadText`, and `sLoadText` **strips the BOM**; the NUL sits after the closing
+brace so the parse succeeds too. `gltf_roundtrip` now checks the **bytes** on both
+containers — no BOM, no NUL, starts at `{`, and for GLB a 4-aligned JSON chunk
+padded with spaces rather than NULs. Verified by reverting the writer: six
+failures, `1 NUL(s) in 2332 bytes`, with the `.glb` assertions staying green.
+Independently confirmed with Node's `JSON.parse` on both containers.
 Found by grepping an exported file for its buffer uri and getting nothing back —
 a claim in `docs/editor.md` that turned out to be untestable as written.
 
-**The same defect is still in `wz4t_write.cpp`.** Generated `.wz4t` files carry a
-BOM and a trailing NUL and grep cannot search them, which matters more there than
-in glTF — a text graph format exists to be diffable. Hand-written case files are
-unaffected. Recorded, not fixed: it is phase 3 code and every generated-document
-comparison would need re-checking.
+**`wz4t_write.cpp` had the same defect, and it is now fixed too.** Generated
+`.wz4t` files carried a trailing NUL and grep could not search them — which
+matters more there than in glTF, since a text graph format exists to be diffable.
+
+The **BOM stays**, and the distinction is the whole point of the fix: `sLoadText`
+decodes UTF-8 *only* when the BOM is present (`system.cpp:1080`) and otherwise
+falls back to Latin-1, so removing it would silently reintroduce the mojibake
+this format already lost "café" to once. Removing the BOM and removing the NUL
+look like the same tidy-up and are opposites — one is required, the other is a
+defect. `wz4t/wz4t_write.cpp` now encodes UTF-8 itself: same BOM, no terminator.
+
+**The uncomfortable part.** The original move from `sSaveTextAnsi` to
+`sSaveTextUTF8` was made *because* "converting example.wz4 with Ansi produced a
+file `grep` reported as binary" — the comment says so. It fixed the encoding and
+left the file binary, and the symptom that motivated it survived the fix for five
+phases. Nothing noticed because every test compares whole files rather than
+reading one.
+
+**The file writer was never tested at all.** `wz4t_round` exercised
+`wWriteWz4t` + `wReadWz4tText`, both in memory; `wWriteWz4tFile` — one line away,
+and the one the CLI actually calls — was covered by nothing. It now writes a real
+file and asserts the BOM is present, that there is **no NUL**, and that
+`café °C — ΔΣ 中文` survives the *file* encoder rather than only the in-memory
+one. Verified by reverting to `sSaveTextUTF8`: `1 NUL(s) in 670 bytes`, FAIL.
 
 **Still outstanding: nobody has opened one of these files in a viewer.** The
 structural evidence is strong and the handedness gate is a good proxy, but the

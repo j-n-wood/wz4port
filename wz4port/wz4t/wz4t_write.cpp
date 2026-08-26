@@ -432,25 +432,73 @@ sBool wWriteWz4t(sTextBuffer &out,const wMetaLibrary &meta)
   return 1;
 }
 
+// UTF-8 with a BOM, and WITHOUT the string's terminating NUL.
+//
+// Not sSaveTextAnsi: a .wz4t carries arbitrary document text — operator names,
+// comment bodies, file paths — and sSaveTextAnsi truncates every sChar to one
+// byte, so anything outside Latin-1 is silently corrupted and a round trip loses
+// it. Compare opsmeta, which escapes non-ASCII as \uXXXX and can stay Ansi
+// because its output is ASCII by construction; here escaping would make the file
+// less readable, not more.
+//
+// And not sSaveTextUTF8 either, which is the obvious call and was the one used
+// until phase 8. It writes the BOM and encodes correctly, then writes the
+// TERMINATING NUL into the file (system.cpp:1217). A NUL is not text: `file`
+// reports the result as data, grep refuses to search it and git will not diff
+// it — which is precisely the complaint that motivated moving off Ansi in the
+// first place. That change fixed the encoding and left the file binary, and
+// nothing noticed for five phases because every test compares whole files rather
+// than reading them.
+//
+// THE BOM STAYS. sLoadText decodes UTF-8 only when it is present
+// (system.cpp:1080) and otherwise falls back to Latin-1, so dropping it would
+// silently reintroduce the mojibake this format already lost "café" to once
+// (wz4t_read.cpp:941). Removing the BOM and removing the NUL look like the same
+// tidy-up and are opposites: one is required, the other is a defect.
+static sBool SaveTextUtf8NoNul(const sChar *filename,const sChar *data)
+{
+  const sInt len = sGetStringLen(data);
+
+  // sChar is 16 bits here, so three bytes is the worst case per character.
+  sU8 *buffer = new sU8[len*3+3];
+  sU8 *d = buffer;
+
+  *d++ = 0xef;
+  *d++ = 0xbb;
+  *d++ = 0xbf;
+
+  for(sInt i=0;i<len;i++)
+  {
+    const sInt c = data[i]&0xffff;
+    if(c<0x80)
+    {
+      *d++ = sU8(c);
+    }
+    else if(c<0x800)
+    {
+      *d++ = sU8(0xc0 | ((c>> 6)&0x1f));
+      *d++ = sU8(0x80 | ( c     &0x3f));
+    }
+    else
+    {
+      *d++ = sU8(0xe0 | ((c>>12)&0x0f));
+      *d++ = sU8(0x80 | ((c>> 6)&0x3f));
+      *d++ = sU8(0x80 | ( c     &0x3f));
+    }
+  }
+
+  const sBool ok = sSaveFile(filename,buffer,d-buffer);
+  delete[] buffer;
+  return ok;
+}
+
 sBool wWriteWz4tFile(const sChar *filename,const wMetaLibrary &meta)
 {
   sTextBuffer out;
   if(!wWriteWz4t(out,meta))
     return 0;
 
-  // UTF-8, not sSaveTextAnsi.
-  //
-  // A .wz4t file carries arbitrary document text — operator names, comment
-  // bodies, file paths — and sSaveTextAnsi truncates every sChar to one byte,
-  // so anything outside Latin-1 is silently corrupted and a round trip loses
-  // it. Converting example.wz4 with Ansi also produced a file `grep` reported
-  // as binary, which defeats the format's whole point.
-  //
-  // sLoadText recognises the UTF-8 BOM and decodes it (system.cpp:1080), so
-  // this reads back losslessly. Compare opsmeta, which escapes non-ASCII as
-  // \uXXXX instead and can stay Ansi because its output is ASCII by
-  // construction; here escaping would make the file less readable, not more.
-  if(!sSaveTextUTF8(filename,out.Get()))
+  if(!SaveTextUtf8NoNul(filename,out.Get()))
   {
     sPrintF(L"wz4t: could not write <%s>\n",filename);
     return 0;
