@@ -7,7 +7,7 @@
 #include "doc.hpp"                // tools/wz4ops — the parse tree
 #include "base/system.hpp"
 #include "opsmeta.hpp"
-#include "json.hpp"
+#include "json_write.hpp"
 
 /****************************************************************************/
 /***                                                                      ***/

@@ -26,6 +26,7 @@
 #include "wz4frlib/wz4_mesh_ops.hpp"
 #include "wz4frlib/wz4_mesh.hpp"           // Wz4Mesh, for render
 #include "mesh_check.hpp"                  // the 6.3 invariant battery
+#include "gltf_write.hpp"                  // phase 8 glTF export
 #include "util/image.hpp"                  // sImage::SavePNG
 #include "base/system.hpp"
 #include "meta.hpp"
@@ -1031,12 +1032,51 @@ static void ReportMesh(Wz4Mesh *mesh,const sChar *out)
   if(!out)
     return;
 
-  // Dispatch on the extension, as `convert` does. OBJ is the only mesh format
-  // this build can write — SaveOBJ is upstream's, in wz4_mesh_obj.cpp.
-  if(sFindString(out,L".obj")<0)
+  // Dispatch on the extension, as `convert` does. Three mesh formats: OBJ is
+  // upstream's SaveOBJ (wz4_mesh_obj.cpp), glTF is ours (geo/gltf_write.cpp) and
+  // carries the second UV set, the tangents and the cluster structure that OBJ
+  // drops. `.gltf` writes a `.bin` beside itself; `.glb` is the single file.
+  const sBool gltf = sFindString(out,L".gltf")>=0 || sFindString(out,L".glb")>=0;
+
+  if(!gltf && sFindString(out,L".obj")<0)
   {
-    sPrintF(L"wz4gen: <%s> is not a .obj — a mesh cannot be written as an image\n",out);
+    sPrintF(L"wz4gen: <%s> is not a .obj, .gltf or .glb"
+            L" — a mesh cannot be written as an image\n",out);
     sSetErrorCode();
+    return;
+  }
+
+  if(gltf)
+  {
+    wGltfStats gs;
+    if(!wWriteGltfFile(out,mesh,&gs))
+    {
+      sPrintF(L"wz4gen: could not write <%s>\n",out);
+      sSetErrorCode();
+      return;
+    }
+
+    // Read back, for the same reason the OBJ path does: a writer's success
+    // return is not evidence that anything landed (architecture.md A39).
+    sDInt gsize = 0;
+    sU8 *gbytes = sLoadFile(out,gsize);
+    if(!gbytes || gsize<=0)
+    {
+      sPrintF(L"wz4gen: the glTF writer reported success but <%s> is missing"
+              L" or empty\n",out);
+      sSetErrorCode();
+      delete[] gbytes;
+      return;
+    }
+    delete[] gbytes;
+
+    sPrintF(L"  gltf %d vertices, %d triangles, %d primitive(s)",
+      gs.Verts,gs.Tris,gs.Prims);
+    if(gs.UnusedVerts)
+      sPrintF(L", %d unused vertex(es) kept",gs.UnusedVerts);
+    if(gs.Degenerate)
+      sPrintF(L", %d degenerate face(s)",gs.Degenerate);
+    sPrintF(L"\n  wrote %s (%d bytes)\n",out,sInt(gsize));
     return;
   }
 

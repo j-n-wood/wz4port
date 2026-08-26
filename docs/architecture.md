@@ -1694,6 +1694,37 @@ between showing the absence and simulating the feature. Simulating it costs
 nothing today and destroys the viewer's credibility the first time someone
 imports a real rig and cannot tell the drawn hierarchy from the inferred one.
 
+### A64 · An oracle can be reconstructed, and that is worth a dependency to avoid — standing
+
+*Phase 8.* glTF export looked like the obvious place to vendor a library: fx/gltf, or at least
+nlohmann/json. The reason not to turned out to be about **testing**, not about size or licence.
+
+`tests/mesh_obj.cpp` is a real test of `SaveOBJ` rather than a self-consistent one because upstream's
+`LoadOBJ` shares no code with it. A writer checked by its own reader agrees with itself no matter how
+wrong both are. There is no `LoadGLTF` in this tree, so that oracle does not come free — and a single
+vendored library used for both directions would not have supplied one either. It would have supplied
+the *appearance* of one.
+
+It was reconstructed instead, from two implementations that already existed and had never met:
+
+- `wz4t/json.hpp` — a general JSON **reader**, written for the metadata runtime in phase 3.
+- `tools/opsmeta/json.hpp` — a deterministic JSON **writer**, written for reviewable metadata output.
+
+The writer moved to `wz4t/json_write.cpp` and the exporter emits through it; the test reads back
+through the reader. Neither knows the other exists. Both already solve the float round-trip problems
+(A18, A34) that any JSON emitter in this tree would otherwise hit.
+
+Three supporting facts, none of which would have been decisive alone: `curl` is not allowlisted, so
+both libraries would have had to be vendored by hand; fx/gltf throws unconditionally with no
+`JSON_NOEXCEPTION` escape and Altona builds `-fno-exceptions`; and we only ever *write*, which is the
+half a glTF library adds least to.
+
+The general point, and the reason this is an entry rather than a note: **"is there an independent
+implementation to check this against?" is a question about the dependency, not just about the test.**
+A library that supplies both sides of a round trip removes the very thing that made the round trip
+worth running. Phase 6 declined libtess2 on effort grounds; this declined fx/gltf on evidentiary
+ones, which is the stronger argument and the one to reach for first.
+
 ---
 
 ## Part 3 — where inference lost to measurement
@@ -1753,6 +1784,8 @@ adopted because of this list.
 | A new operator means patching an upstream `.ops` | `wz4_add_ops` copies to the build tree first, so a `.ops` in `wz4port/` works — zero upstream changes (A62) |
 | An unskinned vertex has `Index[0] < 0` | It has `Index[0] >= joint count`; `sClear` leaves it at 0, which is a valid joint (A61) |
 | A skeleton is a chain, so bones can be drawn to parents | `Init` sets `Parent = -1` and `Deform` never assigns it. Hierarchy, like motion, only ever came from import (A63) |
+| glTF export needs a JSON library | A reader and a writer already existed in-tree, in separate files — and using them keeps the round-trip oracle a vendored library would have destroyed (A64) |
+| A cube is enough to test a coordinate conversion | It is symmetric in z, so omitting the mirror ENTIRELY passes every check. The asymmetric case is the only one that decides it (8.3) |
 
 ---
 

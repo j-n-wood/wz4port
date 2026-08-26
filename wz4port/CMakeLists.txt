@@ -160,15 +160,21 @@ target_link_libraries(wz4ops PRIVATE altona_util)
 add_executable(opsmeta
   "${CMAKE_CURRENT_SOURCE_DIR}/tools/opsmeta/main.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/tools/opsmeta/emit.cpp"
-  "${CMAKE_CURRENT_SOURCE_DIR}/tools/opsmeta/json.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/wz4t/json_write.cpp"
   "${ALTONA_TOOLS}/wz4ops/doc.cpp"
   "${ALTONA_TOOLS}/wz4ops/parse.cpp"
 )
-# tools/wz4ops so that #include "doc.hpp" finds the parse tree, and our own
-# directory for opsmeta.hpp / json.hpp.
+# tools/wz4ops so that #include "doc.hpp" finds the parse tree, our own directory
+# for opsmeta.hpp, and wz4t for json_write.hpp.
+#
+# The JSON writer moved to wz4t/ in phase 8 so the glTF exporter could share it.
+# opsmeta compiles it by path rather than linking wz4t, which keeps this tool
+# free of the document library it has no other use for — the same arrangement it
+# had before, one directory over.
 target_include_directories(opsmeta PRIVATE
   "${ALTONA_TOOLS}/wz4ops"
   "${CMAKE_CURRENT_SOURCE_DIR}/tools/opsmeta"
+  "${CMAKE_CURRENT_SOURCE_DIR}/wz4t"
 )
 target_link_libraries(opsmeta PRIVATE altona_util)
 
@@ -579,9 +585,13 @@ target_compile_options(wz4geo PRIVATE
 # symbol.
 add_library(wz4geochk STATIC
   "${CMAKE_CURRENT_SOURCE_DIR}/geo/mesh_check.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/geo/gltf_write.cpp"
 )
 target_include_directories(wz4geochk PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/geo")
-target_link_libraries(wz4geochk PUBLIC wz4geo)
+# wz4t for json_write.hpp. It is a heavier dependency than a JSON writer warrants,
+# but the alternative — compiling json_write.cpp into this target as well — gives
+# a duplicate definition in anything linking both, and wz4gen links both.
+target_link_libraries(wz4geochk PUBLIC wz4geo wz4t)
 target_compile_options(wz4geochk PRIVATE
   "SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/tests/gui_poison.h"
 )
@@ -598,6 +608,7 @@ target_compile_options(wz4geochk PRIVATE
 
 add_library(wz4t STATIC
   "${CMAKE_CURRENT_SOURCE_DIR}/wz4t/json.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/wz4t/json_write.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/wz4t/meta.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/wz4t/wz4t_read.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/wz4t/wz4t_write.cpp"
@@ -1399,6 +1410,25 @@ target_compile_options(mesh_obj PRIVATE
 )
 add_test(NAME mesh_obj COMMAND mesh_obj "${CMAKE_BINARY_DIR}/obj")
 
+# Phase 8. Same shape as mesh_obj, and the same reasoning about oracles: the
+# writer emits through wz4t/json_write.hpp, this reads back through wz4t/json.hpp,
+# and the two share no code.
+file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/gltf")
+
+add_executable(gltf_roundtrip
+  "${CMAKE_CURRENT_SOURCE_DIR}/tests/gltf_roundtrip.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/editor/docedit.cpp"
+)
+target_link_libraries(gltf_roundtrip PRIVATE wz4geochk)
+target_include_directories(gltf_roundtrip PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}/editor")
+target_compile_options(gltf_roundtrip PRIVATE
+  "SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/tests/gui_poison.h"
+)
+add_test(NAME gltf_roundtrip COMMAND gltf_roundtrip "${CMAKE_BINARY_DIR}/gltf")
+set_tests_properties(gltf_roundtrip PROPERTIES
+  FAIL_REGULAR_EXPRESSION "FATAL ERROR")
+
 # The one thing the round-trip test cannot cover: that `wz4gen render` reaches
 # the writer at all, and reports the mesh rather than falling through to its
 # "produced a Wz4Mesh" default.
@@ -1559,6 +1589,69 @@ message(STATUS "mesh OBJ goldens: ${_objcount}")
 add_custom_target(lock_obj_goldens ${WZ4_OBJ_LOCK_CMDS}
   DEPENDS wz4gen opsmeta_gate
   COMMENT "re-locking the mesh OBJ goldens — READ git diff tests/geo/golden/"
+  VERBATIM)
+
+#############################################################################
+##  glTF goldens — phase 8.3                                               ##
+#############################################################################
+#
+# The same six stores as the OBJ goldens, so the two formats can be compared on
+# identical geometry when one of them disagrees. Each locks TWO files: the .gltf
+# JSON, which diffs cleanly, and the .bin, which is where the coordinates
+# actually live and where a change is invisible in the JSON.
+
+set(WZ4_GLTF_DIR "${CMAKE_BINARY_DIR}/gltf")
+file(MAKE_DIRECTORY "${WZ4_GLTF_DIR}")
+
+# The official Khronos validator, when someone has installed it. Absent by
+# default and its absence is NOT a failure: there is no network access here, so
+# requiring it would make the suite unrunnable on a clean checkout. It is the
+# only check that tests conformance to the specification rather than to our own
+# reading of it, which is why the hook exists at all.
+#   npm i -g gltf-validator
+find_program(WZ4_GLTF_VALIDATOR NAMES gltf_validator gltf-validator)
+if(WZ4_GLTF_VALIDATOR)
+  message(STATUS "glTF validator: ${WZ4_GLTF_VALIDATOR}")
+else()
+  message(STATUS "glTF validator not found: goldens still run,"
+                 " spec conformance is not checked (npm i -g gltf-validator)")
+endif()
+
+set(WZ4_GLTF_LOCK_CMDS "")
+
+foreach(_entry ${WZ4_OBJ_GOLDENS})
+  string(REPLACE "|" ";" _parts "${_entry}")
+  list(GET _parts 0 _doc)
+  list(GET _parts 1 _store)
+
+  add_test(NAME gltf_golden_${_store}
+    COMMAND "${CMAKE_COMMAND}"
+      -DWZ4GEN=$<TARGET_FILE:wz4gen>
+      -DDOC=${CMAKE_CURRENT_SOURCE_DIR}/tests/geo/${_doc}
+      -DOP=${_store}
+      -DMETA=${WZ4_META_DIR}
+      -DOUT=${WZ4_GLTF_DIR}/${_store}.gltf
+      -DGOLDEN=${CMAKE_CURRENT_SOURCE_DIR}/tests/geo/golden/gltf/${_store}.gltf
+      -DWORKDIR=${WZ4_GLTF_DIR}
+      -DVALIDATOR=${WZ4_GLTF_VALIDATOR}
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/geo/golden_gltf.cmake")
+  set_tests_properties(gltf_golden_${_store} PROPERTIES DEPENDS opsmeta_gate)
+
+  list(APPEND WZ4_GLTF_LOCK_CMDS
+    COMMAND "${CMAKE_COMMAND}"
+      -DWZ4GEN=$<TARGET_FILE:wz4gen>
+      -DDOC=${CMAKE_CURRENT_SOURCE_DIR}/tests/geo/${_doc}
+      -DOP=${_store}
+      -DMETA=${WZ4_META_DIR}
+      -DGOLDEN=${CMAKE_CURRENT_SOURCE_DIR}/tests/geo/golden/gltf/${_store}.gltf
+      -DWORKDIR=${WZ4_GLTF_DIR}
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/geo/lock_gltf_goldens.cmake")
+endforeach()
+
+# Never part of ALL, and never run by ctest. Re-locking has to be asked for.
+add_custom_target(lock_gltf_goldens ${WZ4_GLTF_LOCK_CMDS}
+  DEPENDS wz4gen opsmeta_gate
+  COMMENT "re-locking the glTF goldens — READ git diff tests/geo/golden/gltf/"
   VERBATIM)
 
 #############################################################################

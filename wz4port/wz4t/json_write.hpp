@@ -9,12 +9,23 @@
 // absolute paths. The output is a review artefact, so it has to diff cleanly
 // when a .ops file changes by one line.
 //
+// Moved here from tools/opsmeta/ in phase 8, unchanged. It now has two callers —
+// opsmeta's metadata and geo/gltf_write.cpp — and it belongs beside json.hpp,
+// the reader, because together they are the reason this port needs no JSON
+// dependency: we write with one and the tests read back with the other, and the
+// two share no code. That is the same relationship that makes tests/mesh_obj.cpp
+// a real test of SaveOBJ rather than a self-consistent one.
+//
+// `opsmeta` compiles this file by path rather than linking wz4t, so the move
+// cost it one include line. The proof that it changed nothing is that the
+// generated metadata is byte-identical: see docs/10-phase-gltf.md 8.1.
+//
 // All output is pure ASCII — characters outside 0x20..0x7e are escaped as
 // \uXXXX. That keeps the file readable regardless of what encoding the .ops
 // source used, which matters in this tree (see wz4port/patches/03).
 
-#ifndef FILE_WZ4PORT_OPSMETA_JSON_HPP
-#define FILE_WZ4PORT_OPSMETA_JSON_HPP
+#ifndef FILE_WZ4PORT_JSON_WRITE_HPP
+#define FILE_WZ4PORT_JSON_WRITE_HPP
 
 #include "base/types2.hpp"
 
@@ -61,4 +72,4 @@ public:
 
 /****************************************************************************/
 
-#endif // FILE_WZ4PORT_OPSMETA_JSON_HPP
+#endif // FILE_WZ4PORT_JSON_WRITE_HPP

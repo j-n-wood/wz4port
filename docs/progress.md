@@ -625,6 +625,54 @@ vertices from the end.
 been a no-op and the gate would have compared a render against itself, passing by
 accident. Both verified negatively.
 
+**Phase 8 stages 8.1–8.3 are done: meshes export as glTF 2.0.** `wz4gen render
+… -out x.gltf` writes JSON plus a `.bin` sidecar, `-out x.glb` writes the single
+binary container, and both carry what OBJ drops — the second UV set, the
+tangents, and the cluster structure as separate primitives. 160/160 ctest, zero
+upstream footprint. See `docs/10-phase-gltf.md`.
+
+**fx/gltf and nlohmann/json were considered and declined, on evidentiary
+grounds.** `tests/mesh_obj.cpp` is a real test of `SaveOBJ` rather than a
+self-consistent one because upstream's `LoadOBJ` shares no code with it. There is
+no `LoadGLTF` here, and a single vendored library used for both directions would
+not have supplied one — it would have supplied the *appearance* of one. The
+oracle was reconstructed instead from two implementations that already existed
+and had never met: `wz4t/json.hpp`, a JSON reader written for the metadata
+runtime, and `tools/opsmeta/json.hpp`, a deterministic writer. The writer moved to
+`wz4t/json_write.cpp`; the exporter emits through it and the test reads back
+through the reader. Both already solve the float round-trip traps (A18, A34).
+Recorded as **A64**. Verified byte-identical: all 34 metadata files deleted and
+regenerated, checksum unchanged.
+
+**A symmetric mesh cannot test a coordinate conversion.** Wz4 is left-handed
+Y-up, glTF right-handed Y-up, so the conversion is a z-mirror plus a winding
+reversal — and omitting it *entirely* passes every check on a cube while
+producing a file that opens mirrored everywhere. The two halves cancel in the
+checks and not in the result. So the case is a cube translated +1 in z, and the
+exported range must be the source's negated and swapped: `0.5..1.5` in,
+`-1.5..-0.5` out.
+
+**Both handedness checks are load-bearing, and that was measured** by breaking
+the writer twice. Reversing nothing gives 12 of 12 faces inward. Mirroring
+positions but not normals gives **0 inward and 4 disagreeing** — the winding check
+alone reports a clean mesh, and only the normal-agreement check sees it. Either
+check on its own would have shipped one of these.
+
+**The buffer half of each golden catches what the JSON cannot.** Verified by
+corrupting four bytes of `p_dual.bin`: the JSON comparison passes and the buffer
+comparison fails. A JSON-only golden would accept a writer that emitted the right
+accessors over the wrong vertices. A43 inverted twice — there a PNG golden was
+blind to the low 8 bits and needed a checksum beside it; here the JSON is blind to
+every coordinate.
+
+**Still outstanding: nobody has opened one of these files in a viewer.** The
+structural evidence is strong and the handedness gate is a good proxy, but the
+goldens record what the writer does, not that it is right — 6.3b's OBJ review is
+the precedent, and that review is the remaining step. An optional Khronos
+validator hook is wired in and dormant (`npm i -g gltf-validator`); it is the only
+check that would test conformance to the specification rather than to our reading
+of it.
+
 **`wz4ed` is the editor.** It has a window, a menu bar, a metadata-driven
 inspector, and the stacking canvas: blocks coloured by output type, selection,
 move and resize by drag with the projected destination framed, fit-to-page,
@@ -760,6 +808,7 @@ about the build.
 | 5 — Texture GUI | **Done**, phase gate passed. `wz4ed` edits textures |
 | 6 — Geometry | **Done**, phase gate passed. All 45 operators, 3D preview, OBJ both ways, Text3D |
 | 7 — Animated geometry | **done** — `AnimateBones` added, geometry moves over time, rigged meshes scrub in the preview, joints draw over the mesh |
+| 8 — glTF export | **8.1–8.3 done** — meshes export as `.gltf`+`.bin` or `.glb` from `wz4gen`, with a round-trip oracle and six goldens. 8.4 editor menu remains |
 
 ---
 
