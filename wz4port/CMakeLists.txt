@@ -1672,6 +1672,72 @@ add_custom_target(lock_gltf_goldens ${WZ4_GLTF_LOCK_CMDS}
   VERBATIM)
 
 #############################################################################
+##  gltf_samples — files to actually LOOK at                               ##
+#############################################################################
+#
+#   cmake --build wz4port/build --target gltf_samples
+#
+# Writes one .glb per case into build/gltf-samples/. **GLB, not .gltf**, and that
+# is the whole point of this target existing separately from the goldens: a .gltf
+# is a JSON file plus a .bin sidecar that must travel with it, which most viewers
+# — and every drag-and-drop or upload-based one — will not accept. A .glb is a
+# single self-contained file.
+#
+# So the two formats are used for the two jobs they are each good at:
+#
+#   .gltf + .bin   the goldens, because a failure should be a readable diff
+#   .glb           these samples, because they are for opening in a viewer
+#
+# The set is deliberately varied rather than six near-identical cubes: primitives
+# with different topology, real glyph outlines from FreeType, a subdivided and a
+# dualised mesh, extrusion, and two baked poses of the same rig so the animation
+# path has something to show. Nothing here is compared against anything — this
+# target produces artefacts for a human, which is the one kind of review the
+# automated gates cannot do (docs/10-phase-gltf.md, "look at the output").
+
+set(WZ4_GLTF_SAMPLE_DIR "${CMAKE_BINARY_DIR}/gltf-samples")
+
+# doc|store
+set(WZ4_GLTF_SAMPLES
+  "ops_gen.wz4t|g_cube"
+  "ops_gen.wz4t|g_sphere"
+  "ops_gen.wz4t|g_torus"
+  "ops_gen.wz4t|g_cylinder"
+  "ops_gen.wz4t|g_disc"
+  "ops_gen.wz4t|g_grid"
+  "ops_gen.wz4t|g_text3d"          # FreeType glyph outlines, tessellated
+  "ops_gen.wz4t|g_path3d"          # an SVG-like path, extruded
+  "ops_topo.wz4t|p_subdivide"
+  "ops_topo.wz4t|p_dual"
+  "ops_topo.wz4t|p_facette"
+  "ops_topo.wz4t|p_extrude"
+  "ops_transform.wz4t|t_normalize"
+  "ops_anim.wz4t|an_baked_t0"      # the rig baked at t = 0
+  "ops_anim.wz4t|an_baked_t1"      # and at t = 0.5, so the two differ visibly
+)
+
+set(WZ4_GLTF_SAMPLE_CMDS
+  COMMAND "${CMAKE_COMMAND}" -E make_directory "${WZ4_GLTF_SAMPLE_DIR}")
+
+foreach(_entry ${WZ4_GLTF_SAMPLES})
+  string(REPLACE "|" ";" _parts "${_entry}")
+  list(GET _parts 0 _doc)
+  list(GET _parts 1 _store)
+  list(APPEND WZ4_GLTF_SAMPLE_CMDS
+    COMMAND "$<TARGET_FILE:wz4gen>" render
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/geo/${_doc}"
+      -op "${_store}" -meta "${WZ4_META_DIR}"
+      -out "${WZ4_GLTF_SAMPLE_DIR}/${_store}.glb")
+endforeach()
+
+list(LENGTH WZ4_GLTF_SAMPLES _samplecount)
+
+add_custom_target(gltf_samples ${WZ4_GLTF_SAMPLE_CMDS}
+  DEPENDS wz4gen opsmeta_gate
+  COMMENT "writing ${_samplecount} sample .glb files to ${WZ4_GLTF_SAMPLE_DIR}"
+  VERBATIM)
+
+#############################################################################
 ##  mesh_sweep — stage 6.3 Suite B: the bundled documents as a corpus      ##
 #############################################################################
 

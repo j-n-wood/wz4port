@@ -725,7 +725,83 @@ file and asserts the BOM is present, that there is **no NUL**, and that
 `café °C — ΔΣ 中文` survives the *file* encoder rather than only the in-memory
 one. Verified by reverting to `sSaveTextUTF8`: `1 NUL(s) in 670 bytes`, FAIL.
 
-**Still outstanding: nobody has opened one of these files in a viewer.** The
+**`ninja gltf_samples` writes 15 `.glb` files to `build/gltf-samples/`** for exactly
+that purpose — GLB rather than `.gltf`, because a `.gltf` drags a `.bin` sidecar
+that upload-based viewers will not take. The goldens stay `.gltf` for the
+opposite reason: a failure there should be a readable diff.
+
+**Generating them found a bug in the checker and two in the data.** The checker
+applied "every face winds outward from the centroid" unconditionally — a test
+valid only for a **closed convex** mesh, as its own comment said. A torus has ten
+inward-facing triangles by construction; a grid, a disc and an extruded path are
+not closed at all. Seven of fifteen samples looked broken with nothing wrong with
+any of them. The outward test is now opt-in (`-convex`, which the editor gate
+passes because it exports a cube); the NORMAL-agreement half needs no such
+assumption and always runs. Zero-area triangles are now counted and skipped
+rather than judged, since they have no orientation to be right or wrong about.
+
+What survived that is real, and is in the **source meshes, not the export**:
+
+| | disagreeing with NORMAL |
+|---|---|
+| `an_ref` — the unbaked reference | 0 of 68 |
+| `an_rest_baked` | **68 of 68** |
+| `an_baked_t0` | 37 of 68 |
+| `g_text3d` | 26 of 188 |
+| everything else — cube, sphere, torus, cylinder, disc, grid, path3d, subdivide, dual, facette, extrude, normalize | **0** |
+
+`BakeAnim` skins positions and leaves the **rest-pose normals**, which phase 7
+already recorded — it is why `wMeshView::RefreshVertices` blends normals itself
+and why the preview looks right where the export does not. `g_text3d` is our own
+2D tessellator's hole-bridging path; the extruded path is clean, so it is
+specific to holes. Both will look wrong in a viewer. Neither is the exporter,
+and the clean column is what says so.
+
+**Someone opened `g_text3d.glb` in a viewer and found a two-phase-old defect
+that every gate was green on.** Diagonal seams across the glyph faces, patches
+shaded inside-out, z-fighting in the counters.
+
+`Finish2DExtrusionOp` opens with a triangulation cleanup pass
+(`wz4_mesh.cpp:6182`) that edge-flips any triangle whose `(v2-v0) % (v1-v0)` has
+non-positive `z` — read the operand order: that is **every counter-clockwise
+triangle**, which is all of tess2d's. It was written for GLU's clockwise output,
+which is also what `wMeshTess::AddVertex` had been assuming all along by setting
+`Normal.z = -1`. So the pass edge-flipped whole caps, and an edge flip swaps a
+shared edge for the opposite diagonal — a correct annulus becoming triangles
+that span non-adjacent contour points, overlap, and half of them inverted.
+
+Fixed in our seam rather than upstream: `wMeshTess::EndPolygon` emits reversed.
+Measured before and after, on `g_path3d_hole`'s cap:
+
+| | triangles | signed area | unsigned area |
+|---|---|---|---|
+| before | 6 | −12 | **20** |
+| after | 8 | 12 | **12** |
+
+Signed equal to unsigned is the whole claim: every triangle winds the same way
+and they tile the annulus exactly. Normal disagreements went `g_text3d` 26 → **0**,
+`g_text3d_holes` 208 → **0**, `g_path3d_hole` 8 → **0**, and the hole-free cases
+were already 0 and stayed there. 13 of the 15 sample GLBs are now perfectly
+clean; the two that are not are the `BakeAnim` stale-normal cases above, which
+are a different thing entirely.
+
+**Why nothing caught it.** A cap with no interior edge cannot be flipped, so
+every hole-free case was perfect and the failure needed a hole — and the hole
+cases were the ones whose numbers nobody could derive by hand. Closedness passes,
+for the reason already on record: overlapping shells still pair their half-edges.
+The unsigned-area assertion that would have caught it exists, in
+`tess2d_shapes` — on the wrong side of the seam, running before the step that
+broke things. **And the face count was locked on the defect**: `g_path3d_hole`
+was recorded as 20 faces with the explanation "8 per cap, of which 2 are the
+bridge's zero-area slivers, so 6 real", while `ops_gen.wz4t` — written earlier —
+derived 24 and was right. Recorded as **A66**, whose general point is that a
+count needing an explanation rather than a derivation is a warning.
+
+Re-locked deliberately: `mesh_cases` now expects 24/16/8 for the hole case, and
+two checksums moved. Nothing else in the suite changed, which is what says the
+fix is surgical. 161/161.
+
+**Still outstanding for the rest: nobody has opened the other files in a viewer.** The
 structural evidence is strong and the handedness gate is a good proxy, but the
 goldens record what the writer does, not that it is right — 6.3b's OBJ review is
 the precedent, and that review is the remaining step. An optional Khronos

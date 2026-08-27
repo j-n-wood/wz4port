@@ -184,18 +184,24 @@ static const wExpect GenCases[] =
     L"extrude depth. y comes out -1..0 rather than 0..1 because SVG's y axis "
     L"points down. Empty before stage 6.6b replaced glu32 with geo/tess2d" },
 
-  { L"g_path3d_hole", 20,12,8, CL_CLOSED, 0.0f,-4.0f,0.0f, 4.0f,0.0f,0.5f, 0,0,1,
+  { L"g_path3d_hole", 24,16,8, CL_CLOSED, 0.0f,-4.0f,0.0f, 4.0f,0.0f,0.5f, 0,0,1,
     L"a 4x4 square with a 2x2 hole, extruded 0.5 — the case tess2d's hole "
     L"bridging exists for, driven through the real operator. Every number is "
     L"derived: tess2d gives 8 triangles for the ring (4 outer + 4 hole + 2 "
-    L"bridge vertices, minus 2), of which 2 are the bridge's zero-area slivers, "
-    L"so 6 real per cap and 12 for both; the walls are 4 quads outside plus 4 in "
-    L"the hole. 20 faces. "
+    L"bridge vertices, minus 2), so 8 per cap and 16 for both; the walls are 4 "
+    L"quads outside plus 4 in the hole. 24 faces. "
     L"THE FACE COUNT IS WHAT CATCHES A FILLED HOLE, not the closedness check: "
     L"written first with `N` between the contours — which ends the POLYGON, not "
     L"the contour — this came out as two overlapping solid squares, and it still "
     L"tested CLOSED, because two closed shells pair their half-edges whatever "
-    L"they overlap" },
+    L"they overlap. "
+    L"WAS 20,12,8 UNTIL PHASE 8, LOCKED ON A DEFECT. Finish2DExtrusionOp's "
+    L"triangulation cleanup edge-flipped every cap triangle, because it expects "
+    L"GLU's clockwise winding and tess2d emitted counter-clockwise; the result "
+    L"overlapped the hole with a reversed copy of itself. The count 20 was then "
+    L"rationalised as \"2 of the 8 are zero-area slivers\" — there are no "
+    L"slivers, and the arithmetic in ops_gen.wz4t said 24 all along. A count "
+    L"that has to be explained rather than derived is a warning" },
 
   { L"g_import_missing", NOC,NOC,NOC, CL_ANY, NOB,NOB,NOB, NOB,NOB,NOB, 0,0,0,
     L"Import of a file that does not exist must fail CLEANLY — a refusal, "
@@ -574,8 +580,12 @@ static const wLock Locks[] =
   { L"g_disc",                0xab89217d712098a6ULL },
   { L"g_text3d",              NOLOCK },
   { L"g_text3d_holes",        NOLOCK },
-  { L"g_path3d",              0x3569ecf987077ffaULL },
-  { L"g_path3d_hole",         0x2eabf2134db07369ULL },
+  // Both re-locked in phase 8, when the cap winding was corrected. g_path3d's
+  // geometry is unchanged — only the winding, which the checksum covers and the
+  // face count cannot. g_path3d_hole's geometry genuinely changed: it is an
+  // annulus now rather than a square with a reversed square laid over it.
+  { L"g_path3d",              0x58fc1c204f27b40eULL },
+  { L"g_path3d_hole",         0x1be2df33c398a015ULL },
   { L"g_import_missing",      0x0000000000000000ULL },
   { L"t_transform",           0x64bc39338e5dd34dULL },
   { L"t_transformex",         0x64bc39338e5dd34dULL },

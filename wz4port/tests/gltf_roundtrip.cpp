@@ -520,7 +520,19 @@ static void CheckBytes(const sChar *path,const sChar *label)
 // compose correctly. It is not something a screenshot of an unlit mesh can show,
 // and a viewer with backface culling off hides it completely.
 
-static void CheckOutward(const wGltfMesh &m,const sChar *label)
+// `convex` gates the centroid half ONLY. The two checks have very different
+// domains and conflating them was a bug:
+//
+//   NORMAL agreement is valid for ANY orientable mesh — it compares the winding
+//     against the normal stored beside it, and needs no assumption about shape;
+//   the outward test assumes a CLOSED CONVEX mesh, because only then does "away
+//     from the centroid" mean anything. A torus fails it correctly: ten of its
+//     thirty faces are on the inner surface and point inward by construction.
+//     So do a grid, a disc and an extruded path, which are not closed at all.
+//
+// Applying both unconditionally made seven of fifteen sample meshes look broken
+// when nothing was wrong with any of them.
+static void CheckWinding(const wGltfMesh &m,const sChar *label,sBool convex)
 {
   sF32 c[3] = { 0,0,0 };
   for(sInt i=0;i<m.Verts;i++)
@@ -529,7 +541,7 @@ static void CheckOutward(const wGltfMesh &m,const sChar *label)
   for(sInt k=0;k<3;k++)
     c[k] /= sF32(m.Verts);
 
-  sInt inward = 0, disagree = 0;
+  sInt inward = 0, disagree = 0, degenerate = 0;
   const sInt tris = m.Idx.GetCount()/3;
 
   for(sInt t=0;t<tris;t++)
@@ -545,6 +557,16 @@ static void CheckOutward(const wGltfMesh &m,const sChar *label)
     n[0] = u[1]*v[2]-u[2]*v[1];
     n[1] = u[2]*v[0]-u[0]*v[2];
     n[2] = u[0]*v[1]-u[1]*v[0];
+
+    // A zero-area triangle has no orientation, so every claim below is vacuous
+    // for it. Counted and skipped rather than silently passed: a mesh that is
+    // mostly slivers should say so, not report a clean bill of health.
+    const sF32 area2 = n[0]*n[0]+n[1]*n[1]+n[2]*n[2];
+    if(area2 <= 1e-16f)
+    {
+      degenerate++;
+      continue;
+    }
 
     if(n[0]*mid[0]+n[1]*mid[1]+n[2]*mid[2] <= 0)
       inward++;
@@ -562,9 +584,13 @@ static void CheckOutward(const wGltfMesh &m,const sChar *label)
     }
   }
 
-  sPrintF(L"  %s: %d triangles, %d inward, %d disagreeing with NORMAL\n",
+  sPrintF(L"  %s: %d triangles, %d inward, %d disagreeing with NORMAL",
     label,tris,inward,disagree);
-  Check(inward==0,L"every face winds outward — the mirror and the winding agree");
+  if(degenerate)
+    sPrintF(L", %d zero-area (skipped)",degenerate);
+  sPrint(L"\n");
+  if(convex)
+    Check(inward==0,L"every face winds outward — the mirror and the winding agree");
   Check(disagree==0,L"and the stored NORMAL agrees with the winding at every corner");
 }
 
@@ -710,7 +736,7 @@ static void Export(Wz4Mesh *mesh,const sChar *dir,const sChar *name,
       L"and the quad fan produced the expected triangle count");
 
   if(outward)
-    CheckOutward(m,name);
+    CheckWinding(m,name,1);   // the built-in cases are cubes: closed and convex
 }
 
 /****************************************************************************/
@@ -738,13 +764,22 @@ void sMain()
     const sChar *one = sGetShellParameter(L"check",0);
     if(one)
     {
+      // -convex additionally requires every face to wind away from the centroid.
+      // OPT-IN, because that only means anything on a closed convex mesh: a
+      // torus has ten inward-facing triangles by construction, and a grid, a
+      // disc or an extruded path are not closed at all. The NORMAL-agreement
+      // check below needs no such assumption and always runs.
+      const sBool convex = sGetShellSwitch(L"convex");
+
+      CheckBytes(one,L"exported");
+
       wGltfMesh m;
       Check(CheckGltf(one,&m)!=0,L"the exported file validates");
       if(m.Verts>0)
       {
         sPrintF(L"  %d vertices, %d triangles, %d primitive(s)\n",
           m.Verts,sInt(m.Idx.GetCount()/3),m.Prims);
-        CheckOutward(m,L"exported");
+        CheckWinding(m,L"exported",convex);
       }
       sPrintF(L"\ngltf_roundtrip: %d failure(s)\n",Failures);
       if(Failures)

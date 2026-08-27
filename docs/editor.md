@@ -214,20 +214,55 @@ wz4gen render doc.wz4t -op <storename> -meta meta -out mesh.obj    # Wavefront O
 uri — the pair must be kept together and moved together. `.glb` is one self-contained file and is
 the better choice for handing to someone else; the editor's menu writes `.glb` for that reason.
 
+### Example files to look at
+
+```sh
+cmake --build wz4port/build --target gltf_samples
+```
+
+writes 15 `.glb` files to `wz4port/build/gltf-samples/` — one per case, covering the primitives,
+FreeType glyph outlines (`g_text3d`), an extruded path, subdivision, dual, facette, extrusion, and
+two baked poses of the same rig (`an_baked_t0` / `an_baked_t1`) so the animation path has something
+to show.
+
+**GLB, not `.gltf`, and deliberately so.** A `.gltf` is JSON plus a `.bin` sidecar that must travel
+with it, which drag-and-drop and upload-based viewers will not accept. A `.glb` is one
+self-contained file. The goldens under `wz4port/tests/geo/golden/gltf/` stay `.gltf` + `.bin` for the
+opposite reason — a failure there should be a readable diff, not a byte offset.
+
+Thirteen of the fifteen have **zero** triangles disagreeing with their stored normal. The two that
+remain are `an_baked_t0` and `an_baked_t1`, and **the exporter is not the reason**: `BakeAnim` skins
+the positions and leaves the **rest-pose normals** untouched, so the shading does not follow the
+deformed surface. Measured — `an_rest_baked` has all 68 of its triangles disagreeing, and its
+unbaked reference has none. The editor's 3D preview blends normals itself, which is why it looks
+right there and wrong in an exported file.
+
+`g_text3d` used to belong in that list, with 26 of 188 triangles inside-out and z-fighting across
+every glyph counter. That was a real defect in the tessellation seam, found by looking at exactly
+these files, and it is fixed — see `10-phase-gltf.md`.
+
 ### Verifying an export
 
 There is no glTF *reader* in this tree, so a bad file will not be caught by re-importing it. Two
 things you can do:
 
 ```sh
-gltf_roundtrip <dir> -check mesh.glb     # structural validation, either container
-npm i -g gltf-validator                  # then the golden tests check conformance too
+gltf_roundtrip <dir> -check mesh.glb            # structural validation, either container
+gltf_roundtrip <dir> -check mesh.glb -convex    # ...plus the outward-winding check
+npm i -g gltf-validator                         # then the goldens check conformance too
 ```
 
-`gltf_roundtrip -check` validates buffer and accessor containment, index ranges, alignment, and
-declared bounds against the actual data, and it checks that faces wind outward on a closed mesh. The
-official Khronos validator is optional and not installed by default; when present, the build finds
-it and the glTF golden tests use it.
+`gltf_roundtrip -check` validates buffer and accessor containment, index ranges, alignment, declared
+bounds against the actual data, and the raw bytes (no BOM, no NUL, and for GLB a 4-aligned JSON chunk
+padded with spaces). It also reports how many triangles disagree with their stored normal.
+
+**`-convex` is opt-in for a reason.** The "every face winds outward from the centroid" check only
+means anything on a closed *convex* mesh. A torus has ten inward-facing triangles by construction,
+and a grid, a disc or an extruded path are not closed at all — applying it unconditionally made seven
+of the fifteen samples look broken when nothing was wrong with any of them.
+
+The official Khronos validator is optional and not installed by default; when present, the build
+finds it and the glTF golden tests use it.
 
 ---
 

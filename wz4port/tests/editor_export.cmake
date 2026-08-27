@@ -61,7 +61,11 @@ if(NOT EXISTS "${OUT}")
 endif()
 
 execute_process(
-  COMMAND "${CHECKER}" "${_dir}" -check "${OUT}"
+  # -convex: the gate exports a Cube, which is closed and convex, so the
+  # every-face-winds-outward check is meaningful here. It is opt-in because it is
+  # not meaningful in general — a torus has inward-facing triangles by
+  # construction, and a grid or a disc is not closed at all.
+  COMMAND "${CHECKER}" "${_dir}" -check "${OUT}" -convex
   WORKING_DIRECTORY "${_dir}"
   RESULT_VARIABLE _crc
   OUTPUT_VARIABLE _co

@@ -1759,6 +1759,58 @@ One asymmetry to keep straight, since it looks like an inconsistency: **glTF for
 UTF-8 only when one is present and otherwise falls back to Latin-1. Removing the BOM and removing
 the NUL look like the same tidy-up and are opposites.
 
+### A66 · A replacement must match the convention of what it replaced, not just the interface — standing
+
+*Phase 8, retroactive to phase 6.6b.* `geo/tess2d.cpp` replaced GLU's tessellator behind the same
+callback interface — `BeginPolygon` / `BeginContour` / `AddVertex` / `EndContour` / `EndPolygon` — and
+was tested hard in isolation: `tess2d_shapes` derives its triangle counts from theory, checks
+**unsigned** area precisely so a filled hole cannot hide, and covers the SVG y-down orientation
+because a bug reachable from one orientation was already known. All of it passes, and tess2d is
+correct.
+
+The interface matched. **The winding convention did not.** `Wz4Mesh::Finish2DExtrusionOp` opens with
+a triangulation cleanup pass (`wz4_mesh.cpp:6182`):
+
+```cpp
+sVector30 n = (v2-v0) % (v1-v0);
+if(n.z < 1e-6f)    // try to flip it
+```
+
+Read the operand order: for a **counter-clockwise** triangle that cross product points at −z, so the
+condition holds for every well-formed triangle tess2d produces, and the pass edge-flipped the entire
+cap. An edge flip swaps a shared edge for the opposite diagonal — which is how a correct annulus
+becomes triangles spanning non-adjacent contour points, overlapping, half of them inverted. The pass
+was written for GLU's clockwise output, which is also what `wMeshTess::AddVertex` had been assuming
+all along by setting `Normal.z = -1`.
+
+Fixed in our seam, not upstream: `wMeshTess::EndPolygon` emits the triangles reversed. tess2d keeps
+its counter-clockwise internal invariant; the sink adapts to the consumer.
+
+**Why nothing caught it for two phases.**
+
+- **A cap with no interior edge cannot be flipped.** A lone triangle has no adjacent face, so every
+  hole-free case — `g_path3d`, a triangular prism — came out perfect. The failure needed a hole, and
+  the hole cases were the ones whose numbers nobody could derive by hand.
+- **Closedness passes**, for the reason already recorded against the `N`-versus-`z` mistake: two
+  overlapping shells still pair their half-edges.
+- **The area check that would have caught it was in the unit test, on the wrong side of the seam.**
+  `tess2d_shapes` compares unsigned area and is exactly the right assertion; it just ran before the
+  step that broke things.
+- **And the face count was locked on the defect.** `g_path3d_hole` was recorded as 20 faces with the
+  explanation "tess2d gives 8 triangles per cap, of which 2 are the bridge's zero-area slivers, so 6
+  real". There are no slivers — tess2d's eight triangles all have positive area summing to exactly
+  12. Meanwhile `ops_gen.wz4t`, written earlier, derived **24** and was right. Two documents
+  disagreed by four faces and the one describing the measurement won over the one deriving the
+  answer.
+
+The general point, and the reason this is an entry: **a count that has to be explained rather than
+derived is a warning.** "8 minus 2 slivers" was reverse-engineered from an observation; "4 outer + 4
+hole + 2 bridge, minus 2, times two caps, plus 8 walls" was derived from the shape. When those two
+disagree, the derivation is the evidence and the observation is the hypothesis — and locking the
+observation makes the defect permanent and self-justifying.
+
+Found by a human opening the exported file and seeing diagonal seams. Every automated gate was green.
+
 ---
 
 ## Part 3 — where inference lost to measurement
@@ -1823,6 +1875,8 @@ adopted because of this list.
 | The goldens cover the exporter | They cover `.gltf`, because a `.glb` is not a reviewable diff — so the container the editor writes by default was the one format nothing tested (8.4) |
 | `.wz4t` is written as text | `sSaveTextUTF8` appends the terminating NUL, so every generated file was binary to grep and git — under a comment saying that had been fixed (A65) |
 | `wz4t_round` tests the `.wz4t` writer | It tests the in-memory one. `wWriteWz4tFile`, which every CLI path calls, was untested for five phases (A65) |
+| tess2d passing its unit tests means Text3D is correct | The tessellator was right and the *winding convention* was wrong; the consumer edge-flipped every triangle it produced (A66) |
+| A locked count is a verified count | `g_path3d_hole` was locked at 20 faces with a rationalisation for the missing 4. The derivation in the case file said 24 and was right (A66) |
 
 ---
 

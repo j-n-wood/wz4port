@@ -828,7 +828,19 @@ exactly this reason; ctest can assert it directly, so it should.
 | case | faces | |
 |---|---|---|
 | `M 0 0 L 1 0 L 1 1 z`, extrude 0.1 | **5** | a triangular prism: 2 triangular caps + 3 quad walls, z spanning exactly the extrude depth, closed |
-| square with a square hole, extrude 0.5 | **20** | tess2d gives 8 ring triangles (4 + 4 + 2 bridge, minus 2), of which 2 are zero-area slivers, so 6 real per cap = 12; plus 4 outer + 4 inner wall quads |
+| square with a square hole, extrude 0.5 | **24** | tess2d gives 8 ring triangles (4 + 4 + 2 bridge, minus 2), so 8 per cap = 16; plus 4 outer + 4 inner wall quads |
+
+> **Corrected in phase 8.** This row read **20**, with the four missing faces explained as "2 of the
+> 8 are zero-area slivers, so 6 real per cap". There are no slivers: tess2d's eight triangles all
+> have positive area and sum to exactly 12, the annulus. The 20 was the *measurement* of a defect,
+> written up as though it were the derivation.
+>
+> `Finish2DExtrusionOp` opens with a triangulation cleanup pass that edge-flips any triangle whose
+> `(v2-v0) % (v1-v0)` has a non-positive `z` — i.e. **any counter-clockwise triangle**, which is all
+> of tess2d's. It was written for GLU's clockwise output. So every cap with an interior edge was
+> scrambled into overlapping, half-inverted triangles, and every hole-free case was untouched because
+> a lone triangle has no adjacent face to flip against. `wMeshTess::EndPolygon` now emits reversed.
+> See `architecture.md` A66; the visible symptom was z-fighting across every glyph counter.
 
 **The upstream patch is 101 insertions and 0 deletions** (patch 15) — not one existing line changed,
 so the 350 lines of parser, flattening, layout and extrusion are byte-identical. That comes from
