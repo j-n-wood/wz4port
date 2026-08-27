@@ -64,6 +64,7 @@ void RegisterWZ4Classes()
     // registered that type first. Pass 0 runs every module's types before pass 1
     // runs any operators, which is what makes borrowing a type legal at all.
     sREGOPS(animate,0);
+    sREGOPS(material,0);
   }
 }
 

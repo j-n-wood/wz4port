@@ -17,7 +17,20 @@
 // the render section it can be split at — cluster construction and destruction,
 // the (dead, see below) object serialiser, and the wz3 ChaosMesh conversion.
 //
-// So this supplies the smallest surface that compiles, and nothing more.
+// So this began as the smallest surface that compiles, and nothing more.
+//
+// PHASE 9 CHANGED THAT, and the file's character with it. It is no longer only a
+// stand-in: `SimpleMtrl` now carries a real texture — a `BitmapBase *` per stage,
+// refcounted — because that is the one thing a material has to do for geometry to
+// be worth exporting. Nothing here renders it; the glTF writer reads it
+// (geo/gltf_write.cpp) and the 3D preview may later sample it.
+//
+// The divergence this creates is worth stating plainly. Headless, `Wz4Mtrl` is
+// THIS class; in an unguarded build it is upstream's, and the two now store
+// different things rather than merely having the same shape. That is the same
+// trade patch 10 took and the same `WZ4PORT_HEADLESS_MTRL` guard covers it, but
+// it is wider than it was. Anything reviving the real material system has to
+// reconcile the two, and `SetTex` versus `SetBitmap` below is where the seam is.
 //
 // WHAT THIS DELIBERATELY DOES NOT DO
 //
@@ -46,6 +59,7 @@
 #include "base/graphics.hpp"
 #include "base/serialize.hpp"
 #include "wz4lib/doc_core.hpp"
+#include "wz4lib/basic.hpp"       // BitmapBase — the texture a material holds here
 
 /****************************************************************************/
 
@@ -84,7 +98,18 @@ public:
 class SimpleMtrl : public Wz4Mtrl
 {
 public:
-  SimpleMtrl() { Flags = 0; Blend = 0; Extras = 0; }
+  SimpleMtrl()
+  {
+    Flags = 0; Blend = 0; Extras = 0;
+    for(sInt i=0;i<3;i++) Tex[i] = 0;
+    Colour = 0xffcccccc;
+    Wrap = 1;
+  }
+
+  ~SimpleMtrl()
+  {
+    for(sInt i=0;i<3;i++) sRelease(Tex[i]);
+  }
 
   void SetMtrl(sInt flags=0,sU32 blend=0,sInt extras=0)
   {
@@ -93,18 +118,44 @@ public:
     Extras = extras;
   }
 
-  // Texture assignment is accepted and dropped: the parameter type is the render
-  // library's texture object, which this build does not have, and void * lets a
-  // caller pass one without this header needing to know what a Texture2D is.
-  // Nothing in the headless build calls it today — the two call sites,
-  // Wz4Mesh::ConvertFrom and the XSI loader, are both compiled out. It stays
-  // because it is part of the class's shape upstream, and dropping it would make
-  // the stand-in diverge from what a later phase re-enabling either path expects.
+  // Upstream's texture entry point, still a no-op. Its parameter is the RENDER
+  // library's Texture2D — a GPU object this build has no way to make — and the
+  // two call sites (Wz4Mesh::ConvertFrom and the XSI loader) are both compiled
+  // out. It stays for the class's upstream shape, exactly as before.
   void SetTex(sInt stage,void *tex,sInt tflags=0) {}
+
+  // OURS, and deliberately a different function rather than a reinterpretation
+  // of SetTex above. The two hold genuinely different things: upstream's Tex[3]
+  // are uploaded GPU textures converted FROM a bitmap, while these are the
+  // source bitmaps themselves — which is what a generator produces and what a
+  // glTF image needs. Overloading one name onto both would make a later phase
+  // that revives the renderer have to untangle which was meant.
+  //
+  // Refcounted: a material outlives the operator that built it, and a bitmap can
+  // be shared by several materials.
+  void SetBitmap(sInt stage,BitmapBase *bmp)
+  {
+    if(stage<0 || stage>=3) return;
+    if(bmp) bmp->AddRef();
+    sRelease(Tex[stage]);
+    Tex[stage] = bmp;
+  }
+
+  BitmapBase *GetBitmap(sInt stage) const
+  {
+    return (stage>=0 && stage<3) ? Tex[stage] : 0;
+  }
 
   sInt Flags;
   sU32 Blend;
   sInt Extras;
+
+  // Phase 9. Stage 0 is the diffuse / base colour map; 1 and 2 are reserved so
+  // the array matches upstream's Tex[3] and a later phase has somewhere to put
+  // normal and specular maps without changing the shape again.
+  BitmapBase *Tex[3];
+  sU32 Colour;              // base colour, modulating the texture; 0xAARRGGBB
+  sInt Wrap;                // 1 = repeat, 0 = clamp. See the note in gltf_write.
 };
 
 /****************************************************************************/

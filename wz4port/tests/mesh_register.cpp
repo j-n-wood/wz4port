@@ -50,6 +50,7 @@ void RegisterWZ4Classes()
     sREGOPS(wz4_anim,0);
     sREGOPS(wz4_mesh,0);
     sREGOPS(animate,0);
+    sREGOPS(material,0);
   }
 }
 

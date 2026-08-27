@@ -1811,6 +1811,38 @@ observation makes the defect permanent and self-justifying.
 
 Found by a human opening the exported file and seeing diagonal seams. Every automated gate was green.
 
+### A67 · Operator metadata resolves by first match, so a name collision is silent — standing
+
+*Phase 9.1.* Registering a `SimpleMaterial` operator in `wz4port/` produced an operator whose editor
+panel showed **someone else's parameters**: upstream's `wz4_mtrl2_ops.ops` declares an operator of
+the same name with 20 parameter words, ours had 2, and `wz4gen describe SimpleMtrl.SimpleMaterial`
+returned upstream's `Flags`/`Blend`/`Texture0` layout.
+
+Two facts combine, and each was individually believed otherwise:
+
+- **`wMetaLibrary::Find` returns the first linear match** on type and name (`wz4t/meta.cpp:385`).
+  There is no duplicate detection and no error. Which of two same-named entries wins depends on
+  directory iteration order.
+- **The corpus metadata is loaded at runtime**, despite a comment in `CMakeLists.txt` asserting the
+  opposite — *"coverage, not a deliverable: nothing consumes their metadata"*. It is consumed:
+  `meta/corpus/wz4_mesh_ops.json` is the **only** copy of the mesh operators' metadata, and
+  `LoadDirectory` recurses one level. Every one of the 33 upstream modules is live.
+
+The consequence is worse than a wrong panel. Parameter data is written at metadata-declared offsets
+into an operator's `EditData`, so binding a 20-word layout to a 2-word operator writes past the end
+of it. Nothing would have reported that.
+
+Fixed by not colliding: the operator is `TextureMaterial`. The *type* names stay as upstream's
+(`Wz4Mtrl`, `SimpleMtrl`) because a type carries no parameter layout, so a duplicate there is
+cosmetic — and `SetMaterial`'s input has to resolve to them.
+
+The general rule this leaves: **a name is part of the interface even when nothing links against it.**
+`wz4port/` may add operators freely (A62) but may not reuse an operator name from the upstream
+corpus, because the metadata namespace is flat, shared, and resolved by search order. The comment
+that said otherwise has been corrected rather than deleted, since it is what made the trap.
+
+Worth doing when it next costs little: make duplicate registration an error rather than a race.
+
 ---
 
 ## Part 3 — where inference lost to measurement
@@ -1877,6 +1909,7 @@ adopted because of this list.
 | `wz4t_round` tests the `.wz4t` writer | It tests the in-memory one. `wWriteWz4tFile`, which every CLI path calls, was untested for five phases (A65) |
 | tess2d passing its unit tests means Text3D is correct | The tessellator was right and the *winding convention* was wrong; the consumer edge-flipped every triangle it produced (A66) |
 | A locked count is a verified count | `g_path3d_hole` was locked at 20 faces with a rationalisation for the missing 4. The derivation in the case file said 24 and was right (A66) |
+| The corpus metadata is inert coverage | It is the only copy of the mesh operators' metadata and is loaded at runtime; a same-named operator in `wz4port/` binds to the wrong parameter layout (A67) |
 
 ---
 

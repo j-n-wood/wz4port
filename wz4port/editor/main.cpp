@@ -65,6 +65,7 @@ void RegisterWZ4Classes()
     sREGOPS(wz4_anim,0);
     sREGOPS(wz4_mesh,0);
     sREGOPS(animate,0);             // ours — phase 7's AnimateBones
+    sREGOPS(material,0);            // ours — phase 9's Wz4Mtrl types
   }
 }
 

@@ -1,0 +1,41 @@
+wz4t 1
+
+// Phase 9: materials. A texture reaching a material, and a material reaching a
+// mesh cluster.
+//
+// The connection rule is the usual one — an operator reads whatever sits
+// directly above it — so a GenBitmap above TextureMaterial is its texture input.
+//
+// TextureMaterial is OURS (wz4port/geo/material_ops.ops) and is deliberately not
+// called SimpleMaterial: upstream declares an operator of that name with a
+// completely different 20-word parameter layout, its metadata is loaded in this
+// build, and wMetaLibrary::Find resolves by first match. See the operator's own
+// comment.
+
+page "mtrl"
+
+// A textured material. Perlin because it is the cheapest generator that produces
+// something with visible structure, so a wrong UV orientation or a missing wrap
+// shows up rather than hiding in flat colour.
+stack at 0,0 {
+  op GenBitmap.Perlin {
+    name = m_tex
+    Size = 64, 64
+  }
+  op SimpleMtrl.TextureMaterial {
+    name = m_textured
+    Colour = #ffffffff
+    Wrap = repeat
+  }
+}
+
+// And one with no texture at all, which must still be a valid material: the
+// exporter needs it for a baseColorFactor with no baseColorTexture, and the
+// input is optional precisely so this case exists.
+stack at 8,0 {
+  op SimpleMtrl.TextureMaterial {
+    name = m_flat
+    Colour = #ff3060c0
+    Wrap = clamp
+  }
+}

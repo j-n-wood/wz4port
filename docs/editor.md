@@ -179,7 +179,7 @@ exported 24 vertices, 12 triangles to .../cube_wide.glb (3820 bytes)
 |---|---|
 | positions, normals | |
 | tangents | as glTF's `VEC4`, xyz plus the handedness sign |
-| two UV sets | `TEXCOORD_0` and `TEXCOORD_1` — OBJ carries only the first |
+| two UV sets | `TEXCOORD_0` and `TEXCOORD_1` — OBJ carries only the first. **No V flip**: Wz4's v runs downward from the top of the image, the same as glTF, verified through `Select`'s bitmap sampling, `GenBitmap::CopyTo` and `sImage::SavePNG`, none of which flips a row |
 | indices | quads are triangulated with the same fan the renderer uses |
 | cluster structure | one glTF *primitive* per cluster; OBJ discards this entirely |
 | one default material | grey, non-metallic, double-sided |
@@ -278,7 +278,8 @@ finds it and the glTF golden tests use it.
   Werkkzeug4 hierarchy, like animation, only ever arrived with an imported asset, and this port has
   no importer for those formats. The skeleton overlay draws what is actually there rather than
   inferring a chain from the joints' positions.
-- **UV orientation is unverified.** UVs are passed through on the reasoning that glTF's top-left
-  origin matches Direct3D's, which is what Werkkzeug4 targeted. With textures out of scope, nothing
-  in the test suite can confirm or contradict it. If an exported mesh looks vertically flipped in a
-  textured viewer, this is the first thing to check.
+- **`Dual` discards UVs** — it rebuilds the mesh from face centres and leaves every vertex at
+  (0,0). Every other topology and transform operator checked preserves them. There is also no
+  operator that *creates* UVs, so a mesh that loses them cannot get them back.
+- **The second UV set is always empty.** `TEXCOORD_1` is exported because `Wz4MeshVertex` carries
+  `U1`/`V1`, but no generator writes it.

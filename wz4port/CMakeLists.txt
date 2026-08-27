@@ -291,12 +291,25 @@ wz4_add_meta(META_BITMAP wz4frlib "${WZ4_DIR}/wz4frlib/wz3_bitmap_ops.ops")
 # on. wMetaLibrary::LoadDirectory recurses one level, so meta/geo/ is found with
 # no list to maintain.
 wz4_add_meta(META_ANIMATE geo "${CMAKE_CURRENT_SOURCE_DIR}/geo/animate_ops.ops")
+wz4_add_meta(META_MATERIAL geo "${CMAKE_CURRENT_SOURCE_DIR}/geo/material_ops.ops")
 
 # The whole corpus, not just the two gate modules.
 #
-# This is coverage, not a deliverable: most of these modules are out of scope
-# (materials, sequencer, audio) and nothing consumes their metadata. It earns
-# its place because opsmeta validates offsets and resolves every conditional
+# CORRECTION, phase 9: this comment used to say "coverage, not a deliverable —
+# nothing consumes their metadata", and that is false and was misleading. The
+# mesh operators' metadata comes from HERE: meta/corpus/wz4_mesh_ops.json is the
+# only copy, and wMetaLibrary::LoadDirectory recurses one level, so every module
+# in this sweep is loaded at runtime by wz4gen and the editor alike.
+#
+# That matters because wMetaLibrary::Find resolves by the FIRST match on type and
+# name (wz4t/meta.cpp:385). Two modules declaring the same Type.Operator resolve
+# by directory iteration order, silently. Phase 9 hit exactly that: a new
+# operator named SimpleMaterial bound to upstream's 20-word wz4_mtrl2_ops layout
+# instead of its own 2-word one. See geo/material_ops.ops. Anything added in
+# wz4port/ must not reuse an operator name from this corpus.
+#
+# It also earns its place as coverage, because opsmeta validates offsets and
+# resolves every conditional
 # symbol as it goes, so running it over all 33 modules checks roughly 3,400
 # parameters instead of the ~450 in the two gate files. It found a crash on its
 # first run that the gate modules never triggered — condition trees nest deeper
@@ -324,7 +337,7 @@ list(LENGTH WZ4_ALL_OPS _opscount)
 message(STATUS "opsmeta corpus: ${_opscount} .ops modules")
 
 add_custom_target(opsmeta_gate ALL
-  DEPENDS ${META_BASIC} ${META_BITMAP} ${META_ANIMATE} ${META_ALL})
+  DEPENDS ${META_BASIC} ${META_BITMAP} ${META_ANIMATE} ${META_MATERIAL} ${META_ALL})
 
 #############################################################################
 ##  headless_ops_gate — phase 2 stage 2.2                                  ##
@@ -342,6 +355,12 @@ wz4_add_ops(GENHL_MESH   wz4frlib "${WZ4_DIR}/wz4frlib/wz4_mesh_ops.ops"     HEA
 #
 # The stem must be <t>_ops: sREGOPS(t,s) expands to AddTypes_##t##_ops.
 wz4_add_ops(GENHL_ANIMATE geo "${CMAKE_CURRENT_SOURCE_DIR}/geo/animate_ops.ops" HEADLESS)
+
+# Phase 9. Registers the material TYPES upstream declares in wz4_mtrl2_ops.ops,
+# which this build cannot compile — see the header of material_ops.ops. The
+# classes already existed in compat/include/wz4_mtrl_headless.hpp; this is what
+# makes them reachable from the operator graph.
+wz4_add_ops(GENHL_MATERIAL geo "${CMAKE_CURRENT_SOURCE_DIR}/geo/material_ops.ops" HEADLESS)
 
 # Compiles both headless operator modules with the GUI poisoned. This is the
 # stage 2.2 gate, and it is the only thing that proves -headless produces code
@@ -555,6 +574,7 @@ add_library(wz4geo STATIC
   "${GENHL_ANIM}"
   "${GENHL_MESH}"
   "${GENHL_ANIMATE}"                # ours — phase 7's AnimateBones
+  "${GENHL_MATERIAL}"               # ours — phase 9's Wz4Mtrl types
 )
 # wz4_anim.cpp includes "wz4_anim_ops.hpp" unqualified, so the generated
 # wz4frlib subdirectory goes on the path as well — same as genvector.hpp in
@@ -1426,6 +1446,19 @@ target_compile_options(mesh_obj PRIVATE
   "SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/tests/gui_poison.h"
 )
 add_test(NAME mesh_obj COMMAND mesh_obj "${CMAKE_BINARY_DIR}/obj")
+
+# Phase 9.1. A material document is invisible to `sweep` (it walks meshes) and to
+# mesh_cases (it measures meshes), so a material that dropped its texture would
+# pass every other test in the suite.
+add_executable(material "${CMAKE_CURRENT_SOURCE_DIR}/tests/material.cpp")
+target_link_libraries(material PRIVATE wz4geo wz4t)
+target_compile_options(material PRIVATE
+  "SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/tests/gui_poison.h"
+)
+add_test(NAME material COMMAND material
+  "${CMAKE_CURRENT_SOURCE_DIR}/tests/geo/ops_mtrl.wz4t" "${WZ4_META_DIR}")
+set_tests_properties(material PROPERTIES
+  DEPENDS opsmeta_gate FAIL_REGULAR_EXPRESSION "FATAL ERROR")
 
 # Phase 8. Same shape as mesh_obj, and the same reasoning about oracles: the
 # writer emits through wz4t/json_write.hpp, this reads back through wz4t/json.hpp,

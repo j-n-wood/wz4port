@@ -801,7 +801,40 @@ Re-locked deliberately: `mesh_cases` now expects 24/16/8 for the hole case, and
 two checksums moved. Nothing else in the suite changed, which is what says the
 fix is surgical. 161/161.
 
-**Still outstanding for the rest: nobody has opened the other files in a viewer.** The
+**Still outstanding for the rest: nobody has opened the other files in a viewer.**
+
+**Phase 9.1 is done: a texture can reach a material.** The question was whether
+assigning textures needed a new operator or a partial material system, and the
+answer turned out to be that **the partial material system already existed** —
+`compat/include/wz4_mtrl_headless.hpp` has had concrete `Wz4Mtrl` and
+`SimpleMtrl` classes since phase 6, and `Wz4MeshCluster::Mtrl` has been holding
+and refcounting them the whole time. What was missing was the registration that
+makes them reachable from the graph. `SimpleMtrl` now carries a refcounted
+`BitmapBase *Tex[3]`, and `geo/material_ops.ops` registers both types plus
+`TextureMaterial(?GenBitmap)`. 162/162.
+
+The upstream comment disabling `SetMaterial` said the reason was that "nothing
+headless can produce a `Wz4Mtrl`, so the operator would appear in the palette and
+never be usable." That was conditional, and 9.1 removes the condition.
+
+**A67, and it is the finding worth keeping.** The operator was called
+`SimpleMaterial` first, and its editor panel showed **upstream's** parameters —
+20 words of `Flags`/`Blend`/`Texture0` instead of its own 2. Two beliefs were
+wrong at once: `wMetaLibrary::Find` resolves by **first linear match** with no
+duplicate detection, and the corpus metadata **is loaded at runtime** despite a
+comment in `CMakeLists.txt` saying nothing consumes it — `meta/corpus/` is in
+fact the only copy of the mesh operators' metadata. Parameters are written at
+metadata-declared offsets, so a 20-word layout on a 2-word operator writes past
+the end of it, silently. Renamed to `TextureMaterial`; the misleading comment is
+corrected rather than deleted, since it is what made the trap.
+
+**The new test exists because nothing else could see the failure.** `sweep` walks
+mesh operators and says so when a document yields none; `mesh_cases` measures
+meshes. A material that evaluated and quietly dropped its bitmap would have
+passed the entire suite. `tests/material.cpp` asserts the bitmap pointer survives
+evaluation, that it is a real `GenBitmap` with pixels, and — the half that makes
+the rest mean anything — that a material with no input has **no** texture rather
+than a stale one. The
 structural evidence is strong and the handedness gate is a good proxy, but the
 goldens record what the writer does, not that it is right — 6.3b's OBJ review is
 the precedent, and that review is the remaining step. An optional Khronos
@@ -945,6 +978,7 @@ about the build.
 | 6 — Geometry | **Done**, phase gate passed. All 45 operators, 3D preview, OBJ both ways, Text3D |
 | 7 — Animated geometry | **done** — `AnimateBones` added, geometry moves over time, rigged meshes scrub in the preview, joints draw over the mesh |
 | 8 — glTF export | **done** — meshes export as `.gltf`+`.bin` or `.glb` from `wz4gen` and from the editor's File menu, with a round-trip oracle and six goldens |
+| 9 — Materials | **9.1 done** — `Wz4Mtrl`/`SimpleMtrl` registered, `TextureMaterial` builds a material holding a `GenBitmap`. 9.2 `SetMaterial`, 9.3 glTF export, 9.4 preview remain |
 
 ---
 

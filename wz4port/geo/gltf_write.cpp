@@ -42,11 +42,19 @@
 //              is w*cross(N,T), and cross(MN,MT) = -M*cross(N,T), so preserving
 //              M*B requires w -> -w.
 //
-//   UVs        pass through. glTF's texture origin is top-left with v running
-//              down, which is D3D's convention, and Wz4 is a D3D engine. This is
-//              the one conversion here that is NOT independently verified in this
-//              phase, because materials and textures are out of scope so nothing
-//              samples a texture to disagree with it. Flagged rather than hidden.
+//   UVs        pass through, and this IS verified rather than assumed. glTF's
+//              texture origin is top-left with v running down. Wz4 agrees, by
+//              three in-tree code paths with no flip between them:
+//
+//                Select(Wz4Mesh,GenBitmap) samples bmp->Data[XSize*v + u]
+//                  (wz4_mesh_ops.ops:1699), so v = 0 is bitmap row 0;
+//                GenBitmap::CopyTo is a linear copy into sImage
+//                  (wz3_bitmap_code.cpp:420), no row flip;
+//                sImage::SavePNG swizzles BGRA to RGBA and nothing else
+//                  (image.cpp:2744), and PNG row 0 is the TOP.
+//
+//              So v = 0 is the top of the image, which is what glTF wants. No
+//              flip on export.
 
 /****************************************************************************/
 /***   little-endian byte emission                                         ***/
