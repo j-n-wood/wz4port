@@ -1476,6 +1476,18 @@ target_compile_options(gltf_roundtrip PRIVATE
   "SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/tests/gui_poison.h"
 )
 add_test(NAME gltf_roundtrip COMMAND gltf_roundtrip "${CMAKE_BINARY_DIR}/gltf")
+
+# Phase 9.3. Exports a textured material and an untextured coloured one, then
+# validates the whole material -> texture -> sampler -> image chain and the
+# sRGB-to-linear conversion on baseColorFactor.
+add_test(NAME gltf_material COMMAND "${CMAKE_COMMAND}"
+  "-DWZ4GEN=$<TARGET_FILE:wz4gen>"
+  "-DCHECKER=$<TARGET_FILE:gltf_roundtrip>"
+  "-DDOC=${CMAKE_CURRENT_SOURCE_DIR}/tests/geo/ops_mtrl.wz4t"
+  "-DMETA=${WZ4_META_DIR}"
+  "-DOUTDIR=${CMAKE_BINARY_DIR}/gltf"
+  -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/gltf_material.cmake")
+set_tests_properties(gltf_material PROPERTIES DEPENDS opsmeta_gate)
 set_tests_properties(gltf_roundtrip PROPERTIES
   FAIL_REGULAR_EXPRESSION "FATAL ERROR")
 
@@ -1747,6 +1759,15 @@ set(WZ4_GLTF_SAMPLES
   "ops_transform.wz4t|t_normalize"
   "ops_anim.wz4t|an_baked_t0"      # the rig baked at t = 0
   "ops_anim.wz4t|an_baked_t1"      # and at t = 0.5, so the two differ visibly
+  "ops_mtrl.wz4t|mm_moved"         # phase 9: a TEXTURED cube, the first sample
+                                   # here with a material on it
+  "ops_mtrl.wz4t|mf_flat"          # and an untextured coloured one
+
+  # The one sample built to be READ rather than measured: text on a cube, so a
+  # flipped V, a mirrored U or a CLAMP sampler are all visible at a glance. Every
+  # automated check verifies structure; none can see which way up the image
+  # landed, because that is a property of what a viewer draws.
+  "ops_uvcheck.wz4t|uv_cube"
 )
 
 set(WZ4_GLTF_SAMPLE_CMDS

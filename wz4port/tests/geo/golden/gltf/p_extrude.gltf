@@ -45,7 +45,7 @@
           1
         ],
         "metallicFactor": 0,
-        "roughnessFactor": 0.8
+        "roughnessFactor": 1
       },
       "doubleSided": true
     }

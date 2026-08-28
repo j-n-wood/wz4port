@@ -220,10 +220,27 @@ the better choice for handing to someone else; the editor's menu writes `.glb` f
 cmake --build wz4port/build --target gltf_samples
 ```
 
-writes 15 `.glb` files to `wz4port/build/gltf-samples/` — one per case, covering the primitives,
+writes 18 `.glb` files to `wz4port/build/gltf-samples/` — one per case, covering the primitives,
 FreeType glyph outlines (`g_text3d`), an extruded path, subdivision, dual, facette, extrusion, and
 two baked poses of the same rig (`an_baked_t0` / `an_baked_t1`) so the animation path has something
 to show.
+
+**Start with `uv_cube.glb` if you are checking the export is right.** It is the one
+sample built to be *read* rather than measured: the word "Up" on a dark ground,
+low and left, wrapped round a cube whose UVs run 0..4 — one full tile per face, four
+times around, with no seam. Every automated check in the suite verifies structure;
+none can see which way up the image landed, because that is a property of what a
+viewer draws. Noise textures like `mm_moved.glb`'s prove a texture arrived and
+nothing about how.
+
+| what you see | what it means |
+|---|---|
+| "Up" upright, once per face, four times around | correct |
+| upside down | V was flipped on export |
+| mirrored | U was, or the handedness conversion is wrong |
+| smeared across three faces | the sampler is CLAMP, not REPEAT |
+| sideways | the UV set is transposed |
+| one stretched tile | the 0..4 range was normalised somewhere it should not be |
 
 **GLB, not `.gltf`, and deliberately so.** A `.gltf` is JSON plus a `.bin` sidecar that must travel
 with it, which drag-and-drop and upload-based viewers will not accept. A `.glb` is one

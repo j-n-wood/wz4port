@@ -9,9 +9,26 @@
 #include "base/system.hpp"
 #include "base/math.hpp"
 
+#include "util/image.hpp"       // sImage, for the PNG encode
+
 #include "gltf_write.hpp"
 #include "mesh_check.hpp"       // wMeshMeasure — the preconditions, already written
 #include "json_write.hpp"       // wJsonWriter, moved here from opsmeta in 8.1
+#include "wz4_mtrl_headless.hpp"          // SimpleMtrl — phase 9
+#include "wz4frlib/wz3_bitmap_code.hpp"   // GenBitmap
+
+// Defined in altona/main/util/image.cpp, which compiles
+// STB_IMAGE_WRITE_IMPLEMENTATION. The vendored copy declares it WITHOUT `static`
+// (stb_image_write.h:426), so it has external linkage and is callable here —
+// which is what makes embedding a PNG in a .glb need no upstream change and no
+// temporary file. sImage::SavePNG already goes through it and then writes the
+// bytes to disk; this needs the bytes.
+//
+// The buffer it returns is released with delete[], not free: this vendored copy
+// was adapted to new/delete, and sImage::SavePNG frees it that way too
+// (image.cpp:2762).
+unsigned char *stbi_write_png_to_mem(unsigned char *pixels,int stride_bytes,
+  int x,int y,int n,int *out_len);
 
 /****************************************************************************/
 /***   the coordinate conversion, derived once                             ***/
@@ -104,9 +121,85 @@ static void Pad4(sArray<sU8> &b,sU8 fill)
 
 /****************************************************************************/
 
+/****************************************************************************/
+/***   colour space, decided by measurement                                ***/
+/****************************************************************************/
+//
+// glTF is specific and the two halves differ, which is the whole trap here:
+//
+//   baseColorTexture  is sRGB-ENCODED. The loader linearises it.
+//   baseColorFactor   is LINEAR. It is used as-is.
+//
+// THE TEXTURE NEEDS NO CONVERSION. GenBitmap stores whatever the author
+// authored, in the encoding they authored it in: GetColor64 scales an 8-bit
+// component into a 15-bit range and applies no transfer function at all
+// (wz3_bitmap_code.cpp:213-221), and CopyTo narrows back by a plain shift. A
+// colour picked as mid-grey is stored as mid-grey and displays as mid-grey — it
+// is display-referred, which is what sRGB-encoded means. So the PNG carries the
+// authored values unchanged and glTF reads them correctly.
+//
+// THE FACTOR DOES. The material's Colour comes from the editor's colour picker,
+// so it is display-referred for the same reason, while baseColorFactor is
+// specified linear. Passing it through would make every material visibly too
+// bright — and would do so consistently enough to look deliberate.
+static sF32 SrgbToLinear(sInt v255)
+{
+  const sF32 c = sClamp(sF32(v255)/255.0f,0.0f,1.0f);
+  return (c<=0.04045f) ? (c/12.92f) : sPow((c+0.055f)/1.055f,2.4f);
+}
+
+/****************************************************************************/
+/***   a GenBitmap as PNG bytes                                            ***/
+/****************************************************************************/
+
+static sBool EncodePng(BitmapBase *bmp,sArray<sU8> &out)
+{
+  out.Clear();
+  if(!bmp)
+    return 0;
+
+  // CopyTo narrows 16 bits per channel to 8 and sizes the image itself. The
+  // texture is 8-bit in glTF regardless, so nothing is lost that survives.
+  sImage img;
+  bmp->CopyTo(&img);
+  if(img.SizeX<=0 || img.SizeY<=0)
+    return 0;
+
+  // The same BGRA-to-RGBA swizzle sImage::SavePNG does (image.cpp:2751-2757).
+  // Done here rather than by calling SavePNG because that writes a file and this
+  // needs the bytes — for a .glb they go in the BIN chunk.
+  const sInt count = img.SizeX*img.SizeY;
+  sU8 *rgba = new sU8[count*4];
+  const sU8 *src = (const sU8 *)img.Data;
+  for(sInt i=0;i<count;i++)
+  {
+    rgba[i*4+0] = src[i*4+2];
+    rgba[i*4+1] = src[i*4+1];
+    rgba[i*4+2] = src[i*4+0];
+    rgba[i*4+3] = src[i*4+3];
+  }
+
+  int len = 0;
+  unsigned char *png = stbi_write_png_to_mem(rgba,img.SizeX*4,img.SizeX,
+    img.SizeY,4,&len);
+  delete[] rgba;
+
+  if(!png || len<=0)
+  {
+    delete[] png;
+    return 0;
+  }
+  sCopyMem(out.AddMany(len),png,len);
+  delete[] png;                 // new/delete, not free — see the declaration
+  return 1;
+}
+
+/****************************************************************************/
+
 wGltfStats::wGltfStats()
 {
   Verts = Tris = Prims = UnusedVerts = Degenerate = 0;
+  Materials = Textures = 0;
   JsonBytes = BinBytes = 0;
 }
 
@@ -122,6 +215,8 @@ enum
   GLTF_ARRAY_BUFFER   = 34962,
   GLTF_ELEMENT_ARRAY  = 34963,
   GLTF_TRIANGLES      = 4,
+  GLTF_REPEAT         = 10497,
+  GLTF_CLAMP_TO_EDGE  = 33071,
 };
 
 namespace
@@ -139,11 +234,13 @@ namespace
   };
 }
 
-sBool wWriteGltf(sTextBuffer &json,sArray<sU8> &bin,Wz4Mesh *mesh,
+sBool wWriteGltf(sTextBuffer &json,sArray<sU8> &bin,
+  sArray<wGltfSidecar> &sidecars,Wz4Mesh *mesh,
   const sChar *binuri,wGltfStats *stats)
 {
   json.Clear();
   bin.Clear();
+  sidecars.Clear();
 
   if(!mesh)
   {
@@ -346,6 +443,126 @@ sBool wWriteGltf(sTextBuffer &json,sArray<sU8> &bin,Wz4Mesh *mesh,
     return 0;
   }
 
+  /*--- materials, textures and images, one material per primitive ---*/
+  //
+  // Phase 9.3. Before this, every primitive shared one default grey material.
+  // Now each takes its cluster's, which is where SetMaterial put it.
+  //
+  // Deduplicated BY POINTER, not by contents: SetMaterial shares one material
+  // object across the clusters that use it and refcounts it, so pointer identity
+  // is exactly the "same material" relation the document already maintains —
+  // tests/material.cpp asserts a Transform preserves it. Comparing contents
+  // instead would merge two materials a user deliberately kept distinct.
+
+  struct wMat { SimpleMtrl *M; sInt Image; sInt Sampler; };
+  sArray<wMat> mats;
+  sArray<BitmapBase *> images;        // distinct bitmaps, in emission order
+  sArray<sInt> matofprim;
+
+  for(sInt p=0;p<primview.GetCount();p++)
+  {
+    const sInt c = primcluster[p];
+    SimpleMtrl *m = 0;
+    if(c<mesh->Clusters.GetCount())
+      m = (SimpleMtrl *)mesh->Clusters[c]->Mtrl;
+
+    sInt mi = -1;
+    for(sInt i=0;i<mats.GetCount();i++)
+      if(mats[i].M==m)
+        { mi = i; break; }
+
+    if(mi<0)
+    {
+      wMat nm;
+      nm.M = m;
+      nm.Image = -1;
+      // glTF's sampler default is REPEAT when the field is absent, and REPEAT is
+      // what this port's geometry needs: the Cube's UVs run 0..4, one full tile
+      // per face in a continuous band, so CLAMP_TO_EDGE would smear the
+      // texture's edge column across three faces of every cube. A sampler is
+      // emitted only to say CLAMP, never to restate the default.
+      nm.Sampler = (m && !m->Wrap) ? 1 : 0;
+
+      BitmapBase *tex = m ? m->GetBitmap(0) : 0;
+      if(tex)
+      {
+        sInt ii = -1;
+        for(sInt i=0;i<images.GetCount();i++)
+          if(images[i]==tex)
+            { ii = i; break; }
+        if(ii<0)
+        {
+          ii = images.GetCount();
+          images.AddTail(tex);
+        }
+        nm.Image = ii;
+      }
+      mi = mats.GetCount();
+      mats.AddTail(nm);
+    }
+    matofprim.AddTail(mi);
+  }
+
+  // Encode each distinct texture once. For a .glb the bytes go into the BIN
+  // chunk behind their own bufferView; for a .gltf they become sidecar files,
+  // because JSON has nowhere to put them.
+  // Every view up to here has exactly one accessor; the image views appended
+  // below have NONE, because an image is raw bytes rather than typed elements.
+  // The accessor loop stops at this mark, and because images are appended last
+  // the bufferView indices still line up with the accessor indices before it.
+  const sInt accessorviews = views.GetCount();
+
+  sArray<sInt> imageview;             // bufferView per image, .glb only
+  for(sInt i=0;i<images.GetCount();i++)
+  {
+    sArray<sU8> png;
+    if(!EncodePng(images[i],png))
+    {
+      sPrintF(L"gltf: could not encode texture %d as PNG\n",i);
+      return 0;
+    }
+
+    if(binuri)
+    {
+      // Named after the OUTPUT file, not the mesh. `binuri` is the sidecar
+      // buffer's name — the output's stem plus ".bin" — so stripping that gives
+      // the stem, and the texture becomes "<stem>_tex0.png" beside its own
+      // .gltf and .bin.
+      //
+      // The mesh's own name was the first attempt and it collides: most meshes
+      // have none, so every export in a directory wrote "mesh_tex0.png" over the
+      // last one and every .gltf pointed at whichever finished last.
+      sString<256> stem(binuri);
+      const sInt dot = sFindLastChar(stem,'.');
+      if(dot>=0)
+        stem[dot] = 0;
+
+      wGltfSidecar sc;
+      sc.Name.PrintF(L"%s_tex%d.png",(const sChar *)stem,i);
+      sc.Len = png.GetCount();
+      sc.Png = new sU8[sc.Len];
+      sCopyMem(sc.Png,&png[0],sc.Len);
+      sidecars.AddTail(sc);
+      imageview.AddTail(-1);
+    }
+    else
+    {
+      wView v;
+      v.Offset = bin.GetCount();
+      sCopyMem(bin.AddMany(png.GetCount()),&png[0],png.GetCount());
+      v.Length = bin.GetCount()-v.Offset;
+
+      // An image bufferView carries NO target — targets are for vertex and index
+      // data, and a validator rejects one here. Padded to 4 because the next
+      // view has to start aligned; PNG length is arbitrary.
+      v.Target = 0;
+      v.Count = 0; v.ComponentType = 0; v.Type = 0;
+      Pad4(bin,0);
+      imageview.AddTail(views.GetCount());
+      views.AddTail(v);
+    }
+  }
+
   /*--- the JSON ---*/
 
   wJsonWriter w(json);
@@ -390,7 +607,7 @@ sBool wWriteGltf(sTextBuffer &json,sArray<sU8> &bin,Wz4Mesh *mesh,
             w.Int(L"TEXCOORD_1",4);
           w.EndObject();
           w.Int(L"indices",primview[p]);
-          w.Int(L"material",0);
+          w.Int(L"material",matofprim[p]);
           w.Int(L"mode",GLTF_TRIANGLES);
         w.EndObject();
       }
@@ -398,26 +615,106 @@ sBool wWriteGltf(sTextBuffer &json,sArray<sU8> &bin,Wz4Mesh *mesh,
     w.EndObject();
   w.EndArray();
 
-  // One default material. The material system is out of scope and Wz4Mtrl is
-  // only forward-declared headless, so there is genuinely nothing to read from
-  // the cluster — but a primitive with no material renders untextured white in
-  // some viewers and black in others, and a stated default beats that.
+  // One material per primitive, from its cluster. A cluster with no material —
+  // every mesh that never met SetMaterial — keeps the grey default this used to
+  // emit for everything, because a primitive with no material renders untextured
+  // white in some viewers and black in others.
   w.BeginArray(L"materials");
+  for(sInt i=0;i<mats.GetCount();i++)
+  {
+    SimpleMtrl *m = mats[i].M;
     w.BeginObject();
-      w.Str(L"name",L"wz4_default");
+      if(m && !m->Name.IsEmpty())
+        w.Str(L"name",m->Name);
+      else
+        w.Str(L"name",L"wz4_default");
+
       w.BeginObject(L"pbrMetallicRoughness");
         w.BeginArray(L"baseColorFactor");
+        if(m)
+        {
+          // sRGB to linear: the factor is specified linear and the colour was
+          // picked on a display. Alpha is NOT transformed — it is not a colour
+          // and has no transfer function.
+          w.Float(SrgbToLinear((m->Colour>>16)&0xff));
+          w.Float(SrgbToLinear((m->Colour>> 8)&0xff));
+          w.Float(SrgbToLinear((m->Colour    )&0xff));
+          w.Float(sClamp(sF32((m->Colour>>24)&0xff)/255.0f,0.0f,1.0f));
+        }
+        else
+        {
           w.Float(0.8f); w.Float(0.8f); w.Float(0.8f); w.Float(1.0f);
+        }
         w.EndArray();
+
+        if(mats[i].Image>=0)
+        {
+          w.BeginObject(L"baseColorTexture");
+            w.Int(L"index",mats[i].Image);
+            w.Int(L"texCoord",0);
+          w.EndObject();
+        }
+
+        // Flat and unshiny. This phase carries a diffuse colour and nothing
+        // else, and claiming a metalness or a roughness the material does not
+        // have would be inventing data.
         w.Float(L"metallicFactor",0.0f);
-        w.Float(L"roughnessFactor",0.8f);
+        w.Float(L"roughnessFactor",1.0f);
       w.EndObject();
       w.Bool(L"doubleSided",1);   // open meshes are legal here; see meshview.cpp
     w.EndObject();
+  }
   w.EndArray();
 
+  // textures, samplers and images — emitted only when something is textured, so
+  // an untextured mesh's JSON is exactly what it was before this phase.
+  if(images.GetCount())
+  {
+    w.BeginArray(L"textures");
+    for(sInt i=0;i<images.GetCount();i++)
+    {
+      // One texture per image here, because nothing yet varies the sampler per
+      // use. sampler 0 is REPEAT and sampler 1 is CLAMP; whether either is
+      // emitted at all is decided below.
+      w.BeginObject();
+        w.Int(L"source",i);
+        w.Int(L"sampler",0);
+      w.EndObject();
+    }
+    w.EndArray();
+
+    // REPEAT is glTF's default when a sampler omits wrapS/wrapT, but it is
+    // stated explicitly rather than left out. The Cube's UVs run 0..4 and a
+    // reader that guessed differently would smear the texture's edge column
+    // across three faces of every cube — this is not a default worth relying on
+    // silently.
+    w.BeginArray(L"samplers");
+      w.BeginObject();
+        w.Int(L"wrapS",GLTF_REPEAT);
+        w.Int(L"wrapT",GLTF_REPEAT);
+      w.EndObject();
+    w.EndArray();
+
+    w.BeginArray(L"images");
+    for(sInt i=0;i<images.GetCount();i++)
+    {
+      w.BeginObject();
+        if(binuri)
+        {
+          w.Str(L"uri",sidecars[i].Name);
+        }
+        else
+        {
+          w.Int(L"bufferView",imageview[i]);
+          w.Str(L"mimeType",L"image/png");
+        }
+      w.EndObject();
+    }
+    w.EndArray();
+  }
+
   w.BeginArray(L"accessors");
-  for(sInt i=0;i<views.GetCount();i++)
+  for(sInt i=0;i<accessorviews;i++)
   {
     const wView &v = views[i];
     w.BeginObject();
@@ -442,7 +739,10 @@ sBool wWriteGltf(sTextBuffer &json,sArray<sU8> &bin,Wz4Mesh *mesh,
       w.Int(L"buffer",0);
       w.Int(L"byteOffset",v.Offset);
       w.Int(L"byteLength",v.Length);
-      w.Int(L"target",v.Target);
+      // An image's view has no target: targets describe vertex and index data,
+      // and a validator rejects one on a view holding PNG bytes.
+      if(v.Target)
+        w.Int(L"target",v.Target);
     w.EndObject();
   }
   w.EndArray();
@@ -463,6 +763,8 @@ sBool wWriteGltf(sTextBuffer &json,sArray<sU8> &bin,Wz4Mesh *mesh,
     stats->Verts = vc;
     stats->Tris = tris;
     stats->Prims = primview.GetCount();
+    stats->Materials = mats.GetCount();
+    stats->Textures = images.GetCount();
     stats->UnusedVerts = facts.UnusedVerts;
     stats->Degenerate = facts.Degenerate;
     stats->BinBytes = bin.GetCount();
@@ -570,6 +872,17 @@ static sBool WriteGlb(const sChar *path,sTextBuffer &json,sArray<sU8> &bin)
   return 1;
 }
 
+void wFreeGltfSidecars(sArray<wGltfSidecar> &sidecars)
+{
+  for(sInt i=0;i<sidecars.GetCount();i++)
+  {
+    delete[] sidecars[i].Png;
+    sidecars[i].Png = 0;
+    sidecars[i].Len = 0;
+  }
+  sidecars.Clear();
+}
+
 sBool wWriteGltfFile(const sChar *path,Wz4Mesh *mesh,wGltfStats *stats)
 {
   if(!path || !path[0])
@@ -603,14 +916,52 @@ sBool wWriteGltfFile(const sChar *path,Wz4Mesh *mesh,wGltfStats *stats)
 
   sTextBuffer json;
   sArray<sU8> bin;
-  if(!wWriteGltf(json,bin,mesh,glb ? 0 : (const sChar *)binuri,stats))
+  sArray<wGltfSidecar> sidecars;
+  if(!wWriteGltf(json,bin,sidecars,mesh,glb ? 0 : (const sChar *)binuri,stats))
+  {
+    wFreeGltfSidecars(sidecars);
     return 0;
+  }
 
   if(glb)
+  {
+    // A .glb has its textures inside it, so there is nothing beside it to write.
+    wFreeGltfSidecars(sidecars);
     return WriteGlb(path,json,bin);
+  }
 
   if(!WriteJsonFile(path,json))
+  {
+    wFreeGltfSidecars(sidecars);
     return 0;
+  }
+
+  // The texture PNGs, beside the .gltf and named by the uri the JSON already
+  // states. Written into the .gltf's OWN directory rather than the working one:
+  // a uri is resolved relative to the file that names it, so anywhere else and
+  // the pair would only load from one particular cwd.
+  {
+    sString<1024> dir(path);
+    sInt cut = -1;
+    for(sInt i=0;dir[i];i++)
+      if(dir[i]=='/' || dir[i]=='\\')
+        cut = i;
+    dir[cut+1] = 0;
+
+    for(sInt i=0;i<sidecars.GetCount();i++)
+    {
+      sString<1024> p(dir);
+      p.Add(sidecars[i].Name);
+      if(!sSaveFile(p,sidecars[i].Png,sidecars[i].Len))
+      {
+        sPrintF(L"gltf: could not write texture <%s>\n",(const sChar *)p);
+        wFreeGltfSidecars(sidecars);
+        return 0;
+      }
+    }
+  }
+  wFreeGltfSidecars(sidecars);
+
   if(!sSaveFile(binpath,bin.GetCount() ? &bin[0] : (const sU8 *)"",bin.GetCount()))
   {
     sPrintF(L"gltf: could not write <%s>\n",(const sChar *)binpath);

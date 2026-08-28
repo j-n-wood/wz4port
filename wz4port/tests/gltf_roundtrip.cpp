@@ -81,9 +81,16 @@ struct wGltfMesh
   sArray<sU32> Idx;         // 3 per triangle, all primitives concatenated
   sInt Verts;
   sInt Prims;
+  sInt Textures;            // primitives whose material carries a baseColorTexture
+  sBool HasColor;
+  sF32 BaseColor[4];        // the last material's, for the colour-space check
   sF32 Min[3],Max[3];       // as DECLARED in the file
 
-  wGltfMesh() { Verts = 0; Prims = 0; }
+  wGltfMesh()
+  {
+    Verts = 0; Prims = 0; Textures = 0; HasColor = 0;
+    for(sInt i=0;i<4;i++) BaseColor[i] = 0;
+  }
 };
 
 static sF32 GetF32(const sU8 *b,sInt off)
@@ -389,6 +396,112 @@ static sBool CheckGltf(const sChar *path,wGltfMesh *out,sBool quiet=0)
       out->Idx.AddTail(idx);
     }
     out->Prims++;
+  }
+
+  /*--- the material chain, phase 9.3 ---*/
+  //
+  // material -> baseColorTexture.index -> textures[] -> source -> images[] ->
+  // bufferView. Four hops, each an index into a different array, and every one of
+  // them can be off by one while the file still parses and every count still
+  // agrees. That is the part of glTF most easily built wrong while remaining
+  // self-consistent, so each hop is checked against the array it names.
+
+  const wJsonValue *materials = root->GetArray(L"materials");
+  const wJsonValue *textures = root->GetArray(L"textures");
+  const wJsonValue *imagesa = root->GetArray(L"images");
+  const wJsonValue *samplers = root->GetArray(L"samplers");
+
+  for(sInt p=0;p<prims->Items.GetCount();p++)
+  {
+    const sInt mi = prims->Items[p]->GetInt(L"material",-1);
+    if(mi<0)
+      continue;
+    if(!materials || mi>=materials->Items.GetCount())
+      return Fault(quiet,L"a primitive names a material that does not exist");
+
+    const wJsonValue *pbr =
+      materials->Items[mi]->Member(L"pbrMetallicRoughness");
+    if(!pbr)
+      return Fault(quiet,L"a material has no pbrMetallicRoughness");
+
+    // baseColorFactor is four numbers in 0..1. A value outside that is the
+    // signature of a colour written raw instead of normalised.
+    const wJsonValue *bcf = pbr->GetArray(L"baseColorFactor");
+    if(bcf)
+    {
+      if(bcf->Items.GetCount()!=4)
+        return Fault(quiet,L"baseColorFactor is not 4 components");
+      for(sInt k=0;k<4;k++)
+      {
+        const sF32 c = bcf->Items[k]->AsFloat();
+        if(c<0.0f || c>1.0f)
+          return Fault(quiet,L"a baseColorFactor component is outside 0..1");
+      }
+      out->BaseColor[0] = bcf->Items[0]->AsFloat();
+      out->BaseColor[1] = bcf->Items[1]->AsFloat();
+      out->BaseColor[2] = bcf->Items[2]->AsFloat();
+      out->BaseColor[3] = bcf->Items[3]->AsFloat();
+      out->HasColor = 1;
+    }
+
+    const wJsonValue *bct = pbr->Member(L"baseColorTexture");
+    if(!bct)
+      continue;
+
+    const sInt ti = bct->GetInt(L"index",-1);
+    if(!textures || ti<0 || ti>=textures->Items.GetCount())
+      return Fault(quiet,L"baseColorTexture names a texture that does not exist");
+
+    // texCoord selects the UV set. Only TEXCOORD_0 is written, so anything else
+    // points at an attribute the file does not contain.
+    if(bct->GetInt(L"texCoord",0)!=0)
+      return Fault(quiet,L"baseColorTexture uses a UV set that is not exported");
+
+    const sInt si = textures->Items[ti]->GetInt(L"source",-1);
+    if(!imagesa || si<0 || si>=imagesa->Items.GetCount())
+      return Fault(quiet,L"a texture names an image that does not exist");
+
+    const sInt smp = textures->Items[ti]->GetInt(L"sampler",-1);
+    if(smp>=0)
+    {
+      if(!samplers || smp>=samplers->Items.GetCount())
+        return Fault(quiet,L"a texture names a sampler that does not exist");
+
+      // REPEAT, and it matters: the Cube's UVs run 0..4, so CLAMP_TO_EDGE would
+      // smear the texture's edge column across three faces of every cube.
+      const sInt ws = samplers->Items[smp]->GetInt(L"wrapS",10497);
+      const sInt wt = samplers->Items[smp]->GetInt(L"wrapT",10497);
+      if(ws!=10497 || wt!=10497)
+        return Fault(quiet,L"the sampler is not REPEAT, which this geometry needs");
+    }
+
+    // And the image is a real PNG where it says it is.
+    const wJsonValue *img = imagesa->Items[si];
+    const sInt iv = img->GetInt(L"bufferView",-1);
+    if(iv>=0)
+    {
+      if(sCmpString(img->GetString(L"mimeType"),L"image/png")!=0)
+        return Fault(quiet,L"an embedded image does not declare image/png");
+      if(iv>=views->Items.GetCount())
+        return Fault(quiet,L"an image names a bufferView that does not exist");
+
+      // A bufferView holding image bytes must NOT carry a target — targets are
+      // for vertex and index data.
+      if(views->Items[iv]->Has(L"target"))
+        return Fault(quiet,L"an image's bufferView has a target, which is invalid");
+
+      const sInt off = views->Items[iv]->GetInt(L"byteOffset",0);
+      const sInt len = views->Items[iv]->GetInt(L"byteLength",0);
+      if(len<8 || sDInt(off)+sDInt(len)>binsize)
+        return Fault(quiet,L"an image's bufferView is outside the buffer");
+      if(!(bin[off]==0x89 && bin[off+1]=='P' && bin[off+2]=='N' && bin[off+3]=='G'))
+        return Fault(quiet,L"an embedded image is not actually a PNG");
+    }
+    else if(img->GetString(L"uri").IsEmpty())
+    {
+      return Fault(quiet,L"an image has neither a bufferView nor a uri");
+    }
+    out->Textures++;
   }
 
   /*--- positions, normals, and the declared bounds ---*/
@@ -848,6 +961,59 @@ void sMain()
       }
 
       obj->Release();
+    }
+  }
+
+  // --- phase 9.3: materials on a real document ------------------------------
+  //
+  // Driven through wz4gen rather than built here, because the point is the
+  // export of a material a document assigned — the whole chain from SetMaterial
+  // to baseColorTexture. The files come from the ctest wrapper.
+  {
+    const sChar *textured = sGetShellParameter(L"textured",0);
+    if(textured)
+    {
+      sPrint(L"\n[textured export]\n");
+      wGltfMesh m;
+      CheckBytes(textured,L"textured");
+      Check(CheckGltf(textured,&m)!=0,L"a textured export validates");
+      Check(m.Textures>0,L"and at least one primitive has a baseColorTexture");
+      CheckWinding(m,L"textured",1);
+    }
+
+    const sChar *flat = sGetShellParameter(L"flat",0);
+    if(flat)
+    {
+      sPrint(L"\n[colour space]\n");
+      wGltfMesh m;
+      Check(CheckGltf(flat,&m)!=0,L"an untextured coloured export validates");
+
+      // THE assertion of 9.3's colour handling. The material is #ff3060c0, an
+      // asymmetric non-grey chosen so a missing conversion cannot hide:
+      // baseColorFactor is LINEAR and a colour picker is display-referred, so
+      // each component must be the sRGB decode of the authored byte, not the
+      // byte over 255.
+      //
+      // Computed here from the spec's own transfer function rather than copied
+      // from the writer's output — a constant lifted from the thing under test
+      // asserts only that it has not changed.
+      const sInt authored[3] = { 0x30,0x60,0xc0 };
+      sBool ok = m.HasColor;
+      for(sInt k=0;k<3 && ok;k++)
+      {
+        const sF32 c = sF32(authored[k])/255.0f;
+        const sF32 want = (c<=0.04045f) ? (c/12.92f)
+                                        : sPow((c+0.055f)/1.055f,2.4f);
+        if(sFAbs(m.BaseColor[k]-want)>1e-4f)
+        {
+          ok = 0;
+          sPrintF(L"        component %d: want %f, got %f (raw/255 would be %f)\n",
+            k,want,m.BaseColor[k],c);
+        }
+      }
+      Check(ok,L"baseColorFactor is the sRGB decode of the authored colour, "
+               L"not the raw byte");
+      Check(m.Textures==0,L"and a material with no bitmap has no baseColorTexture");
     }
   }
 

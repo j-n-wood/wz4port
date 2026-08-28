@@ -1,0 +1,66 @@
+wz4t 1
+
+// A texture built to be READ, not measured.
+//
+// Every automated check in the suite verifies structure: that the accessors line
+// up, that the sampler is REPEAT, that baseColorFactor was converted. None of
+// them can see whether the image lands on the geometry the right way up, because
+// "the right way up" is not a property of the file — it is a property of what a
+// viewer draws, and that needs an eye.
+//
+// Perlin noise, which the other material cases use, is the worst possible
+// texture for this: it is symmetric under every flip and rotation, so it proves a
+// texture arrived and nothing about how.
+//
+// So: text on a dark ground. Letters cannot be mirrored, flipped or rotated
+// without it being obvious at a glance, and the Cube's UVs run 0..4 — one full
+// tile per face in a continuous band around the four sides — so the word should
+// appear once per face, upright, four times around, with no seam.
+//
+// What each possible fault looks like:
+//
+//   upside down          the V axis was flipped on export
+//   mirrored             the U axis was, or the handedness conversion is wrong
+//   smeared on 3 faces   the sampler is CLAMP, not REPEAT
+//   sideways             the UV set is transposed
+//   one tile stretched   the 0..4 range was normalised somewhere it should not be
+
+page "uvcheck"
+
+stack at 0,0 {
+  op GenBitmap.Flat {
+    name = uv_ground
+    Size = 128, 128
+    Color = #ff202030
+  }
+
+  // Left-aligned and low, so horizontal and vertical flips look different from
+  // each other. Centred text would hide a 180-degree rotation.
+  op GenBitmap.Text {
+    name = uv_tex
+    Text = "Up"
+    Font = "Arial"
+    Height = 0.45
+    Position = 0.12, 0.62
+    Color = #ffffd080
+  }
+
+  op SimpleMtrl.TextureMaterial {
+    name = uv_mtrl
+    Colour = #ffffffff
+    Wrap = repeat
+  }
+}
+
+stack at 8,0 {
+  op Wz4Mesh.Cube {
+    name = uv_in
+    Tesselate = 1, 1, 1
+    Scale = 1, 1, 1
+  }
+  op Wz4Mesh.SetMaterial {
+    name = uv_cube
+    Material = "uv_mtrl"
+    Selection = all
+  }
+}

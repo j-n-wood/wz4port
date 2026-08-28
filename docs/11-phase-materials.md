@@ -131,7 +131,61 @@ file **patch 11 already touches**, so it amends a documented patch rather than a
 Verify the selection modes still work headless: `all`, `none`, `selected`, `unselected`, `cluster`.
 The body deletes and creates clusters, which is exactly the multi-material path glTF wants.
 
-## 9.3 — Export
+## 9.3 — Export — **done**
+
+163/163. A material assigned in a document reaches the glTF: one material per primitive from its
+cluster, with `baseColorTexture`, a REPEAT sampler and the image as PNG — embedded in a `.glb`'s BIN
+chunk, or written beside a `.gltf`. `ninja gltf_samples` now includes `mm_moved.glb` (textured) and
+`mf_flat.glb` (coloured).
+
+### The colour space, settled by reading the generator rather than guessing
+
+glTF specifies the two halves differently, which is the whole trap: **`baseColorTexture` is
+sRGB-encoded** and **`baseColorFactor` is linear**.
+
+**The texture needs no conversion.** `GetColor64` scales an 8-bit component into a 15-bit range and
+applies no transfer function (`wz3_bitmap_code.cpp:213-221`); `CopyTo` narrows back by a plain shift.
+A colour authored as mid-grey is stored as mid-grey and displays as mid-grey — display-referred,
+which is what sRGB-encoded means. So the PNG carries the authored values and glTF reads them right.
+
+**The factor does.** It comes from a colour picker, so it is display-referred for the same reason,
+while the spec wants linear. The test material is `#ff3060c0` — deliberately asymmetric and non-grey,
+because white passes either way — and `gltf_roundtrip` computes the expected value **from the spec's
+own transfer function** rather than from the writer, so a constant lifted from the code under test
+cannot satisfy it. Verified negatively by emitting the raw byte:
+`want 0.02956, got 0.18824 (raw/255 would be 0.18824)`.
+
+### Two things the implementation corrected
+
+**Materials are deduplicated by pointer, not by contents.** `SetMaterial` shares one object across
+the clusters using it and refcounts it, so pointer identity is exactly the "same material" relation
+the document already maintains — `tests/material.cpp` asserts a `Transform` preserves it. Comparing
+contents would silently merge two materials a user kept distinct.
+
+**The sidecar is named after the output, not the mesh.** The first version used `mesh->Name`, which
+is empty on almost every mesh, so every `.gltf` export in a directory wrote `mesh_tex0.png` over the
+last one and every file pointed at whichever finished last. It is now `<stem>_tex0.png`, beside its
+own `.gltf` and `.bin`.
+
+### What the goldens showed
+
+One line changed in each of the six, and no `.bin` at all: `roughnessFactor` 0.8 → 1. Untextured
+meshes still get the grey default; 1.0 is glTF's own default and the honest value for "no roughness
+data", where 0.8 was arbitrary. That the diff was one readable line across six files is the payoff
+of keeping the goldens as text.
+
+### Coverage the goldens do not give
+
+None of the six golden stores is textured, so the `.gltf` **sidecar** path had no coverage — the same
+gap that left the `.glb` container untested in 8.4. `gltf_material.cmake` exports both containers and
+checks the uri names a file that exists beside the `.gltf`, that it starts with the PNG magic, and
+that the bytes embedded in the `.glb` are **byte-identical** to the sidecar.
+
+The checker also walks the whole chain: `material → baseColorTexture.index → textures → source →
+images → bufferView`. Four hops, four different arrays, and every one can be off by one while the
+file still parses and every count still agrees.
+
+## 9.3 (original plan text) — Export
 
 Extend `geo/gltf_write.cpp`. Currently one default material shared by every primitive; instead, one
 glTF material **per cluster**, from that cluster's `Mtrl`:

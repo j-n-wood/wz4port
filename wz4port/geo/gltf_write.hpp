@@ -45,6 +45,8 @@ struct wGltfStats
   sInt Prims;               // one per non-empty cluster
   sInt UnusedVerts;         // referenced by no face; reported, never removed
   sInt Degenerate;          // legal in glTF, so a warning rather than a refusal
+  sInt Materials;           // one per primitive
+  sInt Textures;            // distinct bitmaps, deduplicated by pointer
   sDInt JsonBytes;
   sDInt BinBytes;
 
@@ -52,6 +54,28 @@ struct wGltfStats
 };
 
 /****************************************************************************/
+
+// One texture, encoded, for a caller that has to write it out.
+//
+// Only .gltf produces these: glTF cannot put image bytes inside a JSON file, so
+// each texture becomes a PNG beside it. A .glb has somewhere to put them — a
+// bufferView into its BIN chunk — so it emits none and this array comes back
+// empty. That asymmetry is the format's, not ours.
+// A raw owned pointer rather than an sArray member, deliberately. Altona's
+// sArray hands out uninitialised memory from AddMany and relocates it wholesale
+// in Grow, so an element type that owns heap storage through a member container
+// would be copied bitwise and then double-freed. sString is a plain buffer and
+// is safe; sArray inside an sArray is not.
+//
+// The caller owns Png and releases it with wFreeGltfSidecars.
+struct wGltfSidecar
+{
+  sString<128> Name;        // file name only, as the uri in the JSON
+  sU8 *Png;
+  sInt Len;
+};
+
+void wFreeGltfSidecars(sArray<wGltfSidecar> &sidecars);
 
 // Formats into memory, so the formatter is testable without touching a disk —
 // the same split as wWriteWz4t / wWriteWz4tFile (wz4t_write.cpp:435).
@@ -65,7 +89,8 @@ struct wGltfStats
 // vertices are exported and counted, not silently removed.
 //
 // Returns 0 and prints why if the mesh cannot be represented.
-sBool wWriteGltf(sTextBuffer &json,sArray<sU8> &bin,Wz4Mesh *mesh,
+sBool wWriteGltf(sTextBuffer &json,sArray<sU8> &bin,
+  sArray<wGltfSidecar> &sidecars,Wz4Mesh *mesh,
   const sChar *binuri,wGltfStats *stats=0);
 
 // Writes .gltf plus its .bin sidecar, or a single .glb, chosen by the path's

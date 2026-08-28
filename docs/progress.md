@@ -855,6 +855,42 @@ link through the text format. Fixed by setting `Select = 1` with the name, so th
 two sides agree: a written link name means an active link. `Select==2` and
 `Select>=3` remain inexpressible and round-trip as 0 — recorded, not fixed.
 
+**9.3 exports it: textures reach the glTF.** One material per primitive from its
+cluster, `baseColorTexture`, a REPEAT sampler, and the image as PNG — embedded in
+a `.glb`'s BIN chunk or written beside a `.gltf`. `ninja gltf_samples` now
+includes a textured cube. 163/163.
+
+**The colour space was settled by reading the generator, not guessing.** glTF
+specifies the halves differently: `baseColorTexture` is **sRGB-encoded**,
+`baseColorFactor` is **linear**. The texture needs no conversion — `GetColor64`
+scales an 8-bit component into a 15-bit range with no transfer function
+(`wz3_bitmap_code.cpp:213`), so a colour authored as mid-grey is stored and
+displayed as mid-grey, which is what display-referred means. The **factor** does
+need converting, and the test computes the expected value from the spec's own
+transfer function rather than from the writer, so a constant lifted from the code
+under test cannot satisfy it. Verified negatively by emitting the raw byte:
+`want 0.02956, got 0.18824`. The test colour is `#ff3060c0` because white would
+pass either way.
+
+**Two implementation corrections worth keeping.** Materials deduplicate **by
+pointer, not contents** — `SetMaterial` shares one object across clusters and
+refcounts it, so pointer identity is the relation the document already maintains,
+and comparing contents would merge two materials a user kept distinct. And the
+`.gltf` sidecar is named after the **output**, not the mesh: the first version
+used `mesh->Name`, which is empty on almost every mesh, so every export in a
+directory wrote `mesh_tex0.png` over the last one.
+
+**The goldens changed by one readable line each** — `roughnessFactor` 0.8 → 1,
+with no `.bin` touched. 1.0 is glTF's own default and the honest value for "no
+roughness data". That six files diffed as one line apiece is the payoff of
+phase 8's decision to keep the goldens text.
+
+**And none of the six is textured**, so the `.gltf` sidecar path had no coverage —
+the same gap that left `.glb` untested in 8.4, noticed this time before shipping.
+`gltf_material.cmake` exports both containers and checks the uri names a file
+beside the `.gltf`, that it carries the PNG magic, and that the bytes embedded in
+the `.glb` are **byte-identical** to the sidecar.
+
 **The suite demanded its own coverage**, which is the arrangement working:
 registering an operator made `mesh_ops` fail with *"no case exercises
 SetMaterial"*. `mm_set`'s locked checksum is **derived** rather than observed —
@@ -1004,7 +1040,7 @@ about the build.
 | 6 — Geometry | **Done**, phase gate passed. All 45 operators, 3D preview, OBJ both ways, Text3D |
 | 7 — Animated geometry | **done** — `AnimateBones` added, geometry moves over time, rigged meshes scrub in the preview, joints draw over the mesh |
 | 8 — glTF export | **done** — meshes export as `.gltf`+`.bin` or `.glb` from `wz4gen` and from the editor's File menu, with a round-trip oracle and six goldens |
-| 9 — Materials | **9.1–9.2 done** — materials registered, `TextureMaterial` holds a `GenBitmap`, `SetMaterial` re-enabled and putting it on a mesh. 9.3 glTF export, 9.4 preview remain |
+| 9 — Materials | **9.1–9.3 done** — materials registered, assigned to meshes, and exported to glTF with textures in both containers. 9.4 preview remains |
 
 ---
 

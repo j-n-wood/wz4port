@@ -1071,8 +1071,10 @@ static void ReportMesh(Wz4Mesh *mesh,const sChar *out)
     }
     delete[] gbytes;
 
-    sPrintF(L"  gltf %d vertices, %d triangles, %d primitive(s)",
-      gs.Verts,gs.Tris,gs.Prims);
+    sPrintF(L"  gltf %d vertices, %d triangles, %d primitive(s), %d material(s)",
+      gs.Verts,gs.Tris,gs.Prims,gs.Materials);
+    if(gs.Textures)
+      sPrintF(L", %d texture(s)",gs.Textures);
     if(gs.UnusedVerts)
       sPrintF(L", %d unused vertex(es) kept",gs.UnusedVerts);
     if(gs.Degenerate)

@@ -67,3 +67,22 @@ stack at 16,0 {
     Scale = 2, 1, 1
   }
 }
+
+// The untextured half, and it is here for the colour space.
+//
+// #ff3060c0 is deliberately not a neutral: glTF's baseColorFactor is LINEAR
+// while a colour picker is display-referred, so the export has to convert, and
+// only an asymmetric non-grey colour shows whether it did. White would pass
+// either way, which is why m_textured above cannot cover this.
+stack at 24,0 {
+  op Wz4Mesh.Cube {
+    name = mf_in
+    Tesselate = 1, 1, 1
+    Scale = 1, 1, 1
+  }
+  op Wz4Mesh.SetMaterial {
+    name = mf_flat
+    Material = "m_flat"
+    Selection = all
+  }
+}
