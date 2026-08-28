@@ -163,8 +163,10 @@ void sMain()
   sPrintF(L"  %d classes output GenBitmap, %d output Wz4Mesh\n",
     genbitmap,wz4mesh);
   Check(genbitmap==34,L"all 34 GenBitmap operators are registered");
-  // 46 since phase 7 — 45 upstream plus our own AnimateBones.
-  Check(wz4mesh==46,L"all 45 upstream Wz4Mesh operators, plus AnimateBones");
+  // 47 since phase 9.2 — 45 upstream, our own AnimateBones, and SetMaterial,
+  // which needed material_ops.ops to register the Wz4Mtrl type it takes.
+  Check(wz4mesh==47,
+    L"all 45 upstream Wz4Mesh operators, plus AnimateBones and SetMaterial");
 
   // --- repeated insertion builds a connected stack -------------------------
 

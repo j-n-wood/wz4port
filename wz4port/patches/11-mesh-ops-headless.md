@@ -189,3 +189,23 @@ Two mesh operators are absent from the headless build, and XSI import refuses.
 `SetMaterial` is the one to revisit first: its body already compiles, so it needs
 only a materials type to exist, and it is the operator a later materials phase
 would re-enable for free.
+
+## Amendment, phase 9.2 — `SetMaterial` is back
+
+That prediction held exactly, and the re-enabling cost two lines.
+
+`wz4port/geo/material_ops.ops` registers the `Wz4Mtrl` and `SimpleMtrl` types
+that `wz4_mtrl2_ops` would have, and gives them a producer
+(`SimpleMtrl.TextureMaterial`). With the type no longer phantom, this patch's
+`headless = 0;` on `SetMaterial` was removed and the headless header block gained
+`#include "geo/material_ops.hpp"` for the `Wz4MtrlType` its input names. The
+operator body was never touched, in this patch or since — it always compiled
+against `compat/include/wz4_mtrl_headless.hpp`.
+
+So the file's diff against upstream shrinks: the guarded include block stays, and
+the `headless = 0;` on `SetMaterial` is gone. `ConvertFromChaosMesh` keeps its
+own, since `ChaosMesh` remains unregistered.
+
+Measured: Wz4Mesh operators go 46 → 47, `mesh_register` now asserts SetMaterial
+is PRESENT, and `tests/material.cpp` checks a material attached this way survives
+a `Transform` downstream as the same object rather than a copy.

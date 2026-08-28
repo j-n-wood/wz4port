@@ -114,20 +114,28 @@ void sMain()
     if(cl->OutputType==meshtype)
       meshops++;
   }
-  // 46 since phase 7: 45 upstream, plus AnimateBones from wz4port's own
-  // geo/animate_ops.ops — the first .ops in this project that is not upstream.
+  // 47 since phase 9.2: 45 upstream that always registered, plus AnimateBones
+  // from wz4port's own geo/animate_ops.ops, plus SetMaterial — which is upstream
+  // but stayed unregistered until material_ops.ops supplied the Wz4Mtrl type its
+  // input names.
   sPrintF(L"  %d operators output Wz4Mesh\n",meshops);
-  Check(meshops==46,L"45 upstream operators plus our AnimateBones output Wz4Mesh");
+  Check(meshops==47,
+    L"45 upstream, plus our AnimateBones, plus SetMaterial output Wz4Mesh");
   Check(HasClass(L"AnimateBones"),
     L"and AnimateBones is one of them — a wz4port module registered alongside "
     L"the upstream ones");
 
-  // Named, not just counted. These are the two patch 11 drops, and the reason
-  // is the input type in each case, not the operator body.
+  // Named, not just counted. ConvertFromChaosMesh is still a patch 11 drop, and
+  // the reason is its input type rather than its body.
   Check(!HasClass(L"ConvertFromChaosMesh"),
     L"ConvertFromChaosMesh is absent (input type ChaosMesh)");
-  Check(!HasClass(L"SetMaterial"),
-    L"SetMaterial is absent (input type Wz4Mtrl)");
+
+  // SetMaterial was the other drop until phase 9.2. It came back when
+  // wz4port/geo/material_ops.ops registered the Wz4Mtrl type its input needs —
+  // the omission was never about the operator body, which compiled against the
+  // headless material all along.
+  Check(HasClass(L"SetMaterial"),
+    L"SetMaterial is PRESENT again (phase 9.2 registered its Wz4Mtrl input)");
 
   // And a spread of what must be present: a generator, a filter, a
   // multi-input operator, and the two that take a bitmap.

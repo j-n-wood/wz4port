@@ -99,7 +99,31 @@ is upstream's. That divergence already exists — this phase widens it from "a s
 shape" to "a stub that stores something upstream stores differently". It is the same trade patch 10
 took, and the guard is the same.
 
-## 9.2 — Re-enable `SetMaterial`
+## 9.2 — Re-enable `SetMaterial` — **done**
+
+Two lines: `headless = 0;` deleted, and `#include "geo/material_ops.hpp"` added to the headless
+header block for the `Wz4MtrlType` the input names. The operator body was never the problem and was
+not touched. Wz4Mesh operators go **46 → 47**; patch 11 carries the amendment.
+
+**A latent `.wz4t` bug fell out of it.** The first `SetMaterial` case failed with *"required input is
+missing"*. `SetMaterial`'s material input is a **link** — it names another operator rather than
+reading what sits above it — and `wDocument::Connect` only resolves a link when `Select==1`
+(`doc.cpp:2763`). Our reader set `LinkName` and left `Select` at 0, so **every link in every `.wz4t`
+was inert**. The writer emits the name and nothing else, so a `.wz4` → `.wz4t` → `.wz4` round trip
+kept the name and silently lost the connection. Fixed by setting `Select = 1` alongside the name,
+which makes the two sides agree: a written link name means an active link.
+
+Still not expressible: `Select==2` ("empty") and `Select>=3` ("use input N"). No bundled document
+uses them and they round-trip as 0 — recorded rather than fixed, since inventing syntax for a state
+nothing produces would be speculative.
+
+**The suite demanded the coverage, which is the system working.** Registering an operator made
+`mesh_ops` fail with *"no case exercises SetMaterial"*, so `ops_mtrl.wz4t` gained a
+`Cube → SetMaterial → Transform` chain and `mesh_cases` two entries. `mm_set`'s checksum is
+**derived**: attaching a material must not move a vertex, so it has to equal a plain unit Cube's —
+and it matches `ops_topo`'s independent `p_in_subdiv` exactly. Checked before locking, not after.
+
+## 9.2 (original plan text) — Re-enable `SetMaterial`
 
 Delete `headless = 0;` and the comment explaining the omission. This is an upstream `.ops` edit in a
 file **patch 11 already touches**, so it amends a documented patch rather than adding one.

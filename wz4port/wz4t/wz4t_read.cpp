@@ -385,6 +385,22 @@ sBool wWz4tReader::Apply(wStackOp *op,const wMetaClass *mc,const wMetaParam *p,
   }
 
   // Link names. The link is resolved later by Connect(), by name.
+  //
+  // Select MUST be set as well, and forgetting it was a silent hole until phase
+  // 9.2. wDocument::Connect only resolves a link when `Select==1`
+  // (doc.cpp:2763); the name alone is inert, so an operator naming a link got no
+  // input and failed with "required input is missing" — a message that points at
+  // the graph rather than at the reader that dropped the connection.
+  //
+  // The writer has the matching convention: it emits the name and nothing else
+  // (wz4t_write.cpp:313-322), so a round trip through .wz4t kept the name and
+  // lost the connection. **A written link name means Select=1**, and its absence
+  // means 0 — which covers the two modes a document actually uses.
+  //
+  // Not expressible either way: Select==2 ("empty") and Select>=3 ("use input
+  // N"). Those are editor connection choices with no syntax in this format, and
+  // they round-trip as 0. Recorded rather than fixed — no bundled document uses
+  // them, and inventing syntax for a state nothing produces would be speculative.
   if(p->Kind==L"link")
   {
     if(p->Offset<0 || p->Offset>=op->Links.GetCount())
@@ -393,6 +409,7 @@ sBool wWz4tReader::Apply(wStackOp *op,const wMetaClass *mc,const wMetaParam *p,
       return 0;
     }
     op->Links[p->Offset].LinkName = values[0].S;
+    op->Links[p->Offset].Select = 1;
     return 1;
   }
 

@@ -834,7 +834,33 @@ meshes. A material that evaluated and quietly dropped its bitmap would have
 passed the entire suite. `tests/material.cpp` asserts the bitmap pointer survives
 evaluation, that it is a real `GenBitmap` with pixels, and — the half that makes
 the rest mean anything — that a material with no input has **no** texture rather
-than a stale one. The
+than a stale one.
+
+**9.2 re-enabled `SetMaterial` for two lines**, exactly as patch 11 predicted it
+would: `headless = 0;` deleted and one include added. The body was never the
+problem — it compiled against the headless material all along. Wz4Mesh operators
+go 46 → 47. The test now asserts the material survives a `Transform` downstream
+**as the same object**, not a copy, which is the property that made this a
+material rather than a bespoke attach-a-texture operator.
+
+**And it exposed a latent `.wz4t` bug that had nothing to do with materials.**
+The first case failed with *"required input is missing"*. `SetMaterial`'s
+material input is a **link** — it names an operator rather than reading what sits
+above it — and `wDocument::Connect` resolves a link only when `Select==1`
+(`doc.cpp:2763`). Our reader set `LinkName` and left `Select` at 0, so **every
+link in every `.wz4t` was inert**, and since the writer emits the name and
+nothing else, a `.wz4` → `.wz4t` → `.wz4` round trip kept the name and silently
+lost the connection. Nothing caught it because no bundled document exercised a
+link through the text format. Fixed by setting `Select = 1` with the name, so the
+two sides agree: a written link name means an active link. `Select==2` and
+`Select>=3` remain inexpressible and round-trip as 0 — recorded, not fixed.
+
+**The suite demanded its own coverage**, which is the arrangement working:
+registering an operator made `mesh_ops` fail with *"no case exercises
+SetMaterial"*. `mm_set`'s locked checksum is **derived** rather than observed —
+attaching a material must not move a vertex, so it has to equal a plain unit
+Cube's, and it matches `ops_topo`'s independent `p_in_subdiv` exactly. Verified
+before locking, which is A66's lesson applied rather than repeated. The
 structural evidence is strong and the handedness gate is a good proxy, but the
 goldens record what the writer does, not that it is right — 6.3b's OBJ review is
 the precedent, and that review is the remaining step. An optional Khronos
@@ -978,7 +1004,7 @@ about the build.
 | 6 — Geometry | **Done**, phase gate passed. All 45 operators, 3D preview, OBJ both ways, Text3D |
 | 7 — Animated geometry | **done** — `AnimateBones` added, geometry moves over time, rigged meshes scrub in the preview, joints draw over the mesh |
 | 8 — glTF export | **done** — meshes export as `.gltf`+`.bin` or `.glb` from `wz4gen` and from the editor's File menu, with a round-trip oracle and six goldens |
-| 9 — Materials | **9.1 done** — `Wz4Mtrl`/`SimpleMtrl` registered, `TextureMaterial` builds a material holding a `GenBitmap`. 9.2 `SetMaterial`, 9.3 glTF export, 9.4 preview remain |
+| 9 — Materials | **9.1–9.2 done** — materials registered, `TextureMaterial` holds a `GenBitmap`, `SetMaterial` re-enabled and putting it on a mesh. 9.3 glTF export, 9.4 preview remain |
 
 ---
 

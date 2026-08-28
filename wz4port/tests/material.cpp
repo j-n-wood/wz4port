@@ -177,6 +177,62 @@ void sMain()
     }
   }
 
+  // --- 9.2: the material on a mesh, and still there afterwards -------------
+  //
+  // This is the claim that justified doing textures as a material rather than a
+  // bespoke "attach a bitmap" operator. A material lives on Wz4MeshCluster::Mtrl,
+  // which every mesh operation already copies and refcounts, so it rides along
+  // through the rest of the graph. A side table keyed on the mesh would not
+  // survive CopyFrom.
+  //
+  // So the assertion is not "SetMaterial worked" but "and it was STILL there
+  // after an unrelated operator rebuilt the mesh".
+  sPrint(L"\n[on a mesh]\n");
+  {
+    wType *meshtype = Doc->FindType(L"Wz4Mesh");
+
+    struct { const sChar *Store; const sChar *What; } cases[] =
+    {
+      { L"mm_set",   L"SetMaterial put the material on the cluster" },
+      { L"mm_moved", L"and it survived a Transform downstream" },
+    };
+
+    for(sInt c=0;c<2;c++)
+    {
+      wOp *op = Doc->FindStore(cases[c].Store);
+      wObject *obj = op ? Doc->CalcOp(op) : 0;
+      if(!obj || !meshtype || !obj->IsType(meshtype))
+      {
+        sPrintF(L"  FAIL  \"%s\" did not evaluate to a mesh\n",cases[c].Store);
+        Failures++;
+        continue;
+      }
+
+      Wz4Mesh *mesh = (Wz4Mesh *)obj;
+      SimpleMtrl *m = 0;
+      if(mesh->Clusters.GetCount()>0)
+        m = (SimpleMtrl *)mesh->Clusters[0]->Mtrl;
+
+      // The bitmap, not just the material: a cluster carrying a material whose
+      // texture had been dropped would satisfy a null check and export nothing.
+      Check(m!=0 && m->GetBitmap(0)!=0,cases[c].What);
+    }
+
+    // And the two must be the SAME material, not a copy that happens to look
+    // alike — that is what "refcounted, carried along" means, and a deep copy
+    // would quietly double every texture in an exported file.
+    wOp *a = Doc->FindStore(L"mm_set");
+    wOp *b = Doc->FindStore(L"mm_moved");
+    if(a && b)
+    {
+      Wz4Mesh *ma = (Wz4Mesh *)Doc->CalcOp(a);
+      Wz4Mesh *mb = (Wz4Mesh *)Doc->CalcOp(b);
+      if(ma && mb && ma->Clusters.GetCount() && mb->Clusters.GetCount())
+        Check(ma->Clusters[0]->Mtrl==mb->Clusters[0]->Mtrl,
+          L"and it is the same material object, shared rather than copied");
+    }
+  }
+
   delete Doc;
   Doc = 0;
 

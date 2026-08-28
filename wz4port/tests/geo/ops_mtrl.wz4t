@@ -39,3 +39,31 @@ stack at 8,0 {
     Wrap = clamp
   }
 }
+
+// Phase 9.2: the material reaching a mesh, and staying there.
+//
+// SetMaterial's material input is a LINK, not a stacked one — it names another
+// operator rather than reading whatever sits above it — so the mesh comes from
+// the stack and the material comes by name. Connect() resolves it.
+//
+// The Transform afterwards is the point of the whole case. A material is worth
+// having over a bespoke "attach a texture" operator precisely because it rides
+// along through the rest of the graph: Transform copies clusters and refcounts
+// their Mtrl, so the texture is still attached after it. A side table keyed on
+// the mesh would not survive CopyFrom.
+stack at 16,0 {
+  op Wz4Mesh.Cube {
+    name = mm_in
+    Tesselate = 1, 1, 1
+    Scale = 1, 1, 1
+  }
+  op Wz4Mesh.SetMaterial {
+    name = mm_set
+    Material = "m_textured"
+    Selection = all
+  }
+  op Wz4Mesh.Transform {
+    name = mm_moved
+    Scale = 2, 1, 1
+  }
+}

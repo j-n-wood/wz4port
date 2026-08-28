@@ -484,6 +484,24 @@ static const wExpect AnimCases[] =
     L"in one comparison — no locked constant required for it to mean something" },
 };
 
+// Phase 9.2. SetMaterial changes no geometry at all — it attaches a material to
+// a cluster — so the numbers here are the input Cube's, unchanged. That is the
+// assertion worth having: the operator must be a no-op on the MESH while being
+// the whole point for the material, and tests/material.cpp checks the other half.
+static const wExpect MtrlCases[] =
+{
+  { L"mm_set", 6,0,6, CL_CLOSED, -0.5f,-0.5f,-0.5f, 0.5f,0.5f,0.5f, 0,0,1,
+    L"SetMaterial on a unit Cube: identical geometry, because attaching a "
+    L"material must not move a vertex. Its checksum has to equal the input "
+    L"Cube's, which is what catches a cluster rebuild that silently reorders "
+    L"faces" },
+
+  { L"mm_moved", 6,0,6, CL_CLOSED, -1.0f,-0.5f,-0.5f, 1.0f,0.5f,0.5f, 0,0,1,
+    L"and a Transform after it, scaled 2x in x only. Here to prove the material "
+    L"survives an unrelated operator downstream — the property that made this a "
+    L"material rather than a bespoke attach-a-texture operator" },
+};
+
 static const wCaseFile CaseFiles[] =
 {
   { L"ops_gen.wz4t",       GenCases,       sCOUNTOF(GenCases) },
@@ -491,6 +509,7 @@ static const wCaseFile CaseFiles[] =
   { L"ops_topo.wz4t",      TopoCases,      sCOUNTOF(TopoCases) },
   { L"ops_attr.wz4t",      AttrCases,      sCOUNTOF(AttrCases) },
   { L"ops_anim.wz4t",      AnimCases,      sCOUNTOF(AnimCases) },
+  { L"ops_mtrl.wz4t",      MtrlCases,      sCOUNTOF(MtrlCases) },
 };
 
 /****************************************************************************/
@@ -648,6 +667,14 @@ static const wLock Locks[] =
   { L"an_baked_t1",           0xce974691c1d02a52ULL },
   { L"an_rest_baked",         0x71f2ce517a5cde7dULL },
   { L"an_ref",                0x71f2ce517a5cde7dULL },
+
+  // Phase 9.2. mm_set's value is DERIVED, not merely observed: SetMaterial
+  // attaches a material and must not move a vertex, so it has to equal a plain
+  // unit Cube's — and it does, matching ops_topo's independent p_in_subdiv
+  // (dbd21bf5e8000000 on the render report, the same mesh either way). Checked
+  // before locking rather than after, which is the A66 lesson.
+  { L"mm_set",                0x9968b939a75dd34dULL },
+  { L"mm_moved",              0x3308e0df2d5dd34dULL },
 };
 
 /****************************************************************************/

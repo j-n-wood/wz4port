@@ -16,6 +16,9 @@ header
 #include "wz4frlib/wz4_mtrl2.hpp"
 #else
 #include "wz4_mtrl_headless.hpp"        // SimpleMtrl, for Wz4MeshType_::DefaultMtrl
+#include "geo/material_ops.hpp"         // Wz4MtrlType, for SetMaterial's input.
+                                        // wz4port registers the material types
+                                        // that wz4_mtrl2_ops would; see phase 9.
 #endif
 #include "wz4frlib/wz4_mesh.hpp"
 #include "wz4frlib/wz3_bitmap_ops.hpp"
@@ -760,12 +763,16 @@ operator Wz4Mesh DeleteFace(Wz4Mesh)
 
 operator Wz4Mesh SetMaterial(Wz4Mesh,Wz4Mtrl)
 {
-  // wz4port: the code block would compile against the headless Wz4Mtrl, but the
-  // input type makes the registration name Wz4MtrlType from wz4_mtrl2_ops, which
-  // needs the asc-generated shader header. Registering a phantom Wz4Mtrl type
-  // instead would be worse than omitting this: nothing headless can produce a
-  // Wz4Mtrl, so the operator would appear in the palette and never be usable.
-  headless = 0;
+  // wz4port: re-enabled in phase 9.2. This carried `headless = 0` from phase 6,
+  // because the input type resolves to Wz4MtrlType from wz4_mtrl2_ops, which
+  // needs the asc-generated shader header — and, as the note said, "registering a
+  // phantom Wz4Mtrl type instead would be worse: nothing headless can produce a
+  // Wz4Mtrl, so the operator would appear in the palette and never be usable."
+  //
+  // That was conditional, and the condition is gone. wz4port/geo/material_ops.ops
+  // registers Wz4Mtrl and SimpleMtrl and gives them a producer, so the type is no
+  // longer phantom and this operator is usable. The include is in the header
+  // block above.
   column = 3;
   shortcut = 'M';
   flags = passinput|passoutput;
