@@ -233,6 +233,10 @@ none can see which way up the image landed, because that is a property of what a
 viewer draws. Noise textures like `mm_moved.glb`'s prove a texture arrived and
 nothing about how.
 
+**Verified**: it has been opened and reads correctly — upright on the sides, one tile per face, no
+mirroring. On the top and bottom the text appears as well and "up" is ambiguous there, which is the
+Cube's UV layout rather than a fault: both caps map to u 0..1, overlapping the first side.
+
 | what you see | what it means |
 |---|---|
 | "Up" upright, once per face, four times around | correct |

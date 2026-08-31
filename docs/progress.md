@@ -801,7 +801,26 @@ Re-locked deliberately: `mesh_cases` now expects 24/16/8 for the hole case, and
 two checksums moved. Nothing else in the suite changed, which is what says the
 fix is surgical. 161/161.
 
-**Still outstanding for the rest: nobody has opened the other files in a viewer.**
+**UV orientation is CONFIRMED BY INSPECTION, and that closes phase 8's last
+open claim.** `uv_cube.glb` — the word "Up" wrapped round a cube — was opened in
+a viewer and reads upright and correctly oriented on the sides: no mirroring, no
+smearing, one tile per face. Which way up an image lands is a property of what a
+viewer draws rather than of the file, so no test in the suite could reach it. The
+code-reading argument (`Select` samples `Data[XSize*v+u]`, `CopyTo` is linear,
+`SavePNG` does not flip, therefore v = 0 is the top) is now backed by the picture.
+
+On the caps the text appears too and "up" is ambiguous there — that is the Cube's
+UV layout, which maps both top and bottom to u 0..1 overlapping the first side.
+Measured in phase 9's UV audit, not a fault.
+
+**One correction to the sample itself.** The text sat low, which reads as a
+texture-generation coordinate problem and is not one: `GenBitmap.Text`'s
+`Position` is the **top-left of the text block, not a baseline** — established by
+pushing the descender of the "p" off the bottom edge while assuming otherwise.
+Ink runs from about `y+0.07` to `y+Height`, so centring means
+`y = 0.5 - Height/2 - 0.07`. The sample is centred now. The original off-centre
+placement was deliberate — to tell a V flip from a U mirror — but the letterforms
+already do that, so it bought nothing and cost legibility.
 
 **Phase 9.1 is done: a texture can reach a material.** The question was whether
 assigning textures needed a new operator or a partial material system, and the

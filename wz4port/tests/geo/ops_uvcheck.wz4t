@@ -34,14 +34,23 @@ stack at 0,0 {
     Color = #ff202030
   }
 
-  // Left-aligned and low, so horizontal and vertical flips look different from
-  // each other. Centred text would hide a 180-degree rotation.
+  // Centred. It was placed low and left at first, on the theory that a vertical
+  // flip and a horizontal mirror had to look different from each other — but the
+  // letterforms already do that job: an upside-down "Up" is unmistakable and a
+  // mirrored one reads backwards, wherever they sit. Off-centre only made the
+  // texture look wrong on a cube's face, which is a distraction when the sample
+  // exists to show whether anything IS wrong.
+  //
+  // Position is the TOP-LEFT of the text block, not a baseline — measured, after
+  // assuming otherwise and pushing the descender of the "p" off the bottom edge.
+  // Ink runs from roughly y+0.07 to y+Height, so centring means
+  // y ~= 0.5 - Height/2 - 0.07 rather than 0.5.
   op GenBitmap.Text {
     name = uv_tex
     Text = "Up"
     Font = "Arial"
-    Height = 0.45
-    Position = 0.12, 0.62
+    Height = 0.36
+    Position = 0.30, 0.26
     Color = #ffffd080
   }
 
