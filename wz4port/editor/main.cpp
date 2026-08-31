@@ -1003,6 +1003,7 @@ static void Usage()
   sPrint(L"  -wire     start with wireframe on\n");
   sPrint(L"  -bbox     start with the bounding box on\n");
   sPrint(L"  -nobones  start with the skeleton overlay OFF (it is on by default)\n");
+  sPrint(L"  -notex    start with the material's texture OFF (likewise)\n");
   sPrint(L"  -guides   start with connection guides on (View toggle otherwise)\n");
   sPrint(L"\n");
   sPrint(L"-shot, -frames and -export run non-interactively: the window is\n");
@@ -1158,6 +1159,12 @@ void sMain()
   // compared a pose against itself — passing only by accident.
   if(sGetShellSwitch(L"nobones"))
     Ed->MeshView.ShowBones = false;
+
+  // -notex, and negative for the same reason -nobones is: the texture is on by
+  // default when a material has one, so the gate needs a way to turn it OFF and
+  // render the two.
+  if(sGetShellSwitch(L"notex"))
+    Ed->MeshView.ShowTexture = false;
 
   // And the timeline, so the 7.4 gate can assert a POSE rather than merely that
   // a scrubber exists. Given as a percentage because Altona's shell parser has

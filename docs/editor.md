@@ -35,6 +35,7 @@ an argument to `-meta` and then has no document.
 | `-time <pct>` | set the animation time, 0–100, mapping to *t* = 0…1 |
 | `-wire`, `-bbox` | start with wireframe / the bounding box on |
 | `-nobones` | start with the skeleton overlay **off** (it is on by default) |
+| `-notex` | start with the material's texture **off** (likewise) |
 | `-guides` | start with connection guides on |
 | `-help`, `-h` | usage |
 
@@ -102,6 +103,11 @@ else gets the bitmap preview.
 **Bitmap preview:** `1:1`, `-`/`+` zoom, and a `tile` checkbox. Wheel zooms, left drag pans.
 
 **Mesh viewer:** left drag orbits, wheel dollies, and the toolbar has `fit`, `wire`, `grid`, `bbox`.
+A **`tex`** checkbox appears when the mesh carries a material with a base colour map, and the viewer
+shows the same thing the exporter writes — including the handedness conversion, which it did *not* do
+before phase 9.4 (see `architecture.md` A68). Only cluster 0's texture is shown: the exporter emits
+one material per cluster, the viewer draws the mesh in one call, so a multi-material mesh previews
+with its first material and exports with all of them.
 
 Two controls appear **only when the mesh carries a skeleton**, which almost none do — every
 generator produces an unrigged mesh, and `Deform` destroys the rig it builds unless its *keep bones*

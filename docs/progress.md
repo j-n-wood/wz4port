@@ -813,6 +813,26 @@ On the caps the text appears too and "up" is ambiguous there — that is the Cub
 UV layout, which maps both top and bottom to u 0..1 overlapping the first side.
 Measured in phase 9's UV audit, not a fault.
 
+**9.4 put the texture in the preview, and it immediately caught a three-phase-old
+defect.** The first render of the textured cube read **"qU"** — mirrored — while
+the exported `.glb` of the same mesh reads "Up" and had already been confirmed by
+eye. **The 3D viewer had been drawing everything mirrored since stage 6.4**:
+Werkkzeug is left-handed, `wMeshView` composes a right-handed GL projection, and
+nothing converted between them. The glTF writer has done it properly since phase
+8; nobody applied the same reasoning to the viewer, which predates it. Fixed by
+post-multiplying the view-projection by `diag(1,1,-1,1)`, applied to the matrix
+rather than the data so bounds, grid, box and bone overlay all follow.
+
+**Doing the preview after the export was verified is what made this findable.**
+Had 9.4 come first, "qU" would have been the reference and the *exporter* would
+have looked wrong. Recorded as **A68**: a renderer with no ground truth can be
+self-consistently wrong indefinitely, because every gate here is relative —
+render versus render, file versus golden — and a relative check cannot see a
+transform applied uniformly to everything. Three phases of geometric assertions
+missed it; one texture with a readable word on it did not. Every test mesh until
+now was achiral, and `Text3D`, the one chiral case, was only ever checked by
+counts and checksums rather than looked at.
+
 **One correction to the sample itself.** The text sat low, which reads as a
 texture-generation coordinate problem and is not one: `GenBitmap.Text`'s
 `Position` is the **top-left of the text block, not a baseline** — established by
@@ -1059,7 +1079,7 @@ about the build.
 | 6 — Geometry | **Done**, phase gate passed. All 45 operators, 3D preview, OBJ both ways, Text3D |
 | 7 — Animated geometry | **done** — `AnimateBones` added, geometry moves over time, rigged meshes scrub in the preview, joints draw over the mesh |
 | 8 — glTF export | **done** — meshes export as `.gltf`+`.bin` or `.glb` from `wz4gen` and from the editor's File menu, with a round-trip oracle and six goldens |
-| 9 — Materials | **9.1–9.3 done** — materials registered, assigned to meshes, and exported to glTF with textures in both containers. 9.4 preview remains |
+| 9 — Materials | **done** — materials registered, assigned to meshes, exported to glTF with textures in both containers, and sampled in the 3D preview |
 
 ---
 

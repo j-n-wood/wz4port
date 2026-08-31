@@ -825,6 +825,25 @@ if(EXISTS "${WZ4_IMGUI_DIR}/imgui.cpp" AND EXISTS "${WZ4_GLFW_DIR}/CMakeLists.tx
       set_tests_properties(wz4ed_export PROPERTIES
         DEPENDS opsmeta_gate RUN_SERIAL TRUE)
 
+      # Stage 9.4. The preview samples the material's texture, so rendering with
+      # and without it must differ. Same shape as wz4ed_bones, and -notex is
+      # negative for the same reason -nobones is: the texture is on by default,
+      # so a -tex switch would be a no-op and the gate would compare a render
+      # against itself.
+      add_test(NAME wz4ed_texture COMMAND "${CMAKE_COMMAND}"
+        "-DWZ4ED=$<TARGET_FILE:wz4ed>"
+        "-DDOC=${CMAKE_CURRENT_SOURCE_DIR}/tests/geo/ops_uvcheck.wz4t"
+        "-DMETA=${WZ4_META_DIR}"
+        "-DSELECT=uv_cube"
+        "-DOUTDIR=${CMAKE_BINARY_DIR}/editor-shot"
+        "-DNAME=texture"
+        "-DARGSA="
+        "-DARGSB=-notex"
+        "-DWHAT=The mesh carries a material with a texture and the preview shows it by default, so hiding it must change the image. The 3D viewer is not sampling the texture at all."
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/editor_differs.cmake")
+      set_tests_properties(wz4ed_texture PROPERTIES
+        DEPENDS opsmeta_gate RUN_SERIAL TRUE)
+
       # One window at a time: GLFW and the platform frameworks are not built for
       # several of these racing each other, and a flaky GUI test is worse than
       # none.

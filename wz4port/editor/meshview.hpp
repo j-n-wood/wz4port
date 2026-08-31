@@ -46,6 +46,7 @@ struct wMeshView
   bool ShowGrid;
   bool ShowBBox;
   bool ShowBones;           // stage 7.5; like the scrubber, only offered on a rig
+  bool ShowTexture;         // stage 9.4; only offered when a material has one
 
   // --- the timeline, stage 7.4 ---------------------------------------------
   //
@@ -132,6 +133,13 @@ private:
   // existing sections by counting back 24 vertices from the end.
   sU32 BoneVao,BoneVbo;
   sInt BoneVerts;
+
+  // The cluster's texture, uploaded once per operator change rather than per
+  // frame. Tex is the GL name; TexSource is the bitmap it came from, so the
+  // upload can be skipped when nothing changed — and cleared when the mesh has
+  // no material, so a previous operator's texture cannot linger on this one.
+  sU32 Tex;
+  const void *TexSource;
   sU32 Fbo,ColorTex,DepthBuf;
   sInt FboW,FboH;
 
@@ -139,6 +147,7 @@ private:
   sBool EnsureFbo(sInt w,sInt h);
   void BuildLines();        // grid and bounding box, as one line buffer
   void BuildBones();        // the posed skeleton; rebuilt with every pose
+  void UploadTexture(Wz4Mesh *mesh);   // cluster 0's base colour map, if any
   void RefreshVertices();   // (re)builds the interleaved VBO from Source
   void Release();
 

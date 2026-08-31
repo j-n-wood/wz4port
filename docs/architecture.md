@@ -1843,6 +1843,46 @@ that said otherwise has been corrected rather than deleted, since it is what mad
 
 Worth doing when it next costs little: make duplicate registration an error rather than a race.
 
+### A68 · The 3D preview drew everything mirrored for three phases — standing
+
+*Phase 9.4, retroactive to stage 6.4.* Putting a texture with readable text on a cube produced a
+preview reading **"qU"**. The exported `.glb` of the same mesh reads "Up", and had been confirmed
+correct by eye. The viewer and the file disagreed, and the viewer was wrong.
+
+Werkkzeug is **left-handed** (+z into the screen, D3D's convention); `wMeshView` composes a standard
+**right-handed** GL projection and feeds the mesh's own coordinates straight into it. That mirrors
+the scene. The glTF writer has converted properly since phase 8 — negate z, reverse winding — but
+nothing applied the same reasoning to the viewer, because the viewer predates the writer by two
+phases and nobody revisited it.
+
+Fixed by post-multiplying the view-projection by `diag(1,1,-1,1)`, which makes
+`gl_Position = m * (x,y,-z,1)` — the exporter's mirror, applied to the matrix rather than the data so
+that bounds, grid, bounding box and bone overlay all move with it. Lighting stays in the mesh's own
+frame, which is correct: a mirrored object lit from **L** looks like the original lit from
+mirror(**L**), and that is what the exported file shows too.
+
+**Why three phases of tests could not see it.**
+
+- **Every test mesh was achiral.** Cubes, spheres, tori, grids, a subdivided cube — all symmetric
+  under the mirror, or near enough that a mirrored render is pixel-plausible. `Text3D` was the one
+  chiral case and it was only ever checked by *face counts and checksums*, never looked at.
+- **The screenshot gates compare renders against each other, never against ground truth.**
+  `wz4ed_pose`, `wz4ed_bones` and now `wz4ed_texture` all assert that two renders *differ* — which is
+  the right assertion for "does this control do anything" and says nothing about whether either
+  render is correct. They would all pass on a consistently mirrored viewer, and did.
+- **The goldens test the FILES, not the viewer.** OBJ and glTF goldens pin what the exporter writes.
+  Nothing compared what the exporter writes to what the editor shows, so the two were free to drift.
+
+The general point: **a renderer with no ground truth can be self-consistently wrong indefinitely.**
+Every check available was relative — this render versus that one, this file versus its golden — and
+relative checks cannot detect a transform applied uniformly to everything. What broke the symmetry
+was putting a **chirality cue** in the test data: an asymmetric, readable, orientable thing whose
+correct appearance is known independently of the code. One texture with the word "Up" on it did what
+three phases of geometric assertions could not.
+
+Worth remembering when the next viewer or exporter is added: ask what in the corpus would look wrong
+if it were mirrored, and if the answer is "nothing", that is the gap.
+
 ---
 
 ## Part 3 — where inference lost to measurement
@@ -1910,6 +1950,7 @@ adopted because of this list.
 | tess2d passing its unit tests means Text3D is correct | The tessellator was right and the *winding convention* was wrong; the consumer edge-flipped every triangle it produced (A66) |
 | A locked count is a verified count | `g_path3d_hole` was locked at 20 faces with a rationalisation for the missing 4. The derivation in the case file said 24 and was right (A66) |
 | The corpus metadata is inert coverage | It is the only copy of the mesh operators' metadata and is loaded at runtime; a same-named operator in `wz4port/` binds to the wrong parameter layout (A67) |
+| The 3D preview shows what the exporter writes | It drew everything mirrored from 6.4 to 9.4 — left-handed data, right-handed pipeline — and no test compared the viewer to a file (A68) |
 
 ---
 

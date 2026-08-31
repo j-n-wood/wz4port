@@ -206,7 +206,37 @@ glTF material **per cluster**, from that cluster's `Mtrl`:
 already sRGB decides whether a conversion belongs on export. Get this wrong and every texture is
 visibly too dark or too bright.
 
-## 9.4 — Preview
+## 9.4 — Preview — **done**
+
+The 3D viewer samples the material's base colour map. 164/164. A `tex` checkbox appears only when a
+material has one — the same rule as `bones` and the scrubber — and `-notex` drives the gate, negative
+for the reason `-nobones` is: the texture is on by default, so a `-tex` switch would be a no-op and
+the gate would compare a render against itself.
+
+Cluster 0 only, and that is a stated limitation rather than an oversight: the exporter emits one
+material per cluster because glTF has primitives to hang them on, while this viewer draws the mesh in
+one call and has one texture to give. A multi-material mesh previews with its first material and
+exports correctly with all of them.
+
+### And it immediately caught a three-phase-old defect
+
+The first render read **"qU"**. The exported `.glb` of the same mesh reads "Up" and had already been
+confirmed by eye — so the viewer and the file disagreed, and **the viewer had been drawing everything
+mirrored since stage 6.4**: Werkkzeug is left-handed, `wMeshView` composes a right-handed GL
+projection, and nothing converted between them. The glTF writer has done it properly since phase 8;
+nobody applied the same reasoning to the viewer, which predates it.
+
+Fixed by post-multiplying the view-projection by `diag(1,1,-1,1)` — the exporter's mirror, applied to
+the matrix rather than the data so bounds, grid, bounding box and bone overlay all follow.
+
+**Doing the preview after the export was confirmed is what made this findable.** Had 9.4 come first,
+"qU" would have been the reference and the exporter would have looked wrong. Recorded as **A68**,
+whose general point is that a renderer with no ground truth can be self-consistently wrong forever:
+every gate here is relative — render versus render, file versus golden — and a relative check cannot
+see a transform applied uniformly to everything. What broke it was a **chirality cue** in the test
+data, one texture with a readable word on it.
+
+## 9.4 (original plan text) — Preview
 
 The 3D viewer samples the texture, so the editor shows what the export will. `wMeshView` already
 uploads `TEXCOORD_0`; this adds a GL texture from the cluster's `GenBitmap` and a sampler in the

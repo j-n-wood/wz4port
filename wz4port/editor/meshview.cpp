@@ -8,6 +8,8 @@
 #include "imgui_wz4.hpp"
 #include "meshview.hpp"
 #include "base/system.hpp"
+#include "util/image.hpp"           // sImage, for the texture upload
+#include "wz4_mtrl_headless.hpp"    // SimpleMtrl — phase 9.4
 
 /****************************************************************************/
 
@@ -19,13 +21,16 @@ static const char *VertexSrc =
   "#version 330 core\n"
   "layout(location=0) in vec3 aPos;\n"
   "layout(location=1) in vec3 aNormal;\n"
+  "layout(location=2) in vec2 aUV;\n"
   "uniform mat4 uViewProj;\n"
   "out vec3 vNormal;\n"
   "out vec3 vPos;\n"
+  "out vec2 vUV;\n"
   "void main()\n"
   "{\n"
   "  vNormal = aNormal;\n"
   "  vPos = aPos;\n"
+  "  vUV = aUV;\n"
   "  gl_Position = uViewProj * vec4(aPos,1.0);\n"
   "}\n";
 
@@ -33,13 +38,23 @@ static const char *VertexSrc =
 // background. Two-sided: an open mesh seen from behind should be lit, not black,
 // because several operators legitimately produce open meshes and a viewer that
 // showed them as holes would be reporting a fault that is not there.
+// The texture is sampled in the SAME encoding it is exported in — the bitmap is
+// display-referred (GetColor64 applies no transfer function), glTF calls that
+// sRGB and linearises it on load, and here it goes straight to a framebuffer
+// that is not sRGB either. So no conversion in either direction, and the preview
+// and the exported file show the same thing. Doing a decode here and not in the
+// writer would make the editor disagree with its own output, which is worse than
+// either choice made consistently.
 static const char *FragmentSrc =
   "#version 330 core\n"
   "in vec3 vNormal;\n"
   "in vec3 vPos;\n"
+  "in vec2 vUV;\n"
   "uniform vec3 uLightDir;\n"
   "uniform vec3 uEye;\n"
   "uniform vec3 uColor;\n"
+  "uniform sampler2D uTex;\n"
+  "uniform int uHasTex;\n"
   "out vec4 oColor;\n"
   "void main()\n"
   "{\n"
@@ -48,7 +63,9 @@ static const char *FragmentSrc =
   "  if(dot(n,v) < 0.0) n = -n;\n"
   "  float d = max(dot(n,normalize(uLightDir)),0.0);\n"
   "  float rim = pow(1.0 - max(dot(n,v),0.0),3.0);\n"
-  "  vec3 c = uColor * (0.25 + 0.75*d) + vec3(0.10,0.12,0.16)*rim;\n"
+  "  vec3 base = uColor;\n"
+  "  if(uHasTex != 0) base = base * texture(uTex,vUV).rgb;\n"
+  "  vec3 c = base * (0.25 + 0.75*d) + vec3(0.10,0.12,0.16)*rim;\n"
   "  oColor = vec4(c,1.0);\n"
   "}\n";
 
@@ -148,6 +165,7 @@ wMeshView::wMeshView()
   ShowGrid = 1;
   ShowBBox = 0;
   ShowBones = 1;    // costs nothing when there is no rig, and almost nothing has one
+  ShowTexture = 1;  // likewise: no material, nothing to show, no control offered
 
   Verts = Tris = Quads = 0;
   Lo.Init(0,0,0);
@@ -173,6 +191,8 @@ wMeshView::wMeshView()
   LineVerts = 0;
   BoneVao = BoneVbo = 0;
   BoneVerts = 0;
+  Tex = 0;
+  TexSource = 0;
   Fbo = ColorTex = DepthBuf = 0;
   FboW = FboH = 0;
 }
@@ -191,6 +211,7 @@ void wMeshView::Release()
   if(LineVao)  { glDeleteVertexArrays(1,&LineVao); LineVao = 0; }
   if(BoneVbo)  { glDeleteBuffers(1,&BoneVbo); BoneVbo = 0; }
   if(BoneVao)  { glDeleteVertexArrays(1,&BoneVao); BoneVao = 0; }
+  if(Tex)      { glDeleteTextures(1,&Tex); Tex = 0; TexSource = 0; }
   if(ColorTex) { glDeleteTextures(1,&ColorTex); ColorTex = 0; }
   if(DepthBuf) { glDeleteRenderbuffers(1,&DepthBuf); DepthBuf = 0; }
   if(Fbo)      { glDeleteFramebuffers(1,&Fbo); Fbo = 0; }
@@ -334,6 +355,7 @@ void wMeshView::Upload(Wz4Mesh *mesh)
 
   RefreshVertices();
   BuildLines();
+  UploadTexture(mesh);
 
   // Fit() is NOT called here — see the header. An animated mesh refreshes its
   // vertices every frame, and framing on every refresh would reset the camera
@@ -357,7 +379,7 @@ void wMeshView::RefreshVertices()
   const sInt vc = Source->Vertices.GetCount();
 
   VertexScratch.Clear();
-  VertexScratch.AddMany(vc*6);
+  VertexScratch.AddMany(vc*8);      // pos3 + normal3 + uv2
 
   // GL_DYNAMIC_DRAW once the mesh is animated: the buffer is replaced every
   // frame, which is exactly what the hint is for.
@@ -373,7 +395,7 @@ void wMeshView::RefreshVertices()
   for(sInt i=0;i<vc;i++)
   {
     Wz4MeshVertex &v = Source->Vertices[i];
-    sF32 *d = &VertexScratch[i*6];
+    sF32 *d = &VertexScratch[i*8];
 
     sVector31 pos = v.Pos;
     sVector30 nrm = v.Normal;
@@ -407,22 +429,116 @@ void wMeshView::RefreshVertices()
 
     d[0] = pos.x; d[1] = pos.y; d[2] = pos.z;
     d[3] = nrm.x; d[4] = nrm.y; d[5] = nrm.z;
+
+    // UV0 only. The second set exists in Wz4MeshVertex but no generator writes
+    // it, and skinning does not touch either — a texture coordinate belongs to
+    // the surface, not to the pose.
+    d[6] = v.U0;  d[7] = v.V0;
   }
 
   glBindVertexArray(Vao);
   glBindBuffer(GL_ARRAY_BUFFER,Vbo);
   glBufferData(GL_ARRAY_BUFFER,VertexScratch.GetCount()*sizeof(sF32),
     &VertexScratch[0],usage);
+  const sInt stride = 8*sizeof(sF32);
   glEnableVertexAttribArray(0);
-  glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,6*sizeof(sF32),(void *)0);
+  glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,stride,(void *)0);
   glEnableVertexAttribArray(1);
-  glVertexAttribPointer(1,3,GL_FLOAT,GL_FALSE,6*sizeof(sF32),
-    (void *)(3*sizeof(sF32)));
+  glVertexAttribPointer(1,3,GL_FLOAT,GL_FALSE,stride,(void *)(3*sizeof(sF32)));
+  glEnableVertexAttribArray(2);
+  glVertexAttribPointer(2,2,GL_FLOAT,GL_FALSE,stride,(void *)(6*sizeof(sF32)));
   glBindVertexArray(0);
 
   BuildBones();     // the skeleton is part of the pose, not of the mesh upload
 
   Posed = 1;
+}
+
+/****************************************************************************/
+
+// The cluster's base colour map, as a GL texture. Stage 9.4.
+//
+// CLUSTER 0 ONLY, and that is a real limitation rather than an oversight. The
+// exporter emits one material per cluster because glTF has primitives to hang
+// them on; this viewer draws the whole mesh in one call, so it has one texture to
+// give. A multi-material mesh previews with its first material and exports
+// correctly with all of them — which is worth stating in the UI rather than
+// letting someone infer the export is as lossy as the preview.
+//
+// Uploaded on operator change, not per frame: RefreshVertices runs every frame
+// while the timeline is playing, and re-uploading a texture with it would be
+// pure waste.
+
+void wMeshView::UploadTexture(Wz4Mesh *mesh)
+{
+  const void *want = 0;
+  BitmapBase *bmp = 0;
+
+  if(mesh && mesh->Clusters.GetCount()>0)
+  {
+    SimpleMtrl *m = (SimpleMtrl *)mesh->Clusters[0]->Mtrl;
+    if(m)
+      bmp = m->GetBitmap(0);
+    want = bmp;
+  }
+
+  if(want==TexSource)
+    return;                           // nothing changed
+
+  TexSource = want;
+  if(!bmp)
+  {
+    // No material, or one with no map. The old texture goes, or the next mesh
+    // would inherit it.
+    if(Tex) { glDeleteTextures(1,&Tex); Tex = 0; }
+    return;
+  }
+
+  // 16 bits per channel down to 8, which is what CopyTo does and what a preview
+  // needs; the exporter narrows identically on its way to a PNG.
+  sImage img;
+  bmp->CopyTo(&img);
+  if(img.SizeX<=0 || img.SizeY<=0)
+  {
+    if(Tex) { glDeleteTextures(1,&Tex); Tex = 0; }
+    return;
+  }
+
+  // sImage is BGRA and GL is told RGBA, so the two are swizzled here exactly as
+  // sImage::SavePNG does on its way out. Getting this wrong swaps red and blue,
+  // which on a greyscale test texture looks perfectly fine.
+  const sInt count = img.SizeX*img.SizeY;
+  sU8 *rgba = new sU8[count*4];
+  const sU8 *src = (const sU8 *)img.Data;
+  for(sInt i=0;i<count;i++)
+  {
+    rgba[i*4+0] = src[i*4+2];
+    rgba[i*4+1] = src[i*4+1];
+    rgba[i*4+2] = src[i*4+0];
+    rgba[i*4+3] = src[i*4+3];
+  }
+
+  if(!Tex)
+    glGenTextures(1,&Tex);
+  glBindTexture(GL_TEXTURE_2D,Tex);
+  glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA,img.SizeX,img.SizeY,0,GL_RGBA,
+    GL_UNSIGNED_BYTE,rgba);
+
+  // REPEAT, for the reason the exporter states at length: the Cube's UVs run
+  // 0..4, so clamping would smear the edge column across three of its faces. The
+  // preview has to agree with the file or it is not a preview.
+  glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_REPEAT);
+  glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_REPEAT);
+
+  // No mipmaps: glGenerateMipmap is not in ImGui's vendored loader, and a
+  // preview at one zoom level does not need them. GL_LINEAR rather than
+  // GL_LINEAR_MIPMAP_* accordingly — asking for a mipmap filter without mipmaps
+  // gives an incomplete texture and samples black.
+  glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_LINEAR);
+  glBindTexture(GL_TEXTURE_2D,0);
+
+  delete[] rgba;
 }
 
 /****************************************************************************/
@@ -744,6 +860,27 @@ sU32 wMeshView::Draw(sInt w,sInt h)
     }
   }
 
+  // MIRROR Z, for the same reason the glTF writer does.
+  //
+  // Werkkzeug is left-handed (+z into the screen, D3D's convention) and this
+  // pipeline is OpenGL's right-handed one. Feeding the mesh's own coordinates
+  // into it without converting draws the scene mirrored — and it had done so
+  // since stage 6.4 without anyone noticing, because every test mesh was either
+  // symmetric or had no chirality cue at all. A texture with readable text on it
+  // is the first thing that could show it: the cube came out reading "qU".
+  //
+  // Post-multiplying by diag(1,1,-1,1) negates column 2, which makes
+  // gl_Position = m * (x,y,-z,1) — exactly the mirror geo/gltf_write.cpp applies
+  // to positions on export. Lighting is left in the mesh's own frame, which is
+  // right: a mirrored object lit from L looks the same as the original lit from
+  // mirror(L), and that is what the exported file shows too.
+  //
+  // Done to the matrix rather than to the uploaded vertices so that bounds, the
+  // grid, the bounding box and the bone overlay all move with it for free —
+  // mirroring the data instead would need every one of them mirrored to match.
+  for(sInt r=0;r<4;r++)
+    m[2*4+r] = -m[2*4+r];
+
   glBindFramebuffer(GL_FRAMEBUFFER,Fbo);
   glViewport(0,0,w,h);
   glClearColor(0.09f,0.10f,0.12f,1.0f);
@@ -779,6 +916,15 @@ sU32 wMeshView::Draw(sInt w,sInt h)
   glUniform3fv(glGetUniformLocation(Program,"uEye"),1,eyeu);
   glUniform3fv(glGetUniformLocation(Program,"uColor"),1,col);
 
+  const sBool usetex = (Tex!=0) && ShowTexture;
+  glUniform1i(glGetUniformLocation(Program,"uHasTex"),usetex ? 1 : 0);
+  glUniform1i(glGetUniformLocation(Program,"uTex"),0);
+  if(usetex)
+  {
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D,Tex);
+  }
+
   if(Wireframe)
     glPolygonMode(GL_FRONT_AND_BACK,GL_LINE);
 
@@ -811,6 +957,10 @@ sU32 wMeshView::Draw(sInt w,sInt h)
   // leaving either would show up as the whole UI vanishing.
   glUseProgram(0);
   glDisable(GL_DEPTH_TEST);
+  // ImGui binds its own texture per draw call, but it does NOT reset the active
+  // unit, and leaving ours bound on unit 0 is the kind of state leak that shows
+  // up as the font atlas being replaced by a mesh texture.
+  glBindTexture(GL_TEXTURE_2D,0);
   glBindFramebuffer(GL_FRAMEBUFFER,0);
 
   return ColorTex;
@@ -877,6 +1027,12 @@ void wMeshView::DrawPane(wOp *op,sInt revision)
     // can do nothing on all but a handful of operators is clutter, not a feature.
     ImGui::SameLine();
     ImGui::Checkbox("bones",&ShowBones);
+  }
+  if(Tex)
+  {
+    // Same rule again: no material, no texture, no checkbox.
+    ImGui::SameLine();
+    ImGui::Checkbox("tex",&ShowTexture);
   }
 
   if(Empty)
