@@ -11,23 +11,25 @@ A user guide. Everything here is about *using* the editor; why it is built the w
 wz4ed [<document.wz4t>] [-meta <dir>] [switches]
 ```
 
-The editor needs **operator metadata** — the JSON that `opsmeta` generates from the `.ops` sources —
-before it can do anything. Without it there is no palette, no inspector, and documents will not
-load: `cannot load a document without metadata`. It looks in `meta/` relative to the working
-directory unless `-meta` says otherwise, so the usual invocation is from the build directory:
+The build leaves the editor at `wz4port/build/wz4ed`; nothing is installed. From `wz4port/`:
 
 ```sh
-cd wz4port/build
-./wz4ed ../tests/geo/gen.wz4t -meta meta
+./build/wz4ed tests/geo/gen.wz4t
 ```
 
+The editor needs **operator metadata** — the JSON that `opsmeta` generates from the `.ops` sources —
+before it can do anything. Without it there is no palette, no inspector, and documents will not
+load: `cannot load a document without metadata`. The build writes it to `build/meta/` and compiles
+that absolute path into the editor as the default, so it works from any directory; `-meta <dir>`
+points it somewhere else. `wz4ed -help` prints the default.
+
 **Switches go *after* the filename.** Altona's command-line parser treats the token following a
-`-switch` as that switch's first parameter, so `wz4ed -meta meta doc.wz4t` reads the document name as
-an argument to `-meta` and then has no document.
+`-switch` as that switch's first parameter, so `wz4ed -wire doc.wz4t` reads the document name as
+an argument to `-wire` and then has no document.
 
 | Switch | Effect |
 |---|---|
-| `-meta <dir>` | where to find the operator metadata (default `meta`) |
+| `-meta <dir>` | where to find the operator metadata (default: the build's `meta/`) |
 | `-select <name>` | select an operator by its store name at startup |
 | `-export <path>` | export the selected operator as glTF and exit — see below |
 | `-shot <file.png>` | render two frames, write the last as a PNG, and exit |
@@ -211,9 +213,9 @@ The editor's export is a convenience wrapper. `wz4gen` does the same thing headl
 of counts and bounds, and chooses the container by extension:
 
 ```sh
-wz4gen render doc.wz4t -op <storename> -meta meta -out mesh.gltf   # JSON + mesh.bin
-wz4gen render doc.wz4t -op <storename> -meta meta -out mesh.glb    # single file
-wz4gen render doc.wz4t -op <storename> -meta meta -out mesh.obj    # Wavefront OBJ
+./build/wz4gen render doc.wz4t -op <storename> -out mesh.gltf   # JSON + mesh.bin
+./build/wz4gen render doc.wz4t -op <storename> -out mesh.glb    # single file
+./build/wz4gen render doc.wz4t -op <storename> -out mesh.obj    # Wavefront OBJ
 ```
 
 `.gltf` writes a **`.bin` sidecar beside it**, named after the `.gltf` and referenced by a relative

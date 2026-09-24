@@ -930,13 +930,20 @@ static void Usage()
 {
   sPrint(L"wz4gen — headless Werkkzeug4\n");
   sPrint(L"\n");
-  sPrint(L"usage: wz4gen list [document.wz4] [-pages] [-stores] [-unknown] [-errors]\n");
+  sPrint(L"usage: wz4gen list [<doc>] [-pages] [-stores] [-inputs] [-unknown] [-errors]\n");
+  sPrint(L"       wz4gen describe <ClassName|OutputType.ClassName>\n");
+  sPrint(L"       wz4gen checkmeta [-verbose]\n");
+  sPrint(L"       wz4gen convert <in> <out>\n");
+  sPrint(L"       wz4gen render <doc> -op <storename> [-out <file>]\n");
+  sPrint(L"       wz4gen sweep <doc> [-v] [-classes]\n");
+  sPrint(L"       wz4gen diff <a.png> <b.png> [-out <diff.png>]\n");
   sPrint(L"       wz4gen identity <document.wz4> <scratch.wz4>\n");
   sPrint(L"\n");
   sPrint(L"  list          registered operators, by output type\n");
   sPrint(L"  list <doc>    the operators in a document, with a class tally\n");
   sPrint(L"    -pages      also list every page\n");
   sPrint(L"    -stores     also list every store name\n");
+  sPrint(L"    -inputs     also list each operator's derived inputs\n");
   sPrint(L"    -unknown    also list the unregistered classes, by name\n");
   sPrint(L"    -errors     also list connection and calc errors\n");
   sPrint(L"  identity      load, save, reload, and check every operator kept\n");
@@ -944,9 +951,13 @@ static void Usage()
   sPrint(L"  describe      the full parameter description of one operator\n");
   sPrint(L"  checkmeta     read all the metadata and check it hangs together\n");
   sPrint(L"  convert       .wz4 <-> .wz4t, direction from the extensions\n");
-  sPrint(L"  render        evaluate one operator; -out .png for a bitmap, .obj for a mesh\n");
+  sPrint(L"  render        evaluate one operator and report it; -out writes it:\n");
+  sPrint(L"                .png for a bitmap, .obj .gltf or .glb for a mesh\n");
   sPrint(L"  sweep         evaluate every store and check every mesh it finds\n");
   sPrint(L"  diff          compare two PNGs: how much, where, and a diff image\n");
+  sPrint(L"\n");
+  sPrint(L"Every command that reads a .wz4t takes -meta <dir>. Default:\n");
+  sPrintF(L"  %s\n",WZ4GEN_META_DIR);
   sPrint(L"\n");
   sPrint(L"Switches go after the filename: Altona's shell parser treats the\n");
   sPrint(L"token after a -switch as that switch's first parameter.\n");

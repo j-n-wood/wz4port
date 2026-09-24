@@ -993,7 +993,8 @@ static void GlfwError(int code,const char *text)
 static void Usage()
 {
   sPrint(L"usage: wz4ed [<document.wz4t>] [-meta <dir>] [switches]\n\n");
-  sPrint(L"  -meta     where the operator metadata is (default \"meta\")\n");
+  sPrint(L"  -meta     where the operator metadata is. Default:\n");
+  sPrintF(L"            %s\n",WZ4ED_META_DIR);
   sPrint(L"  -select   select an operator by store name at startup\n");
   sPrint(L"  -export   write the selected operator as glTF and exit\n");
   sPrint(L"            (.glb or .gltf by extension; needs -select)\n");
